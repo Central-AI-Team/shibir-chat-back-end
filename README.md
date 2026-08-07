@@ -1,11 +1,14 @@
 # Shibir Chat Back-End
 
-This is the back-end service for Shibir Chat built with FastAPI. It provides an endpoint to ask questions and get answers generated based on relevant document retrieval.
+This is the back-end service for Shibir Chat built with FastAPI. You ask a question, it retrieves
+relevant excerpts from the book library and returns a Bengali answer grounded in those excerpts.
 
 ## Features
 
-- FastAPI web service
-- Query processing with document retrieval and answer generation
+- FastAPI web service with a single `POST /ask` endpoint
+- Retrieval-augmented generation over a Chroma vector store, backed by two source libraries
+  (`data/Tarun_Associate.db` and `data/Nobin_Associate.db`)
+- Answers generated via Groq (OpenAI-compatible API)
 
 ## Installation
 
@@ -36,9 +39,16 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-4. Create a `.env` file in the root directory for environment variables if needed.
+4. Copy `.env.example` to `.env` and set `GROQ_API_KEY` (all other settings have defaults).
 
-5. Run the FastAPI server:
+5. Build the vector store from both source databases (run once, and again whenever the source
+   `.db` files change):
+
+```bash
+python -m app.rag.ingest
+```
+
+6. Run the FastAPI server:
 
 ```bash
 uvicorn app.main:app --reload
@@ -50,14 +60,28 @@ The API will be available at `http://127.0.0.1:8000`.
 
 - POST `/ask`
   - Request body: `{"query": "your question here"}`
-  - Response: JSON with the query, generated answer, and source documents.
+  - Response:
+    ```json
+    {
+      "query": "your question here",
+      "answer": "...",
+      "sources": [
+        {"book": "...", "chapter": "...", "source_db": "tarun", "content": "..."}
+      ]
+    }
+    ```
 
 ## Project Structure
 
 - `app/` - Main application code
-  - `main.py` - FastAPI app entrypoint
-  - `schemas/` - Pydantic models
-  - `rag/` - Document retriever and answer generator modules
+  - `main.py` - FastAPI app factory
+  - `core/config.py` - Centralized settings (reads `.env`)
+  - `api/router.py` - HTTP routes (`POST /ask`)
+  - `services/qa_service.py` - Retrieve-then-generate orchestration
+  - `schemas/` - Pydantic request/response models
+  - `rag/` - Embedding, Chroma client, retriever, generator, and ingestion modules
+- `data/` - Source SQLite databases (`Tarun_Associate.db`, `Nobin_Associate.db`)
+- `chroma_db/` - Generated vector store (gitignored; rebuild with `python -m app.rag.ingest`)
 - `requirements.txt` - Python dependencies
 
 ## License

@@ -1,16 +1,28 @@
-import chromadb
-from .embedder import embed_text
+from app.core.config import settings
+from app.rag.chroma_client import get_collection
+from app.rag.embedder import embed_text
+from app.schemas.query import Citation
 
-chroma_client = chromadb.Client()
-collection = chroma_client.get_or_create_collection("documents")
 
-def retrieve_relevant_docs(query: str, top_k: int = 3):
+def retrieve_relevant_docs(query: str, top_k: int | None = None) -> list[Citation]:
+    top_k = top_k or settings.top_k
     query_emb = embed_text(query)
 
-    result = collection.query(
+    result = get_collection().query(
         query_embeddings=[query_emb],
-        n_results=top_k
+        n_results=top_k,
+        include=["documents", "metadatas"],
     )
 
-    docs = result.get("documents", [[]])[0]
-    return docs
+    documents = result.get("documents", [[]])[0]
+    metadatas = result.get("metadatas", [[]])[0]
+
+    return [
+        Citation(
+            book=meta.get("book", "Unknown"),
+            chapter=meta.get("chapter", "Unknown"),
+            source_db=meta.get("source_db", "unknown"),
+            content=doc,
+        )
+        for doc, meta in zip(documents, metadatas)
+    ]

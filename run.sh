@@ -3,6 +3,8 @@
 # Exit on error
 set -e
 
+export HF_HUB_OFFLINE=1
+
 echo "🚀 Starting FastAPI setup and server..."
 
 # Create virtual environment if it doesn't exist
@@ -42,5 +44,5 @@ else
 fi
 
 # Run FastAPI server
-echo "🌐 Starting FastAPI server with hot reload..."
+echo "🌐 Starting FastAPI server..."
 uvicorn app.main:app --host 0.0.0.0 --port 9200

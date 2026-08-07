@@ -1,6 +1,9 @@
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer('all-MiniLM-L6-v2')
+from app.core.config import settings
+
+_model = SentenceTransformer(settings.embedding_model_name)
+
 
 def embed_text(text: str):
-    return model.encode(text).tolist()
+    return _model.encode(text).tolist()
