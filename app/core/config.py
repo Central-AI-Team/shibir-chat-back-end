@@ -8,6 +8,8 @@ class Settings(BaseSettings):
 
     embedding_model_name: str = "all-MiniLM-L6-v2"
 
+    database_url: str = "postgresql+psycopg2://user:password@localhost:5432/shibir_chat"
+
     chroma_persist_dir: str = "chroma_db"
     chroma_collection_name: str = "documents"
 
