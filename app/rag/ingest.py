@@ -1,3 +1,20 @@
+"""Ingestion.
+
+CHANGES vs the original:
+  1. Pages are CHUNKED. Previously one page = one vector; your median page is
+     2,451 chars and the largest 23,123, so each vector was averaging together
+     several unrelated ideas.
+  2. Batch embedding (embed_texts) instead of one encode() call per row. On
+     ~4,100 pages -> ~15,000 chunks this is the difference between minutes and
+     a very long afternoon.
+  3. Old chunks for a page are deleted before re-upsert. Chunk COUNT changes
+     when content is edited, so upsert alone leaves orphaned stale chunks
+     behind that keep showing up in search results forever.
+  4. Bengali header (chunker.build_document) instead of English "Book:/Chapter:".
+"""
+
+from __future__ import annotations
+
 from datetime import datetime, timezone
 
 from sqlalchemy import or_
@@ -6,11 +23,11 @@ from sqlalchemy.orm import joinedload
 from app.db.models import Article, ContentStatus, Page
 from app.db.session import SessionLocal
 from app.rag.chroma_client import get_collection
-from app.rag.embedder import embed_text
+from app.rag.chunker import build_document, chunk_text
+from app.rag.embedder import embed_texts
 
-BATCH_SIZE = 100
+BATCH_SIZE = 64  # chunks per Chroma upsert / embedding batch
 
-# Rows never embedded, or edited since their last embedding.
 _NEEDS_EMBEDDING = or_(Page.embedded_at.is_(None), Page.updated_at > Page.embedded_at)
 
 
@@ -33,101 +50,87 @@ def _due_articles(session):
     )
 
 
-def _upsert_batch(collection, ids, documents, metadatas, embeddings) -> None:
-    collection.upsert(ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
+def _drop_stale(collection, prefix: str, row_id: int) -> None:
+    """Remove any existing chunks for this row before writing new ones."""
+    try:
+        collection.delete(where={"row_key": f"{prefix}_{row_id}"})
+    except Exception:
+        pass
 
 
-def ingest_pages(session, collection) -> int:
-    pages = _due_pages(session)
-    print(f"[pages] {len(pages)} published page(s) need (re-)embedding.")
-
-    ids, documents, metadatas, embeddings, batch = [], [], [], [], []
-    count = 0
-
-    for page in pages:
-        book_name = page.book.name if page.book else "Unknown"
-        chapter_name = page.chapter.name if page.chapter else "Unknown"
-        full_text = f"Book: {book_name}\nChapter: {chapter_name}\nContent:\n{page.content}"
-
-        ids.append(f"page_{page.id}")
-        documents.append(full_text)
-        metadatas.append({
-            "book": book_name,
-            "chapter": chapter_name,
-            "page_id": page.id,
-            "source_db": page.source_db or "unknown",
-        })
-        embeddings.append(embed_text(full_text))
-        batch.append(page)
-        count += 1
-
-        if len(ids) >= BATCH_SIZE:
-            _upsert_batch(collection, ids, documents, metadatas, embeddings)
-            now = datetime.now(timezone.utc)
-            for p in batch:
-                p.embedded_at = now
-            session.commit()
-            print(f"[pages] embedded {count} so far...")
-            ids, documents, metadatas, embeddings, batch = [], [], [], [], []
-
-    if ids:
-        _upsert_batch(collection, ids, documents, metadatas, embeddings)
-        now = datetime.now(timezone.utc)
-        for p in batch:
-            p.embedded_at = now
-        session.commit()
-
-    print(f"[pages] ingestion complete: {count} page(s) embedded.")
-    return count
+def _flush(collection, ids, docs, metas) -> None:
+    if not ids:
+        return
+    collection.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=embed_texts(docs))
 
 
-def ingest_articles(session, collection) -> int:
-    articles = _due_articles(session)
-    print(f"[articles] {len(articles)} published article(s) need (re-)embedding.")
+def _ingest(session, collection, rows, prefix: str, extract) -> int:
+    ids, docs, metas, touched = [], [], [], []
+    n_chunks = 0
 
-    ids, documents, metadatas, embeddings, batch = [], [], [], [], []
-    count = 0
+    for row in rows:
+        book, chapter, body, source_db = extract(row)
+        pieces = chunk_text(body or "")
+        if not pieces:
+            continue
 
-    for article in articles:
-        full_text = f"Title: {article.title}\nContent:\n{article.content}"
+        _drop_stale(collection, prefix, row.id)
 
-        ids.append(f"article_{article.id}")
-        documents.append(full_text)
-        metadatas.append({
-            "book": article.title,
-            "chapter": "Article",
-            "page_id": article.id,
-            "source_db": "articles",
-        })
-        embeddings.append(embed_text(full_text))
-        batch.append(article)
-        count += 1
+        for i, piece in enumerate(pieces):
+            ids.append(f"{prefix}_{row.id}_c{i}")
+            docs.append(build_document(book, chapter, piece))
+            metas.append({
+                "book": book,
+                "chapter": chapter,
+                "page_id": row.id,
+                "chunk_index": i,
+                "row_key": f"{prefix}_{row.id}",
+                "source_db": source_db,
+            })
+            n_chunks += 1
+
+        touched.append(row)
 
         if len(ids) >= BATCH_SIZE:
-            _upsert_batch(collection, ids, documents, metadatas, embeddings)
+            _flush(collection, ids, docs, metas)
             now = datetime.now(timezone.utc)
-            for a in batch:
-                a.embedded_at = now
+            for r in touched:
+                r.embedded_at = now
             session.commit()
-            print(f"[articles] embedded {count} so far...")
-            ids, documents, metadatas, embeddings, batch = [], [], [], [], []
+            print(f"[{prefix}] {n_chunks} chunks embedded...")
+            ids, docs, metas, touched = [], [], [], []
 
-    if ids:
-        _upsert_batch(collection, ids, documents, metadatas, embeddings)
-        now = datetime.now(timezone.utc)
-        for a in batch:
-            a.embedded_at = now
-        session.commit()
+    _flush(collection, ids, docs, metas)
+    now = datetime.now(timezone.utc)
+    for r in touched:
+        r.embedded_at = now
+    session.commit()
 
-    print(f"[articles] ingestion complete: {count} article(s) embedded.")
-    return count
+    print(f"[{prefix}] done: {n_chunks} chunks.")
+    return n_chunks
 
 
 def ingest_all() -> None:
     collection = get_collection()
     session = SessionLocal()
     try:
-        total = ingest_pages(session, collection) + ingest_articles(session, collection)
+        pages = _due_pages(session)
+        articles = _due_articles(session)
+        print(f"{len(pages)} page(s), {len(articles)} article(s) need embedding.")
+
+        total = _ingest(
+            session, collection, pages, "page",
+            lambda p: (
+                p.book.name if p.book else "Unknown",
+                p.chapter.name if p.chapter else "Unknown",
+                p.content,
+                p.source_db or "unknown",
+            ),
+        )
+        total += _ingest(
+            session, collection, articles, "article",
+            lambda a: (a.title, "প্রবন্ধ", a.content, "articles"),
+        )
         print(f"All sources ingested. Total chunks: {total}")
     finally:
         session.close()

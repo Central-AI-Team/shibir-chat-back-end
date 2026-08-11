@@ -10,9 +10,18 @@ class Citation(BaseModel):
     chapter: str
     source_db: str
     content: str
+    # NEW -- so you can see WHY something was retrieved. Essential for tuning
+    # min_rerank_score, and for spotting bad retrieval from the API response
+    # alone instead of guessing.
+    similarity: float | None = None
+    rerank_score: float | None = None
 
 
 class QueryResponse(BaseModel):
     query: str
     answer: str
     sources: list[Citation]
+
+
+class NoteRequest(BaseModel):
+    chapter_id: int
