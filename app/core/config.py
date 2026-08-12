@@ -31,11 +31,20 @@ class Settings(BaseSettings):
     # the reranker does the real filtering.
     min_similarity: float = 0.25
 
-    # The real "do we have an answer?" gate. bge-reranker-v2-m3 logits: roughly
-    # >2 clearly relevant, 0 to 2 borderline, <0 unrelated. TUNE THIS on ~30 of
-    # your own questions -- too high and it refuses valid questions, too low and
-    # it hallucinates from noise.
-    min_rerank_score: float = 0.0
+    # The real "do we have an answer?" gate.
+    #
+    # NOTE: sentence-transformers' CrossEncoder applies a Sigmoid activation by
+    # default (confirmed: reranker._model().activation_fn == Sigmoid()), so
+    # rerank() returns scores in [0, 1], NOT raw bge-reranker-v2-m3 logits.
+    # Do not use the ">2 clearly relevant" logit heuristic sometimes quoted for
+    # this model -- it does not apply to sigmoid-activated scores.
+    #
+    # Smoke-tested on this corpus: a clearly answerable question scored
+    # 0.94-0.99 across its top-5 sources; a fully off-topic question topped out
+    # at 0.0111. 0.5 sits well inside the gap between those two clusters.
+    # TUNE THIS with scripts/tune_threshold.py once you have ~30 real questions
+    # -- too high refuses valid questions, too low hallucinates from noise.
+    min_rerank_score: float = 0.5
 
     tarun_db_path: str = "data/Tarun_Associate.db"
     nobin_db_path: str = "data/Nobin_Associate.db"

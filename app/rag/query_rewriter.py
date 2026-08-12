@@ -64,7 +64,11 @@ def expand_query(query: str) -> tuple[str, ...]:
             model=settings.gemini_model,
             messages=[{"role": "user", "content": _REWRITE_PROMPT.format(q=query)}],
             temperature=0.0,
-            max_tokens=300,
+            # gemini-flash-latest spends completion-token budget on internal
+            # "thinking" before emitting visible output. 300 was too low --
+            # the call hit finish_reason="length" mid-JSON and silently fell
+            # back to the raw (un-rewritten) query on every call.
+            max_tokens=2000,
         )
         raw = resp.choices[0].message.content.strip()
         raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
