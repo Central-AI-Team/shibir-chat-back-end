@@ -13,15 +13,12 @@ structure needed: pull the WHOLE chapter in reading order, then map-reduce.
 
 from __future__ import annotations
 
-from openai import OpenAI
 from sqlalchemy.orm import joinedload
 
-from app.core.config import settings
+from app.core.llm import get_client, get_model
 from app.db.models import Chapter, ContentStatus, Page
 from app.db.session import SessionLocal
 from app.rag.chunker import normalize
-
-_client = OpenAI(api_key=settings.gemini_api_key, base_url=settings.gemini_base_url)
 
 _MAP_PROMPT = """নিচে একটি বইয়ের অধ্যায়ের একটি অংশ দেওয়া হলো।
 এই অংশের মূল বক্তব্যগুলো বুলেট আকারে সংক্ষেপে বাংলায় লেখো।
@@ -49,8 +46,8 @@ _REDUCE_PROMPT = """নিচে একটি অধ্যায়ের বি
 
 
 def _llm(prompt: str, max_tokens: int = 2000) -> str:
-    resp = _client.chat.completions.create(
-        model=settings.gemini_model,
+    resp = get_client().chat.completions.create(
+        model=get_model(),
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=max_tokens,

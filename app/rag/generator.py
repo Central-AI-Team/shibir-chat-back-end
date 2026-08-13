@@ -15,12 +15,8 @@ CHANGES vs the original:
 
 from __future__ import annotations
 
-from openai import OpenAI
-
-from app.core.config import settings
+from app.core.llm import get_client, get_model
 from app.schemas.query import Citation
-
-_client = OpenAI(api_key=settings.gemini_api_key, base_url=settings.gemini_base_url)
 
 _SYSTEM = """তুমি একটি বাংলা বই-ভিত্তিক প্রশ্নোত্তর সহকারী। তোমার কাজ হলো
 নিচে দেওয়া বইয়ের অংশগুলো থেকে ব্যবহারকারীর প্রশ্নের উত্তর দেওয়া।
@@ -52,8 +48,8 @@ def _format_context(citations: list[Citation]) -> str:
 
 
 def generate_answer(query: str, citations: list[Citation]) -> str:
-    response = _client.chat.completions.create(
-        model=settings.gemini_model,
+    response = get_client().chat.completions.create(
+        model=get_model(),
         messages=[
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": _USER.format(

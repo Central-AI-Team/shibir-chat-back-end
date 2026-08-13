@@ -16,12 +16,8 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 
-from openai import OpenAI
-
-from app.core.config import settings
+from app.core.llm import get_client, get_model
 from app.rag.chunker import normalize
-
-_client = OpenAI(api_key=settings.gemini_api_key, base_url=settings.gemini_base_url)
 
 _REWRITE_PROMPT = """তুমি একটি বাংলা সার্চ সিস্টেমের query প্রসেসর।
 
@@ -60,8 +56,8 @@ def expand_query(query: str) -> tuple[str, ...]:
         return ()
 
     try:
-        resp = _client.chat.completions.create(
-            model=settings.gemini_model,
+        resp = get_client().chat.completions.create(
+            model=get_model(),
             messages=[{"role": "user", "content": _REWRITE_PROMPT.format(q=query)}],
             temperature=0.0,
             # gemini-flash-latest spends completion-token budget on internal
