@@ -7,13 +7,23 @@ NEW:
   reranker_model_name, fetch_k, min_similarity, min_rerank_score
 """
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    gemini_api_key: str
+    # Which provider generator.py / query_rewriter.py / note_service.py call.
+    # Both speak the OpenAI chat-completions API, so switching is just a
+    # matter of which api_key/base_url/model the shared client in
+    # app/core/llm.py picks.
+    llm_provider: str = "gemini"  # "gemini" or "openai"
+
+    gemini_api_key: str | None = None
     gemini_model: str = "gemini-flash-latest"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
 
     # all-MiniLM-L6-v2 cannot tokenize Bengali -- every word became [UNK].
     embedding_model_name: str = "BAAI/bge-m3"
@@ -53,6 +63,16 @@ class Settings(BaseSettings):
     port: int = 9200
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @model_validator(mode="after")
+    def _check_provider_key(self) -> "Settings":
+        if self.llm_provider == "openai" and not self.openai_api_key:
+            raise ValueError("LLM_PROVIDER=openai requires OPENAI_API_KEY to be set")
+        if self.llm_provider == "gemini" and not self.gemini_api_key:
+            raise ValueError("LLM_PROVIDER=gemini requires GEMINI_API_KEY to be set")
+        if self.llm_provider not in ("gemini", "openai"):
+            raise ValueError(f"LLM_PROVIDER must be 'gemini' or 'openai', got {self.llm_provider!r}")
+        return self
 
 
 settings = Settings()
