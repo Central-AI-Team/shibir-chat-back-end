@@ -10,6 +10,7 @@ NEW: /note for chapter note generation, /health for uptime checks.
 """
 
 from fastapi import APIRouter, HTTPException
+from openai import APIError
 from starlette.concurrency import run_in_threadpool
 
 from app.schemas.query import NoteRequest, QueryRequest, QueryResponse
@@ -29,7 +30,16 @@ async def ask_question(body: QueryRequest) -> QueryResponse:
     query = body.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="query খালি রাখা যাবে না।")
-    return await run_in_threadpool(answer_question, query)
+    try:
+        return await run_in_threadpool(answer_question, query)
+    except APIError as e:
+        # Retrieval succeeded but the LLM call failed (quota, bad key, upstream
+        # outage, ...). Surface as a clean 503 instead of a bare 500 -- the
+        # client should retry, not treat this like a malformed request.
+        raise HTTPException(
+            status_code=503,
+            detail="উত্তর তৈরির সার্ভিস সাময়িকভাবে অনুপলব্ধ। কিছুক্ষণ পর আবার চেষ্টা করুন।",
+        ) from e
 
 
 @router.post("/note")

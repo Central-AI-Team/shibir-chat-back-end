@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: shibir_chat
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    #ports:
+    #  - "5432:5432"
+
+  app:
+    build:
+     context: .
+     network: host
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/shibir_chat
+      HOST: 0.0.0.0
+      PORT: 9200
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "9200:9200"
+    volumes:
+      - chroma_db:/app/chroma_db
+      - hf_cache:/app/.cache/huggingface
+      - ./data:/app/data
+
+volumes:
+  pgdata:
+  chroma_db:
+  hf_cache:

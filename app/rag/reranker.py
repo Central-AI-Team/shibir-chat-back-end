@@ -22,7 +22,9 @@ from app.core.config import settings
 
 @lru_cache(maxsize=1)
 def _model() -> CrossEncoder:
-    return CrossEncoder(settings.reranker_model_name, max_length=1024)
+    # device="cpu": see embedder.py -- the embedding model alone already
+    # doesn't fit small GPUs, so default CUDA autodetect OOMs here too.
+    return CrossEncoder(settings.reranker_model_name, max_length=1024, device="cpu")
 
 
 def rerank(query: str, docs: list[str], top_n: int) -> list[tuple[int, float]]:

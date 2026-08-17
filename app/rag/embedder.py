@@ -27,7 +27,10 @@ from app.core.config import settings
 @lru_cache(maxsize=1)
 def _model() -> SentenceTransformer:
     # Loaded lazily so importing this module (e.g. in tests) is cheap.
-    return SentenceTransformer(settings.embedding_model_name)
+    # device="cpu": bge-m3 is ~2.2 GB, which doesn't fit alongside the
+    # reranker on small GPUs (e.g. a 2 GB card) and OOMs on the default
+    # CUDA autodetect. Sized for RAM, not VRAM -- see module docstring.
+    return SentenceTransformer(settings.embedding_model_name, device="cpu")
 
 
 def embed_text(text: str) -> list[float]:
