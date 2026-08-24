@@ -15,6 +15,7 @@ it does not (refusal + empty sources). The two can no longer contradict.
 from __future__ import annotations
 
 import logging
+import time
 
 from app.core.config import settings
 from app.rag.generator import generate_answer
@@ -30,6 +31,7 @@ _NO_MATCH = (
 
 
 def answer_question(query: str) -> QueryResponse:
+    start = time.perf_counter()
     citations = retrieve_relevant_docs(query)
 
     # The reranker score is the honest relevance signal. If even the best
@@ -37,14 +39,22 @@ def answer_question(query: str) -> QueryResponse:
     # so do not send Gemini a pile of noise and do not show sources.
     if not citations or citations[0].rerank_score < settings.min_rerank_score:
         best = citations[0].rerank_score if citations else None
-        logger.info("no_match query=%r best_rerank=%s", query, best)
-        return QueryResponse(query=query, answer=_NO_MATCH, sources=[])
+        response_time_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.info(
+            "no_match query=%r best_rerank=%s in %.2fms", query, best, response_time_ms
+        )
+        return QueryResponse(
+            query=query, answer=_NO_MATCH, sources=[], response_time_ms=response_time_ms
+        )
 
     answer = generate_answer(query, citations)
 
+    response_time_ms = round((time.perf_counter() - start) * 1000, 2)
     logger.info(
-        "answered query=%r n_sources=%d top_rerank=%.3f books=%s",
+        "answered query=%r n_sources=%d top_rerank=%.3f books=%s in %.2fms",
         query, len(citations), citations[0].rerank_score,
-        [c.book for c in citations],
+        [c.book for c in citations], response_time_ms,
     )
-    return QueryResponse(query=query, answer=answer, sources=citations)
+    return QueryResponse(
+        query=query, answer=answer, sources=citations, response_time_ms=response_time_ms
+    )

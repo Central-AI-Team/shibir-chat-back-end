@@ -21,6 +21,7 @@ class QueryResponse(BaseModel):
     query: str
     answer: str
     sources: list[Citation]
+    response_time_ms: float
 
 
 class NoteRequest(BaseModel):

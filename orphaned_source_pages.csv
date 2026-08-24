@@ -1,0 +1,2 @@
+source_db,source_page_id,reason,decision,likely_book_id,likely_chapter_context,content_preview
+nobin,1263,"book_id/chapter_id blank in source SQLite; never migrated to Postgres","excluded from re-ingest for now (2026-08-18); logged for future manual attribution",19,"মাসয়ালা মাসায়েল ও দোআ, immediately follows chapter 386 (pages 1258-1262)","শুদ্ধভাবে কুরআন পড়তে চেষ্টা করা / অর্থসহ মুখস্থকরণ..."
