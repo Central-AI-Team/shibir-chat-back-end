@@ -1,9 +1,7 @@
 """Shared chat-completions client.
 
-Gemini (via its OpenAI-compat endpoint) and OpenAI both speak the same
-chat-completions API, so one `openai.OpenAI` client covers either -- only
-api_key/base_url/model differ. Switch providers with LLM_PROVIDER in .env;
-callers just use get_client() / get_model() instead of hardcoding either.
+Callers use get_client() / get_model() instead of constructing an OpenAI
+client directly, so the api_key/model live in one place.
 """
 
 from __future__ import annotations
@@ -17,12 +15,8 @@ from app.core.config import settings
 
 @lru_cache(maxsize=1)
 def get_client() -> OpenAI:
-    if settings.llm_provider == "openai":
-        return OpenAI(api_key=settings.openai_api_key)
-    return OpenAI(api_key=settings.gemini_api_key, base_url=settings.gemini_base_url)
+    return OpenAI(api_key=settings.openai_api_key)
 
 
 def get_model() -> str:
-    if settings.llm_provider == "openai":
-        return settings.openai_model
-    return settings.gemini_model
+    return settings.openai_model

@@ -1,36 +1,26 @@
-"""Answer generation.
-
-CHANGES vs the original:
-  1. Prompt written in Bengali. Asking in English for a Bengali answer makes
-     the model translate rather than compose -- it is the main reason the
-     Bengali output reads stiff.
-  2. Refusal rule softened. The old "if the Context does not contain enough
-     information, say the database does not contain this" fires far too easily
-     on partial matches. It now answers with whatever IS there and names the
-     gap. Hard refusal is decided upstream in qa_service by score, not vibes.
-  3. temperature=0.2. The old call sent no temperature, so Gemini used its
-     default of 1.0 -- unnecessarily creative for grounded Q&A.
-  4. Excerpts are numbered so the model can cite them.
-"""
-
 from __future__ import annotations
 
 from app.core.llm import get_client, get_model
 from app.schemas.query import Citation
 
-_SYSTEM = """তুমি একটি বাংলা বই-ভিত্তিক প্রশ্নোত্তর সহকারী। তোমার কাজ হলো
-নিচে দেওয়া বইয়ের অংশগুলো থেকে ব্যবহারকারীর প্রশ্নের উত্তর দেওয়া।
+_SYSTEM = """তুমি একজন বন্ধুত্বপূর্ণ বাংলা প্রশ্নোত্তর সহকারী। ব্যবহারকারীকে নিচে
+দেওয়া বইয়ের অংশ থেকে সাহায্য করাই তোমার একমাত্র কাজ।
 
 নিয়মাবলি:
-১। শুধুমাত্র নিচের "উদ্ধৃত অংশ" থেকে উত্তর দাও। বাইরের কোনো জ্ঞান যোগ কোরো না।
-২। প্রশ্নের শব্দ হুবহু না মিললেও অর্থ বা প্রসঙ্গ মিললে সেটি প্রাসঙ্গিক ধরে নাও।
-৩। উদ্ধৃত অংশে **আংশিক তথ্য থাকলেও সেটুকু দিয়েই উত্তর দাও**, এবং শেষে এক বাক্যে
-   লেখো কোন দিকটি বইগুলোতে পাওনি। শুধু বিষয়টির কোনো উল্লেখই না থাকলে তবেই বলবে
-   যে এই বিষয়ে তথ্য পাওয়া যায়নি।
-৪। প্রতিটি দাবির শেষে বর্গবন্ধনীতে উৎস দাও, যেমন [১] বা [২]।
-৫। সম্পূর্ণ উত্তর প্রমিত বাংলায় লেখো। ইংরেজি বাক্য বা রোমান হরফে বাংলা লিখবে না।
+১। নিচের "উদ্ধৃত অংশ" প্রশ্নের সাথে প্রাসঙ্গিক হলে তা থেকেই উত্তর দাও, এবং
+   প্রতিটি দাবির শেষে বর্গবন্ধনীতে উৎস দাও, যেমন [১] বা [২]। প্রশ্নের শব্দ হুবহু
+   না মিললেও অর্থ বা প্রসঙ্গ মিললে সেটি প্রাসঙ্গিক ধরে নাও।
+২। উদ্ধৃত অংশে **আংশিক তথ্য থাকলেও সেটুকু দিয়েই উত্তর দাও**, এবং শেষে এক বাক্যে
+   লেখো কোন দিকটি বইগুলোতে পাওনি।
+৩। উদ্ধৃত অংশ প্রশ্নের সাথে সম্পর্কহীন, অপ্রতুল, বা খালি হলে অনুমান করে বা
+   তোমার নিজস্ব সাধারণ জ্ঞান থেকে উত্তর বানিও না -- তবে শুধু "তথ্য পাওয়া যায়নি"
+   বলে থেমে যেও না। নম্র ও বন্ধুত্বপূর্ণ ভাষায় জানাও যে এই নির্দিষ্ট বিষয়ে
+   বইগুলোতে তথ্য খুঁজে পাওনি, এবং প্রশ্নটি অন্যভাবে বা আরেকটু নির্দিষ্ট করে
+   জিজ্ঞাসা করতে উৎসাহ দাও। "উদ্ধৃত অংশ"-এর বাইরের কোনো তথ্য উত্তরে যোগ কোরো না।
+৪। সম্পূর্ণ উত্তর প্রমিত বাংলায় লেখো। ইংরেজি বাক্য বা রোমান হরফে বাংলা লিখবে না।
    পারিভাষিক শব্দ বইয়ে যেভাবে আছে সেভাবেই রাখো।
-৬। উত্তর গুছিয়ে লেখো — প্রয়োজনে অনুচ্ছেদ বা বুলেট ব্যবহার করো।"""
+৫। উত্তর গুছিয়ে লেখো — প্রয়োজনে অনুচ্ছেদ বা বুলেট ব্যবহার করো, তবে ছোট প্রশ্নে
+   অকারণে দীর্ঘ উত্তর দিও না।"""
 
 _USER = """উদ্ধৃত অংশসমূহ:
 {context}
@@ -56,6 +46,8 @@ def generate_answer(query: str, citations: list[Citation]) -> str:
                 context=_format_context(citations), query=query
             )},
         ],
-        temperature=0.2,
+        # gpt-5-mini only supports the default temperature (1) -- passing any
+        # other value is a 400. Grounding/determinism now comes entirely from
+        # the prompt, not sampling temperature.
     )
     return response.choices[0].message.content

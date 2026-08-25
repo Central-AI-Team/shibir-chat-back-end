@@ -10,6 +10,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -91,6 +92,14 @@ class Article(Base):
     language = Column(String(10), nullable=False)
     status = Column(SAEnum(ContentStatus), nullable=False, default=ContentStatus.draft)
     author = Column(String(255), nullable=True)
+
+    # Provenance for non-web-article sources (PDF/Word docs, external DBs,
+    # CSV/spreadsheets, ...). source_ref holds a URL, file path, or
+    # "external_table::id" reference; source_metadata holds whatever extra
+    # fields are specific to that source (e.g. PDF page number).
+    source_type = Column(String(30), nullable=False, default="web_article")
+    source_ref = Column(String(500), nullable=True)
+    source_metadata = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
