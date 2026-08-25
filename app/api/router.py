@@ -13,8 +13,8 @@ from fastapi import APIRouter, HTTPException
 from openai import APIError
 from starlette.concurrency import run_in_threadpool
 
-from app.schemas.query import NoteRequest, QueryRequest, QueryResponse
-from app.services.note_service import generate_chapter_note
+from app.schemas.query import NoteByTextRequest, NoteByTextResponse, NoteRequest, QueryRequest, QueryResponse
+from app.services.note_service import generate_book_notes_from_text, generate_chapter_note
 from app.services.qa_service import answer_question
 
 router = APIRouter()
@@ -45,6 +45,16 @@ async def ask_question(body: QueryRequest) -> QueryResponse:
 @router.post("/note")
 async def make_note(body: NoteRequest) -> dict:
     result = await run_in_threadpool(generate_chapter_note, body.chapter_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.post("/note-by-text", response_model=NoteByTextResponse)
+async def make_note_by_text(body: NoteByTextRequest) -> dict:
+    result = await run_in_threadpool(generate_book_notes_from_text, body.text)
+    if "too_many_chapters" in result:
+        raise HTTPException(status_code=422, detail=result["error"])
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
