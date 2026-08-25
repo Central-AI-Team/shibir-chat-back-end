@@ -24,3 +24,6 @@ chroma_db/
 
 # Logs
 *.log
+
+# Generated eval reports (scripts/eval_responses.py)
+eval_reports/

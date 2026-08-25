@@ -41,10 +41,17 @@ def test_ask_returns_response_time_ms():
     assert body["response_time_ms"] >= 0
 
 
-def test_ask_no_match_still_returns_response_time_ms():
-    with patch("app.services.qa_service.retrieve_relevant_docs", return_value=[]):
+def test_ask_below_threshold_still_returns_response_time_ms_and_no_sources():
+    # No relevant citations -> generate_answer is still called (general-
+    # knowledge/conversational fallback), but with empty grounding, so
+    # sources stay empty.
+    with (
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=[]),
+        patch("app.services.qa_service.generate_answer", return_value="উত্তর।") as mock_generate,
+    ):
         response = client.post("/ask", json={"query": "প্রশ্ন?"})
 
+    mock_generate.assert_called_once_with("প্রশ্ন?", [])
     assert response.status_code == 200
     body = response.json()
     assert "response_time_ms" in body

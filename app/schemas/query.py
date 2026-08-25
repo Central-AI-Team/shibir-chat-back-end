@@ -26,3 +26,18 @@ class QueryResponse(BaseModel):
 
 class NoteRequest(BaseModel):
     chapter_id: int
+
+
+class NoteByTextRequest(BaseModel):
+    text: str
+
+
+class ChapterNote(BaseModel):
+    chapter: str
+    pages_used: int
+    note: str
+
+
+class NoteByTextResponse(BaseModel):
+    book: str
+    chapters: list[ChapterNote]
