@@ -1,0 +1,31 @@
+[
+  {"text": "যাকাতের নিসাব কত?", "expected_intent": "qa"},
+  {"text": "তাজবীদে মাখরাজ কাকে বলে?", "expected_intent": "qa"},
+  {"text": "রোযা কীভাবে আত্মসংযম শেখায়?", "expected_intent": "qa"},
+  {"text": "হাদীস সংকলনের ইতিহাস সংক্ষেপে বলুন", "expected_intent": "qa"},
+  {"text": "সূরা আসরে কী বলা হয়েছে?", "expected_intent": "qa"},
+
+  {"text": "যাকাতের হাকীকত বইয়ের নোট বানিয়ে দাও", "expected_intent": "note"},
+  {"text": "যাকাতের গুরুত্ব অধ্যায়ের সারাংশ চাই", "expected_intent": "note"},
+  {"text": "তাজবীদ শিক্ষা বইটার নোটস দরকার", "expected_intent": "note"},
+  {"text": "এই চ্যাপ্টারটা সংক্ষেপে লিখে দাও", "expected_intent": "note"},
+  {"text": "নামাজ-রোজার হাকীকত বইয়ের প্রতিটা অধ্যায়ের নোট বানাও", "expected_intent": "note"},
+
+  {"text": "তুমি একজন অভিজ্ঞ আলেমের ভূমিকায় আমার সাথে কথা বলো", "expected_intent": "roleplay"},
+  {"text": "একজন উস্তাদের মতো আমাকে যাকাত নিয়ে প্রশ্ন করো, আমি উত্তর দেব", "expected_intent": "roleplay"},
+  {"text": "সাইয়েদ মওদূদীর স্টাইলে আমাকে ঈমান নিয়ে বোঝাও", "expected_intent": "roleplay"},
+  {"text": "তুমি আমার ইসলামিক স্টাডিজ শিক্ষক, এভাবেই কথা বলো এখন থেকে", "expected_intent": "roleplay"},
+  {"text": "একজন মুফতির চরিত্রে থেকে আমার প্রশ্নের জবাব দাও", "expected_intent": "roleplay"},
+
+  {"text": "যাকাত নিয়ে আরও জানতে আমার কোন বই পড়া উচিত?", "expected_intent": "suggestion"},
+  {"text": "ঈমান মজবুত করার জন্য কী করতে পারি, পরামর্শ দাও", "expected_intent": "suggestion"},
+  {"text": "নতুন মুসলিমদের জন্য কোন বই দিয়ে শুরু করা উচিত?", "expected_intent": "suggestion"},
+  {"text": "রমজানে বেশি ইবাদতের জন্য কী রুটিন রাখা যায়?", "expected_intent": "suggestion"},
+  {"text": "আমার সন্তানদের ইসলামি শিক্ষা দেওয়ার জন্য কোন বইগুলো ভালো হবে?", "expected_intent": "suggestion"},
+
+  {"text": "যাকাতের গুরুত্ব নিয়ে বিস্তারিত বলো", "expected_intent": "qa", "note": "লম্বা উত্তর চাইছে, কিন্তু এখনো একটা প্রশ্ন — note-mode এর সাথে গুলিয়ে যাওয়ার ঝুঁকি আছে"},
+  {"text": "আসসালামু আলাইকুম", "expected_intent": "none-of-the-four", "note": "শুধু greeting — ৪টা মোডের কোনোটাতেই ঠিকভাবে পড়ে না, বিদ্যমান conversational-shortcut পাথে যাওয়া উচিত"},
+  {"text": "যাকাতের হাকীকত বইয়ে কী কী অধ্যায় আছে?", "expected_intent": "ambiguous", "note": "এটা content প্রশ্ন না, catalog/metadata প্রশ্ন — qa বা note কোনোটাতেই সঠিকভাবে হ্যান্ডেল হবে না, আলাদা বিবেচনা দরকার"},
+  {"text": "তুমি কে?", "expected_intent": "none-of-the-four", "note": "বট সম্পর্কে মেটা-প্রশ্ন, বইয়ের কন্টেন্টের সাথে সম্পর্কহীন"},
+  {"text": "যাকাত দেওয়ার সঠিক নিয়ম বুঝিয়ে, একজন শিক্ষকের মতো ধাপে ধাপে শিখাও", "expected_intent": "ambiguous", "note": "qa (content আছে) এবং roleplay (delivery style) দুটোরই বৈশিষ্ট্য আছে একসাথে"}
+]

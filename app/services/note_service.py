@@ -23,7 +23,9 @@ from app.rag.chunker import normalize
 # Purely a reverse-proxy/client timeout guard (nginx, browser) for a
 # synchronous HTTP request that chains one generate_chapter_note() call per
 # chapter -- not an API quota concern (paid OpenAI key). A book past this
-# needs its chapters requested individually via /note instead.
+# limit needs its chapters requested individually via generate_chapter_note()
+# instead (no longer reachable over HTTP now that /note has been removed;
+# call it in-process, e.g. from a script).
 MAX_CHAPTERS_PER_BOOK_NOTE = 60
 
 _MAP_PROMPT = """নিচে একটি বইয়ের অধ্যায়ের একটি অংশ দেওয়া হলো।

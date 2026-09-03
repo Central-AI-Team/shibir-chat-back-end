@@ -41,3 +41,16 @@ class ChapterNote(BaseModel):
 class NoteByTextResponse(BaseModel):
     book: str
     chapters: list[ChapterNote]
+
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+
+
+class ChatResponse(BaseModel):
+    mode: str  # "note" | "roleplay" | "suggestion" | "qa"
+    answer: str
+    sources: list[Citation] = []
+    session_id: str
+    response_time_ms: float
