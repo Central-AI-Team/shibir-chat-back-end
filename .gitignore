@@ -27,3 +27,6 @@ chroma_db/
 
 # Generated eval reports (scripts/eval_responses.py)
 eval_reports/
+
+# Intermediate corpus sample for hand-labelling (scripts/sample_corpus_pages.py)
+scripts/_corpus_sample.json

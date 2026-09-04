@@ -1,0 +1,344 @@
+[
+  {
+    "_README": [
+      "Hand-labelled retrieval evaluation dataset for scripts/eval_retrieval.py.",
+      "",
+      "SHAPE: a JSON LIST of objects. Each object has:",
+      "  query        (str)   - the user question, as a real user would type it.",
+      "  answerable    (bool)  - true if this corpus contains the answer.",
+      "  relevant_ids  (list)  - row_key(s) of the page(s) that actually answer it;",
+      "                          [] when answerable is false.",
+      "  lang          (str)   - 'bn' (Bengali script) | 'banglish' (romanized",
+      "                          Bengali) | 'en'. Metadata only; the eval scripts",
+      "                          ignore it. Used by scripts/validate_eval_set.py",
+      "                          for the language-mix report.",
+      "  difficulty    (str)   - 'direct' | 'conceptual' | 'hard'. Metadata only.",
+      "",
+      "This is the {'query','answerable'} shape scripts/tune_threshold.py and",
+      "scripts/eval_responses.py already consume, plus extra keys they ignore, so",
+      "one file feeds all three. It stays a flat LIST (not {'questions': [...]})",
+      "because those two scripts iterate it directly. This _README rides on the",
+      "first real entry for the same reason.",
+      "",
+      "GOLD-ID FORMAT (verified against the code):",
+      "  A row_key is 'page_<Page.id>' or 'article_<Article.id>'. app/rag/ingest.py",
+      "  writes it into every chunk's Chroma metadata as",
+      "  {\"row_key\": f\"{prefix}_{row.id}\"} with prefix 'page' or 'article'.",
+      "  app/rag/retriever.py exposes it on RetrievedChunk.row_key, and",
+      "  scripts/eval_retrieval.py dedupes retrieved chunks to row_key before",
+      "  scoring, matching these strings exactly. It is deliberately the PAGE-level",
+      "  id: a human can judge 'this page answers the question', not 'chunk 3 of",
+      "  this page does'.",
+      "",
+      "HOW THE GOLD IDS WERE ASSIGNED:",
+      "  1. scripts/sample_corpus_pages.py drew a reproducible (seed=20260904),",
+      "     category-spread random sample of published pages, EXCLUDING every",
+      "     Page.id listed in arabic_placeholder_pages.csv (343 ids),",
+      "     book203_cross_contamination.csv (80 loser ids) and",
+      "     orphaned_source_pages.csv, and requiring each page's row_key to be",
+      "     present in the live Chroma collection the harness queries",
+      "     (settings.chroma_collection_name = 'documents_bge_m3').",
+      "  2. Each sampled page was read in full. Where one natural question could",
+      "     be answered ENTIRELY from that page's text, it was written here in a",
+      "     user's voice - PARAPHRASED, not copied: source keywords and sentence",
+      "     shapes were deliberately varied so retrieval is not scored on lexical",
+      "     overlap. gold relevant_ids = [that page's row_key].",
+      "  3. Pages whose answer text also appears on another page (this corpus",
+      "     contains whole duplicate-imported books) were REJECTED, not dual-",
+      "     labelled, to keep every gold set clean and single-page. Duplication",
+      "     was checked by 6-gram shingle coverage against all published pages.",
+      "  4. Pages where the answer was only partially on-page were skipped.",
+      "",
+      "UNANSWERABLE ENTRIES (answerable=false, relevant_ids=[]):",
+      "  ~60% are HARD NEGATIVES - plausible questions about topics adjacent to",
+      "  the corpus (Shia/Ahmadiyya/Sufi-tariqa theology, comparative usul,",
+      "  crypto-finance fiqh, other religions, current org personnel) that this",
+      "  Sunni Islamic-movement book corpus does NOT cover. The rest are clearly",
+      "  out-of-domain (sport, infrastructure, code, geography, biology). Both",
+      "  feed the false-positive / refusal-gate metrics.",
+      "",
+      "COMPOSITION: 40 entries - 27 answerable (68%), 13 unanswerable (32%).",
+      "  Language: 22 bn (55%), 13 banglish (32.5%), 5 en (12.5%).",
+      "  Run scripts/validate_eval_set.py for the live id-existence check and the",
+      "  full counts."
+    ],
+    "query": "Why did Caliph Uthman decide to have a single standard written copy of the Quran prepared, and who first warned him about the problem?",
+    "answerable": true,
+    "relevant_ids": ["page_4584"],
+    "lang": "en",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "Siffiner lorai te Abdullah ibn Amr keno tar baba Amr ibnul As er dol e jog dilen, jekhane tini nijei ei grihojuddher biruddhe chilen?",
+    "answerable": true,
+    "relevant_ids": ["page_7503"],
+    "lang": "banglish",
+    "difficulty": "hard"
+  },
+  {
+    "query": "সাঈদ ইবনে যায়েদ (রা)-এর জানাজায় ইমামতি কে করেছিলেন এবং তাঁকে গোসল দিয়েছিলেন কে?",
+    "answerable": true,
+    "relevant_ids": ["page_6027"],
+    "lang": "bn",
+    "difficulty": "direct"
+  },
+  {
+    "query": "মদিনা সনদকে লেখক কী হিসেবে আখ্যায়িত করেছেন এবং এর পূর্ণ পাঠ কোন গ্রন্থে সংরক্ষিত আছে?",
+    "answerable": true,
+    "relevant_ids": ["page_5842"],
+    "lang": "bn",
+    "difficulty": "direct"
+  },
+  {
+    "query": "Bistarito ain-kanun keno Makki surah e na diye Madani surah e nazil kora holo bole boita byakkha kore?",
+    "answerable": true,
+    "relevant_ids": ["page_4513"],
+    "lang": "banglish",
+    "difficulty": "hard"
+  },
+  {
+    "query": "নিজের বা দলের দোষত্রুটি খুঁজে বের করা কখন প্রশংসনীয় আর কখন তা শয়তানের কুমন্ত্রণা হিসেবে গণ্য হয়?",
+    "answerable": true,
+    "relevant_ids": ["page_5638"],
+    "lang": "bn",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "হজ্জকে লেখক কীসের সঙ্গে তুলনা করেছেন, এবং ইসলামের কেন্দ্রে কেমন কর্তৃত্ব থাকা উচিত বলে তিনি মত দিয়েছেন?",
+    "answerable": true,
+    "relevant_ids": ["page_5087"],
+    "lang": "bn",
+    "difficulty": "hard"
+  },
+  {
+    "query": "Rasul (sa) er kaajkormo bishleshon korle prothome je moulik jinishta chokhe pore seta ki?",
+    "answerable": true,
+    "relevant_ids": ["page_8211"],
+    "lang": "banglish",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "শরিয়তে 'হুদুদ' বলতে কী বোঝায়, আর কোনো মুসলিম যদি কোনো অমুসলিম নাগরিকের ওপর অবিচার করে সে সম্পর্কে রাসুল (সা) কী বলেছেন?",
+    "answerable": true,
+    "relevant_ids": ["page_4617"],
+    "lang": "bn",
+    "difficulty": "direct"
+  },
+  {
+    "query": "সুরা হজ্জের ৪০-৪১ আয়াত অনুযায়ী রাষ্ট্রক্ষমতা লাভ করলে কোন কাজগুলো করার কথা বলা হয়েছে?",
+    "answerable": true,
+    "relevant_ids": ["page_5014"],
+    "lang": "bn",
+    "difficulty": "direct"
+  },
+  {
+    "query": "Sura Zumar onujayi kaferder jokhon dol bendhe jahanname nea hobe, tokhon rokkhira darja khule tader ki jiggesh korbe?",
+    "answerable": true,
+    "relevant_ids": ["page_7089"],
+    "lang": "banglish",
+    "difficulty": "hard"
+  },
+  {
+    "query": "আমিরের হাতে বাইআত না থাকলে জাহেলি মৃত্যু হয় — জামায়াত কি আসলেই এমন বিশ্বাস পোষণ করে?",
+    "answerable": true,
+    "relevant_ids": ["page_5674"],
+    "lang": "bn",
+    "difficulty": "hard"
+  },
+  {
+    "query": "Bangladesh Islami Chhatrasibir er gathontontro onujayi songothoner moulik lokkho o uddeshsho ki?",
+    "answerable": true,
+    "relevant_ids": ["page_4798"],
+    "lang": "banglish",
+    "difficulty": "direct"
+  },
+  {
+    "query": "প্রকৃত ইসলামী সংগঠনে কাউকে নেতৃত্বের জন্য কীসের ভিত্তিতে বাছাই করা হয়?",
+    "answerable": true,
+    "relevant_ids": ["page_5153"],
+    "lang": "bn",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "কারো ভুল ধারণা সংশোধন করতে চাইলে তার সঙ্গে কীভাবে কথা বলার পরামর্শ দেওয়া হয়েছে?",
+    "answerable": true,
+    "relevant_ids": ["page_4905"],
+    "lang": "bn",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "ইসলামের রাষ্ট্রদর্শনে খিলাফত কি কোনো নির্দিষ্ট ব্যক্তি, বংশ বা শ্রেণীর জন্য সংরক্ষিত, নাকি তা সবার?",
+    "answerable": true,
+    "relevant_ids": ["page_5491"],
+    "lang": "bn",
+    "difficulty": "hard"
+  },
+  {
+    "query": "রাষ্ট্রপ্রধান জনগণের আস্থাভাজন হওয়া সত্ত্বেও তাঁকে পরামর্শ নিতে বাধ্য করা হয় কেন?",
+    "answerable": true,
+    "relevant_ids": ["page_7311"],
+    "lang": "bn",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "Islami orthonitite taka rojgar korar khetre sobcheye prothom je niti ta ki?",
+    "answerable": true,
+    "relevant_ids": ["page_5181"],
+    "lang": "banglish",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "এদেশে প্রচলিত আধুনিক শিক্ষাব্যবস্থা কারা এবং কী উদ্দেশ্যে চালু করেছিল বলে লেখক মনে করেন?",
+    "answerable": true,
+    "relevant_ids": ["page_7167"],
+    "lang": "bn",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "Genesis er bonna'r bornonay kon duiti alada utso mishe geche, ebong tar moddhe ekta spushto osomonjossho ki?",
+    "answerable": true,
+    "relevant_ids": ["page_6657"],
+    "lang": "banglish",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "Which of Stephen Hawking's books became a huge bestseller, and roughly how many copies had it sold?",
+    "answerable": true,
+    "relevant_ids": ["page_8327"],
+    "lang": "en",
+    "difficulty": "direct"
+  },
+  {
+    "query": "What does the word 'culture' mean in this discussion, and which two features are treated as essential to every culture?",
+    "answerable": true,
+    "relevant_ids": ["page_5331"],
+    "lang": "en",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "Muhammad Qutub er kon duiti boi niye aro bistarito janar jonno kormira tar sathe dekha korte cheyechilo?",
+    "answerable": true,
+    "relevant_ids": ["page_6295"],
+    "lang": "banglish",
+    "difficulty": "direct"
+  },
+  {
+    "query": "'Asan Fiqah' boita mul bhabe kon bhashay ke likhechen, ar banglay ke onubad korechen?",
+    "answerable": true,
+    "relevant_ids": ["page_6392"],
+    "lang": "banglish",
+    "difficulty": "direct"
+  },
+  {
+    "query": "Bablatolar shopoth e koto jon mujahid chilen ebong tader kache ki dhoroner ostro chilo?",
+    "answerable": true,
+    "relevant_ids": ["page_8071"],
+    "lang": "banglish",
+    "difficulty": "direct"
+  },
+  {
+    "query": "মানুষের মৃত্যুর পরও কীভাবে তার আমলনামায় সওয়াব বা গুনাহ যোগ হতে থাকতে পারে?",
+    "answerable": true,
+    "relevant_ids": ["page_4968"],
+    "lang": "bn",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "নামাজ ও যিকিরের সময় মন অন্যদিকে চলে যায়, অথচ কোন কোন কাজে মুখ ও মন একসঙ্গে থাকে বলে লেখক বলেছেন?",
+    "answerable": true,
+    "relevant_ids": ["page_8247"],
+    "lang": "bn",
+    "difficulty": "conceptual"
+  },
+  {
+    "query": "শিয়া মতাদর্শে ইমামত এবং অন্তর্ধানে থাকা ইমামের ধারণা কীভাবে ব্যাখ্যা করা হয়?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "bn",
+    "difficulty": "hard"
+  },
+  {
+    "query": "Bitcoin ba onnanno cryptocurrency te binijog kora ki islami shariah onujayi jayej?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "banglish",
+    "difficulty": "hard"
+  },
+  {
+    "query": "কাদেরিয়া ও নকশবন্দিয়া তরিকার মধ্যে মূল পার্থক্য কী?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "bn",
+    "difficulty": "hard"
+  },
+  {
+    "query": "বৌদ্ধ ধর্মের চারটি আর্যসত্য কী কী?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "bn",
+    "difficulty": "hard"
+  },
+  {
+    "query": "Ahmadiyya ba Kadiani somprodayer protishthata ke ebong tader mul akida ki?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "banglish",
+    "difficulty": "hard"
+  },
+  {
+    "query": "How many books does the New Testament of the Bible contain?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "en",
+    "difficulty": "hard"
+  },
+  {
+    "query": "ইমাম আবু হানিফা ও ইমাম শাফেয়ীর উসুলে ফিকহের মূল পদ্ধতিগত পার্থক্য কী?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "bn",
+    "difficulty": "hard"
+  },
+  {
+    "query": "বাংলাদেশ ইসলামী ছাত্রশিবিরের বর্তমান কেন্দ্রীয় সভাপতির নাম কী?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "bn",
+    "difficulty": "hard"
+  },
+  {
+    "query": "বাংলাদেশ জাতীয় ক্রিকেট দলের বর্তমান অধিনায়ক কে?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "bn",
+    "difficulty": "direct"
+  },
+  {
+    "query": "পদ্মা সেতুর মূল অংশের দৈর্ঘ্য কত কিলোমিটার?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "bn",
+    "difficulty": "direct"
+  },
+  {
+    "query": "Python e ekta list ke reverse korar sohoj upay ki?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "banglish",
+    "difficulty": "direct"
+  },
+  {
+    "query": "What is the capital city of Australia?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "en",
+    "difficulty": "direct"
+  },
+  {
+    "query": "মানবদেহের কোষে মাইটোকন্ড্রিয়ার প্রধান কাজ কী?",
+    "answerable": false,
+    "relevant_ids": [],
+    "lang": "bn",
+    "difficulty": "direct"
+  }
+]
