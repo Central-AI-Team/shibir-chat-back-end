@@ -16,6 +16,11 @@ CHANGES vs the original:
      whether a missing document was never retrieved (embedder / chunking /
      query-rewrite problem) or was retrieved and then dropped by the reranker
      (reranker problem). scripts/eval_retrieval.py scores both stages.
+  6. Both functions take an optional collection_name, defaulting to None
+     (production, get_collection()). Added for scripts/eval_chunking.py, which
+     points retrieval at a temporary chunk_eval_* collection to score a
+     candidate chunking config without touching production. Every existing
+     caller is unaffected -- they just never pass it.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.core.config import settings
-from app.rag.chroma_client import get_collection
+from app.rag.chroma_client import get_collection, get_named_collection
 from app.rag.chunker import normalize
 from app.rag.embedder import embed_texts
 from app.rag.query_rewriter import expand_query
@@ -57,6 +62,7 @@ def retrieve_stages(
     fetch_k: int | None = None,
     rerank_top_n: int | None = None,
     use_rewrite: bool = True,
+    collection_name: str | None = None,
 ) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
     """Run retrieval and return (candidates, final).
 
@@ -70,6 +76,9 @@ def retrieve_stages(
     use_rewrite=False skips the Banglish/English -> Bengali LLM rewrite and
     searches the raw (NFC-normalized) query only, so the rewriter's
     contribution can be measured.
+
+    collection_name=None (default) queries the production collection. Pass a
+    name to query a different one instead -- see module docstring, point 6.
     """
     top_k = top_k or settings.top_k
     fetch_k = fetch_k or settings.fetch_k
@@ -81,7 +90,8 @@ def retrieve_stages(
         queries = (normalize(query),) if normalize(query) else (query,)
     embeddings = embed_texts(list(queries))
 
-    result = get_collection().query(
+    collection = get_collection() if collection_name is None else get_named_collection(collection_name)
+    result = collection.query(
         query_embeddings=embeddings,
         n_results=fetch_k,
         include=["documents", "metadatas", "distances"],
@@ -127,8 +137,11 @@ def retrieve_relevant_docs(
     query: str,
     top_k: int | None = None,
     fetch_k: int | None = None,
+    collection_name: str | None = None,
 ) -> list[Citation]:
-    _, final = retrieve_stages(query, top_k=top_k, fetch_k=fetch_k)
+    _, final = retrieve_stages(
+        query, top_k=top_k, fetch_k=fetch_k, collection_name=collection_name
+    )
     return [
         Citation(
             book=c.book,
