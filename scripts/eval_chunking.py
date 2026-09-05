@@ -45,6 +45,11 @@ better than production, where every other page is a potential distractor.
 Treat --sample numbers as directional; make the real call from a full-corpus
 run (or the largest N you can afford).
 
+RAM: the scoring phase holds bge-m3 and bge-reranker-v2-m3 resident at the
+same time (~4.5 GB of weights + torch/Chroma overhead). Budget ~6 GB free.
+A 7-8 GB box swap-thrashes here and the run gets OOM-killed mid-scoring --
+run this where there is real headroom, or a GPU.
+
 Usage:
     python -m scripts.eval_chunking [questions.json] [--sample N] [--apply]
         [--configs 900_150,700_120] [--k 1,3,5,10] [--no-rewrite]
@@ -270,9 +275,13 @@ def _print_cost_estimate(counts: list[dict], rate: float | None) -> int:
               f"(batch_size=16, CPU, bge-m3 -- see app/rag/embedder.py)")
         print(f"  TOTAL across {len(counts)} config(s): {total_chunks} chunks, "
               f"~{_fmt_seconds(total_chunks / rate)}")
-    print("  (rerank cost during eval is separate and small: fetch_k candidates "
-          "x n_questions x n_configs cross-encoder pairs -- seconds, not "
-          "minutes, even at fetch_k=25.)")
+    print("  (rerank compute during eval is separate: fetch_k candidates x "
+          "n_questions x n_configs cross-encoder pairs.)")
+    print("\n  PEAK RAM: the scoring phase holds bge-m3 (~2.2 GB) AND "
+          "bge-reranker-v2-m3 (~2.2 GB) resident at once, plus torch/Chroma "
+          "overhead -- budget ~6 GB free. On a box with less, the scoring "
+          "phase will swap-thrash or get OOM-killed (the embed phase, bge-m3 "
+          "only, is lighter). Same models scripts/eval_retrieval.py loads.")
     return total_chunks
 
 
