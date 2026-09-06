@@ -32,10 +32,16 @@ _NEEDS_EMBEDDING = or_(Page.embedded_at.is_(None), Page.updated_at > Page.embedd
 
 
 def _due_pages(session):
+    # excluded_from_rag: pages scripts/clean_corpus.py flagged (Arabic
+    # placeholders / cross-contaminated duplicates / orphans). Skipped here so
+    # a cleanup can never be undone by the next ingest. NOTE: the column is
+    # added by clean_corpus.py's migration -- run that once before ingesting
+    # after the model change that introduced it.
     return (
         session.query(Page)
         .options(joinedload(Page.book), joinedload(Page.chapter))
         .filter(Page.status == ContentStatus.published)
+        .filter(Page.excluded_from_rag.is_(False))
         .filter(_NEEDS_EMBEDDING)
         .all()
     )

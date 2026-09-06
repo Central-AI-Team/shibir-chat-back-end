@@ -1,6 +1,7 @@
 import enum
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Enum as SAEnum,
@@ -68,6 +69,17 @@ class Page(Base):
     content = Column(Text, nullable=False)
     language = Column(String(10), nullable=False)
     status = Column(SAEnum(ContentStatus), nullable=False, default=ContentStatus.published)
+
+    # RAG cleanup flag. Set by scripts/clean_corpus.py for pages a prior
+    # analysis flagged as Arabic-placeholder junk, cross-contaminated
+    # duplicates, or orphaned. app/rag/ingest.py._due_pages() skips these, so
+    # they are never (re-)embedded. Reversible: flip back to false + re-ingest.
+    # Added by the ADD COLUMN IF NOT EXISTS migration in clean_corpus.py --
+    # that migration MUST be run before any ingest after this model change.
+    excluded_from_rag = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    exclusion_reason = Column(Text, nullable=True)
 
     # Provenance only — which legacy SQLite file + row this came from.
     # Not used by the app after migration; kept so re-running the migration
