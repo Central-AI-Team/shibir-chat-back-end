@@ -489,8 +489,8 @@ def _print_diff(chosen_size: int, chosen_overlap: int, tentative: bool) -> None:
     print("CHUNKER.PY DIFF" + (" (TENTATIVE -- from --sample, confirm on full corpus)"
                                 if tentative else "") + "  (printed, NOT applied)")
     print("=" * 78)
-    print(f"  - CHUNK_SIZE = 900")
-    print(f"  - CHUNK_OVERLAP = 150")
+    print("  - CHUNK_SIZE = 900")
+    print("  - CHUNK_OVERLAP = 150")
     print(f"  + CHUNK_SIZE = {chosen_size}")
     print(f"  + CHUNK_OVERLAP = {chosen_overlap}")
     print("\n  If you apply this:")

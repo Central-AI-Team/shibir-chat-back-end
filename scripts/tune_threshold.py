@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
 from pathlib import Path
 
 from app.core.config import settings

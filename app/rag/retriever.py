@@ -21,12 +21,23 @@ CHANGES vs the original:
      points retrieval at a temporary chunk_eval_* collection to score a
      candidate chunking config without touching production. Every existing
      caller is unaffected -- they just never pass it.
+  7. retrieve_stages() takes an optional max_variants, defaulting to None
+     (expand_query's own default, settings.max_variants). Added for
+     scripts/eval_query_expansion.py, which sweeps variant counts against the
+     real pipeline. Every existing caller is unaffected -- they just never
+     pass it.
+  8. retrieve_stages() emits the Langfuse `rewrite` and `retrieve` spans (via
+     app.core.tracing -- a no-op unless a live request trace is active). This
+     is the one place that still holds the FULL pre-truncation candidate pool
+     and every candidate's rerank score, so the `retrieve` span can show the
+     candidates the reranker dropped, not just the five the user gets.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.core import tracing
 from app.core.config import settings
 from app.rag.chroma_client import get_collection, get_named_collection
 from app.rag.chunker import normalize
@@ -63,6 +74,7 @@ def retrieve_stages(
     rerank_top_n: int | None = None,
     use_rewrite: bool = True,
     collection_name: str | None = None,
+    max_variants: int | None = None,
 ) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
     """Run retrieval and return (candidates, final).
 
@@ -79,15 +91,21 @@ def retrieve_stages(
 
     collection_name=None (default) queries the production collection. Pass a
     name to query a different one instead -- see module docstring, point 6.
+
+    max_variants=None (default) leaves expand_query's own default
+    (settings.max_variants) alone -- no existing caller needs to pass this.
+    It exists so scripts/eval_query_expansion.py can sweep variant counts
+    against the real pipeline without a second retrieval code path.
     """
     top_k = top_k or settings.top_k
     fetch_k = fetch_k or settings.fetch_k
     rerank_top_n = rerank_top_n or top_k
 
     if use_rewrite:
-        queries = expand_query(query) or (query,)
+        queries = expand_query(query, max_variants=max_variants) or (query,)
     else:
         queries = (normalize(query),) if normalize(query) else (query,)
+    tracing.record_rewrite(queries)
     embeddings = embed_texts(list(queries))
 
     collection = get_collection() if collection_name is None else get_named_collection(collection_name)
@@ -115,21 +133,33 @@ def retrieve_stages(
 
     candidates = sorted(pool.values(), key=lambda x: x[2], reverse=True)
     if not candidates:
+        tracing.record_retrieval([], top_k=rerank_top_n)
         return [], []
 
     # Drop obvious noise before paying for the cross-encoder.
     candidates = [c for c in candidates if c[2] >= settings.min_similarity][:fetch_k]
     if not candidates:
+        tracing.record_retrieval([], top_k=rerank_top_n)
         return [], []
 
     search_query = queries[0]
-    ranked = rerank(search_query, [c[0] for c in candidates], top_n=rerank_top_n)
+    # Rerank the WHOLE candidate pool, not just the survivors. CrossEncoder
+    # .predict() already scores every (query, doc) pair -- top_n is only a
+    # slice -- so asking for all of them costs nothing extra and lets the
+    # `retrieve` trace span carry the rerank score of a candidate that was
+    # dropped ("retrieved at similarity 0.61 but reranked to 0.42"), which is
+    # the row a missed-answer investigation actually needs. The user-facing
+    # list (stage_b) is still cut to rerank_top_n right below.
+    ranked = rerank(search_query, [c[0] for c in candidates], top_n=len(candidates))
 
-    stage_a = [_chunk(doc, meta, sim) for doc, meta, sim in candidates]
-    stage_b = [
+    reranked = [
         _chunk(*candidates[idx], rerank_score=rerank_score)
         for idx, rerank_score in ranked
     ]
+    tracing.record_retrieval(reranked, top_k=rerank_top_n)
+
+    stage_a = [_chunk(doc, meta, sim) for doc, meta, sim in candidates]
+    stage_b = reranked[:rerank_top_n]
     return stage_a, stage_b
 
 

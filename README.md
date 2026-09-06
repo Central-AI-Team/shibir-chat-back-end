@@ -198,6 +198,87 @@ curl -s http://127.0.0.1:9200/ask -H "Content-Type: application/json" \
   -d '{"query": "যাকাতের অর্থ কোন কোন খাতে ব্যয় করা যায়?"}'
 ```
 
+## LLM tracing with Langfuse (self-hosted)
+
+End-to-end tracing of live `/chat` requests: one trace per request, with every
+LLM call **and** every RAG pipeline stage (intent → rewrite → retrieve → rerank
+→ gate → generate) grouped under it. Use it to debug real misses ("the right
+page *was* retrieved but scored 0.42, below the 0.5 gate") and to track
+cost/latency/quality over time.
+
+**It is opt-in and cannot affect the app.** With no keys set, the langfuse SDK
+is never imported, `get_client()` returns the plain OpenAI client, and `/chat`
+behaves byte-identically — no added latency, no background thread. When enabled,
+event delivery is fire-and-forget on a background thread (nothing is flushed on
+the request path), and every tracing call is wrapped so a slow/down/erroring
+Langfuse can never break or delay a response.
+
+### 1. Run a self-hosted Langfuse
+
+```bash
+git clone https://github.com/langfuse/langfuse
+cd langfuse
+docker compose up -d          # brings up Langfuse + its Postgres/ClickHouse
+# open http://localhost:3000 , create an account + a project,
+# then Project Settings → API Keys → create → copy the public & secret keys
+```
+
+Everything stays on your infra — trace data (user queries, book excerpts,
+answers) never leaves the machine running that compose stack.
+
+### 2. Turn it on in this app
+
+Add to `.env` (see `.env.example`):
+
+```
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=http://localhost:3000
+```
+
+Restart the server. That's it — `POST /chat` and `POST /chat/stream` now emit
+traces. To turn it **off** again: remove the two keys (or set
+`LANGFUSE_ENABLED=false`).
+
+### What a trace contains
+
+| Level | Data |
+|---|---|
+| trace | raw user query, resolved session id, optional `user_id`, final answer, cited sources, which mode ran, total latency |
+| span `intent` | the intent + how it was decided (`regex` / `llm` / `session`) |
+| span `rewrite` | the query-rewrite variants that were searched |
+| span `retrieve` | every reranked candidate — the ones kept **and** the ones dropped — each with a text preview + cosine similarity + rerank score + a `kept` flag (so "the right page was retrieved but reranked to 0.42" is visible at a glance) |
+| span `gate` | grounded vs refused, top rerank score, the threshold |
+| `generation` (×N) | each LLM call: model, messages, completion, **token usage + cost**, latency, and a `task` label (`intent` / `rewrite` / `persona` / `qa` / `note` / `suggest` / `roleplay`) so you can filter cost/latency per task |
+
+### Privacy / retention
+
+Traces contain user queries and book excerpts. Self-hosted, that data stays on
+your infra. API keys/secrets are never written into traces. To keep the trace
+**structure** (spans, token usage, cost, latency, rerank scores, gate decision)
+while redacting every query/excerpt/prompt/answer **text** field, set:
+
+```
+LANGFUSE_CAPTURE_IO=false
+```
+
+Retention is your call — configure it in the Langfuse project settings / its
+data-retention job.
+
+### Connecting evals to traces (scoring hook)
+
+`app/core/tracing.py` exposes `score_trace(trace_id, name, value, comment=...)`,
+a thin wrapper over Langfuse's score API. Use it to land quality signals on
+logged real queries:
+
+- a future frontend 👍/👎 button (POST the trace id back, call `score_trace`),
+- a batch job that scores logged queries,
+- the offline eval scripts (`eval_responses` / `eval_ragas`) emitting their
+  per-question scores against traces of logged queries — attach the trace id to
+  the run, then call `score_trace` per question.
+
+No UI is built for this; only the function is provided.
+
 ## Project Structure
 
 - `app/` — application code
