@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 import re
 
-from app.core.llm import get_client, get_model
+from app.core import tracing
+from app.core.llm import complete
 
 logger = logging.getLogger(__name__)
 
@@ -63,13 +64,10 @@ QA - ব্যবহারকারী সরাসরি কোনো তথ্
 
 
 def _classify_with_llm(message: str) -> str:
-    response = get_client().chat.completions.create(
-        model=get_model(),
-        messages=[
-            {"role": "system", "content": _CLASSIFIER_SYSTEM},
-            {"role": "user", "content": message},
-        ],
-    )
+    response = complete("intent", [
+        {"role": "system", "content": _CLASSIFIER_SYSTEM},
+        {"role": "user", "content": message},
+    ])
     raw = (response.choices[0].message.content or "").strip().upper()
     for intent in _VALID_INTENTS:
         if intent in raw:
@@ -84,10 +82,14 @@ def classify_intent(message: str, has_active_roleplay_session: bool) -> str:
     if has_active_roleplay_session and not _ROLEPLAY_EXIT_RE.search(normalized):
         # An ongoing roleplay conversation shouldn't get reclassified as QA
         # (or anything else) on every follow-up turn.
+        tracing.record_intent("ROLEPLAY", method="session")
         return "ROLEPLAY"
 
     for intent, pattern in _INTENT_PATTERNS:
         if pattern.search(normalized):
+            tracing.record_intent(intent, method="regex")
             return intent
 
-    return _classify_with_llm(normalized)
+    result = _classify_with_llm(normalized)
+    tracing.record_intent(result, method="llm")
+    return result

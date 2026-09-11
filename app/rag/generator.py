@@ -1,6 +1,21 @@
+"""Grounded Bengali answer generation.
+
+CHANGES: generate_answer() gained three optional, keyword-only parameters
+(model, client, extra_params) so scripts/eval_generation_ab.py can run the
+SAME prompt/context-formatting through a different model/provider to compare
+answer quality. qa_service.answer_question() (and any future plain caller)
+still calls generate_answer(query, citations) exactly as before -- with
+model=client=None, it now routes through complete("qa", ...) -- see
+app/core/llm.py -- i.e. whichever model settings.model_by_task["qa"]
+resolves to (today's single default until that's explicitly assigned).
+Passing an explicit model/client (as an eval script does) bypasses that
+routing and calls exactly what was asked for, extra_params passed straight
+through -- unaffected by settings.model_by_task either way.
+"""
+
 from __future__ import annotations
 
-from app.core.llm import get_client, get_model
+from app.core.llm import complete, get_client, get_model
 from app.schemas.query import Citation
 
 _SYSTEM = """তুমি একজন বন্ধুত্বপূর্ণ বাংলা প্রশ্নোত্তর সহকারী। ব্যবহারকারীকে নিচে
@@ -37,17 +52,69 @@ def _format_context(citations: list[Citation]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def generate_answer(query: str, citations: list[Citation]) -> str:
-    response = get_client().chat.completions.create(
-        model=get_model(),
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": _USER.format(
-                context=_format_context(citations), query=query
-            )},
-        ],
-        # gpt-5-mini only supports the default temperature (1) -- passing any
-        # other value is a 400. Grounding/determinism now comes entirely from
-        # the prompt, not sampling temperature.
-    )
+def generate_answer(
+    query: str,
+    citations: list[Citation],
+    *,
+    model: str | None = None,
+    client=None,
+    extra_params: dict | None = None,
+) -> str:
+    """Generate a grounded answer with the production prompt/context format.
+
+    model=client=None (the plain call every real caller makes) routes through
+    complete("qa", ...) -- app/core/llm.py -- which resolves the "qa" task's
+    model from settings.model_by_task and applies that model's own param
+    quirks automatically. Passing an explicit model and/or client (as an
+    eval script does, to run this exact prompt through an arbitrary model)
+    bypasses that routing entirely and calls exactly what was asked for.
+    """
+    messages = [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": _USER.format(
+            context=_format_context(citations), query=query
+        )},
+    ]
+    if model is None and client is None:
+        response = complete("qa", messages, **(extra_params or {}))
+    else:
+        response = (client or get_client()).chat.completions.create(
+            model=model or get_model("qa"),
+            messages=messages,
+            # gpt-5-mini only supports the default temperature (1) -- passing
+            # any other value is a 400. A different model's own
+            # temperature/token-budget knobs go through extra_params instead
+            # of hardcoding another model's quirks in here.
+            **(extra_params or {}),
+        )
     return response.choices[0].message.content
+
+
+def stream_answer(query: str, citations: list[Citation], *, trace_id: str | None = None):
+    """Streaming counterpart of generate_answer(): yields answer text deltas
+    as they arrive from the model.
+
+    Uses the exact same prompt, context formatting and model routing
+    (complete("qa", ...)) as generate_answer -- the only difference is
+    stream=True and yielding chunks instead of returning the whole string.
+    Used by POST /chat/stream; the non-streaming /chat path is unchanged.
+
+    trace_id, if given, is passed straight to complete() so the streamed
+    generation nests under the request's Langfuse trace. The streaming path
+    has to pass it explicitly because it is iterated in a threadpool where
+    the trace ContextVar app/core/llm.py would otherwise read is not visible
+    (see tracing.finalize_request_trace's docstring). None -> unchanged.
+    """
+    messages = [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": _USER.format(
+            context=_format_context(citations), query=query
+        )},
+    ]
+    extra = {"trace_id": trace_id} if trace_id else {}
+    for chunk in complete("qa", messages, stream=True, **extra):
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta

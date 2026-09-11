@@ -7,7 +7,7 @@ retrieve_relevant_docs() the same way qa_service does.
 
 from __future__ import annotations
 
-from app.core.llm import get_client, get_model
+from app.core.llm import complete
 from app.services.session_store import MAX_HISTORY
 
 _PERSONA_EXTRACT_SYSTEM = """ব্যবহারকারীর নির্দেশনা থেকে শুধুমাত্র চরিত্র/ব্যক্তিত্বের
@@ -20,13 +20,10 @@ _ROLEPLAY_SYSTEM_TEMPLATE = """তুমি এখন {persona} চরিত্�
 
 
 def _extract_persona(message: str) -> str:
-    response = get_client().chat.completions.create(
-        model=get_model(),
-        messages=[
-            {"role": "system", "content": _PERSONA_EXTRACT_SYSTEM},
-            {"role": "user", "content": message},
-        ],
-    )
+    response = complete("persona", [
+        {"role": "system", "content": _PERSONA_EXTRACT_SYSTEM},
+        {"role": "user", "content": message},
+    ])
     return (response.choices[0].message.content or "").strip()
 
 
@@ -41,10 +38,7 @@ def handle_roleplay(message: str, session: dict) -> str:
         messages.append({"role": entry["role"], "content": entry["content"]})
     messages.append({"role": "user", "content": message})
 
-    response = get_client().chat.completions.create(
-        model=get_model(),
-        messages=messages,
-    )
+    response = complete("roleplay", messages)
     reply = response.choices[0].message.content
 
     # `session` is the same dict object held in session_store's module-level

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import joinedload
 
-from app.core.llm import get_client, get_model
+from app.core.llm import complete
 from app.db.models import Book, Chapter, ContentStatus, Page
 from app.db.session import SessionLocal
 from app.rag.chunker import normalize
@@ -64,13 +64,10 @@ _REDUCE_PROMPT = """নিচে একটি অধ্যায়ের বি
 
 
 def _llm(prompt: str, max_tokens: int = 2000) -> str:
-    resp = get_client().chat.completions.create(
-        model=get_model(),
-        messages=[{"role": "user", "content": prompt}],
-        # gpt-5-mini only supports the default temperature (1), and takes
-        # max_completion_tokens instead of max_tokens.
-        max_completion_tokens=max_tokens,
-    )
+    # Routed via complete("note", ...) -- app/core/llm.py -- token_budget
+    # becomes whichever token-cap kwarg (max_completion_tokens vs max_tokens)
+    # the model settings.model_by_task["note"] resolves to actually needs.
+    resp = complete("note", [{"role": "user", "content": prompt}], token_budget=max_tokens)
     return resp.choices[0].message.content.strip()
 
 

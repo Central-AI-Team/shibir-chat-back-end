@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
-from app.db.models import Article, ContentStatus, Page
+from app.db.models import Article, Book, ContentStatus, Page
 from app.db.session import SessionLocal
 from app.rag.chroma_client import get_collection
 from app.rag.chunker import build_document, chunk_text
@@ -32,10 +32,19 @@ _NEEDS_EMBEDDING = or_(Page.embedded_at.is_(None), Page.updated_at > Page.embedd
 
 
 def _due_pages(session):
+    # excluded_from_rag: pages scripts/clean_corpus.py flagged (Arabic
+    # placeholders / cross-contaminated duplicates / orphans). Skipped here so
+    # a cleanup can never be undone by the next ingest. NOTE: the column is
+    # added by clean_corpus.py's migration -- run that once before ingesting
+    # after the model change that introduced it.
     return (
         session.query(Page)
-        .options(joinedload(Page.book), joinedload(Page.chapter))
+        .options(
+            joinedload(Page.book).joinedload(Book.category),
+            joinedload(Page.chapter),
+        )
         .filter(Page.status == ContentStatus.published)
+        .filter(Page.excluded_from_rag.is_(False))
         .filter(_NEEDS_EMBEDDING)
         .all()
     )
@@ -69,7 +78,7 @@ def _ingest(session, collection, rows, prefix: str, extract) -> int:
     n_chunks = 0
 
     for row in rows:
-        book, chapter, body, source_db = extract(row)
+        book, chapter, body, source_db, book_id, category = extract(row)
         pieces = chunk_text(body or "")
         if not pieces:
             continue
@@ -86,6 +95,13 @@ def _ingest(session, collection, rows, prefix: str, extract) -> int:
                 "chunk_index": i,
                 "row_key": f"{prefix}_{row.id}",
                 "source_db": source_db,
+                # book_id/category: lets the retriever tell two DIFFERENT
+                # books that happen to share the same display name apart
+                # (e.g. book_id 173 vs 210, both named "কর্মপদ্ধতি"), so
+                # citations can disambiguate instead of silently colliding on
+                # the name string alone.
+                "book_id": book_id,
+                "category": category,
             })
             n_chunks += 1
 
@@ -125,11 +141,13 @@ def ingest_all() -> None:
                 p.chapter.name if p.chapter else "Unknown",
                 p.content,
                 p.source_db or "unknown",
+                p.book_id,
+                p.book.category.name if p.book and p.book.category else None,
             ),
         )
         total += _ingest(
             session, collection, articles, "article",
-            lambda a: (a.title, "প্রবন্ধ", a.content, "articles"),
+            lambda a: (a.title, "প্রবন্ধ", a.content, "articles", None, None),
         )
         print(f"All sources ingested. Total chunks: {total}")
     finally:

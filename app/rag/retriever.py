@@ -8,30 +8,113 @@ CHANGES vs the original:
      to tell "found nothing relevant" from "found something".
   4. Returns Citations carrying a score, so qa_service can decide whether the
      corpus actually covers the question.
+  5. The pipeline is split into retrieve_stages(), which hands back BOTH the
+     pre-rerank candidate pool and the post-rerank final list.
+     retrieve_relevant_docs() is unchanged from a caller's point of view -- it
+     is now a thin wrapper that keeps only the final list and maps it to
+     Citations. The extra stage exists because a Citation cannot tell you
+     whether a missing document was never retrieved (embedder / chunking /
+     query-rewrite problem) or was retrieved and then dropped by the reranker
+     (reranker problem). scripts/eval_retrieval.py scores both stages.
+  6. Both functions take an optional collection_name, defaulting to None
+     (production, get_collection()). Added for scripts/eval_chunking.py, which
+     points retrieval at a temporary chunk_eval_* collection to score a
+     candidate chunking config without touching production. Every existing
+     caller is unaffected -- they just never pass it.
+  7. retrieve_stages() takes an optional max_variants, defaulting to None
+     (expand_query's own default, settings.max_variants). Added for
+     scripts/eval_query_expansion.py, which sweeps variant counts against the
+     real pipeline. Every existing caller is unaffected -- they just never
+     pass it.
+  8. retrieve_stages() emits the Langfuse `rewrite` and `retrieve` spans (via
+     app.core.tracing -- a no-op unless a live request trace is active). This
+     is the one place that still holds the FULL pre-truncation candidate pool
+     and every candidate's rerank score, so the `retrieve` span can show the
+     candidates the reranker dropped, not just the five the user gets.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from sqlalchemy import func
+
+from app.core import tracing
 from app.core.config import settings
-from app.rag.chroma_client import get_collection
+from app.db.models import Book
+from app.db.session import SessionLocal
+from app.rag.chroma_client import get_collection, get_named_collection
+from app.rag.chunker import normalize
 from app.rag.embedder import embed_texts
 from app.rag.query_rewriter import expand_query
 from app.rag.reranker import rerank
 from app.schemas.query import Citation
 
 
-def retrieve_relevant_docs(
+@dataclass(frozen=True)
+class RetrievedChunk:
+    """One chunk plus the metadata a Citation deliberately hides.
+
+    row_key ("page_8219" / "article_1234", see ingest.py) is the stable
+    page/article-level identifier -- the unit relevance judgements are made
+    against, since a human can label "this page answers the question" but not
+    "chunk 3 of this page".
+    """
+
+    row_key: str
+    chunk_index: int
+    book: str
+    chapter: str
+    source_db: str
+    content: str
+    similarity: float
+    rerank_score: float | None = None
+    book_id: int | None = None
+
+
+def retrieve_stages(
     query: str,
     top_k: int | None = None,
     fetch_k: int | None = None,
-) -> list[Citation]:
+    rerank_top_n: int | None = None,
+    use_rewrite: bool = True,
+    collection_name: str | None = None,
+    max_variants: int | None = None,
+) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
+    """Run retrieval and return (candidates, final).
+
+    candidates -- the pool that is actually handed to the cross-encoder:
+        post vector-search, post min_similarity filter, truncated to fetch_k,
+        sorted by similarity. Anything not in here was never seen by the
+        reranker.
+    final -- the reranked list, best first, truncated to rerank_top_n
+        (default top_k, i.e. exactly what the user gets).
+
+    use_rewrite=False skips the Banglish/English -> Bengali LLM rewrite and
+    searches the raw (NFC-normalized) query only, so the rewriter's
+    contribution can be measured.
+
+    collection_name=None (default) queries the production collection. Pass a
+    name to query a different one instead -- see module docstring, point 6.
+
+    max_variants=None (default) leaves expand_query's own default
+    (settings.max_variants) alone -- no existing caller needs to pass this.
+    It exists so scripts/eval_query_expansion.py can sweep variant counts
+    against the real pipeline without a second retrieval code path.
+    """
     top_k = top_k or settings.top_k
     fetch_k = fetch_k or settings.fetch_k
+    rerank_top_n = rerank_top_n or top_k
 
-    queries = expand_query(query) or (query,)
+    if use_rewrite:
+        queries = expand_query(query, max_variants=max_variants) or (query,)
+    else:
+        queries = (normalize(query),) if normalize(query) else (query,)
+    tracing.record_rewrite(queries)
     embeddings = embed_texts(list(queries))
 
-    result = get_collection().query(
+    collection = get_collection() if collection_name is None else get_named_collection(collection_name)
+    result = collection.query(
         query_embeddings=embeddings,
         n_results=fetch_k,
         include=["documents", "metadatas", "distances"],
@@ -47,33 +130,121 @@ def retrieve_relevant_docs(
         for doc, meta, dist in zip(docs, metas, dists):
             # cosine space: distance in [0, 2]; similarity = 1 - distance.
             score = 1.0 - float(dist)
-            key = f"{meta.get('page_id')}:{meta.get('chunk_index', 0)}"
+            # row_key, not page_id: page ids and article ids are independent
+            # sequences, so keying on page_id alone collides across the two.
+            key = f"{_row_key(meta)}:{meta.get('chunk_index', 0)}"
             if key not in pool or score > pool[key][2]:
                 pool[key] = (doc, meta, score)
 
     candidates = sorted(pool.values(), key=lambda x: x[2], reverse=True)
     if not candidates:
-        return []
+        tracing.record_retrieval([], top_k=rerank_top_n)
+        return [], []
 
     # Drop obvious noise before paying for the cross-encoder.
     candidates = [c for c in candidates if c[2] >= settings.min_similarity][:fetch_k]
     if not candidates:
-        return []
+        tracing.record_retrieval([], top_k=rerank_top_n)
+        return [], []
 
     search_query = queries[0]
-    ranked = rerank(search_query, [c[0] for c in candidates], top_n=top_k)
+    # Rerank the WHOLE candidate pool, not just the survivors. CrossEncoder
+    # .predict() already scores every (query, doc) pair -- top_n is only a
+    # slice -- so asking for all of them costs nothing extra and lets the
+    # `retrieve` trace span carry the rerank score of a candidate that was
+    # dropped ("retrieved at similarity 0.61 but reranked to 0.42"), which is
+    # the row a missed-answer investigation actually needs. The user-facing
+    # list (stage_b) is still cut to rerank_top_n right below.
+    ranked = rerank(search_query, [c[0] for c in candidates], top_n=len(candidates))
 
-    citations: list[Citation] = []
-    for idx, rerank_score in ranked:
-        doc, meta, sim = candidates[idx]
-        citations.append(
-            Citation(
-                book=meta.get("book", "Unknown"),
-                chapter=meta.get("chapter", "Unknown"),
-                source_db=meta.get("source_db", "unknown"),
-                content=doc,
-                similarity=round(sim, 4),
-                rerank_score=round(rerank_score, 4),
-            )
+    reranked = [
+        _chunk(*candidates[idx], rerank_score=rerank_score)
+        for idx, rerank_score in ranked
+    ]
+    tracing.record_retrieval(reranked, top_k=rerank_top_n)
+
+    stage_a = [_chunk(doc, meta, sim) for doc, meta, sim in candidates]
+    stage_b = reranked[:rerank_top_n]
+    return stage_a, stage_b
+
+
+def retrieve_relevant_docs(
+    query: str,
+    top_k: int | None = None,
+    fetch_k: int | None = None,
+    collection_name: str | None = None,
+) -> list[Citation]:
+    _, final = retrieve_stages(
+        query, top_k=top_k, fetch_k=fetch_k, collection_name=collection_name
+    )
+    return [
+        Citation(
+            book=c.book,
+            chapter=c.chapter,
+            source_db=c.source_db,
+            content=c.content,
+            similarity=round(c.similarity, 4),
+            rerank_score=round(c.rerank_score, 4) if c.rerank_score is not None else None,
         )
-    return citations
+        for c in final
+    ]
+
+
+def _row_key(meta: dict) -> str:
+    """Page/article-level id. Falls back for chunks written before row_key."""
+    return str(meta.get("row_key") or f"page_{meta.get('page_id')}")
+
+
+# Two different books can share the exact same `books.name` (e.g. book_id 173
+# and 210 are both titled "কর্মপদ্ধতি" -- confirmed genuinely different books,
+# just an unlucky title collision upstream). They already live under distinct
+# book_ids, so retrieval itself never mixes their content -- this is a
+# citation-clarity problem only: "সূত্র: কর্মপদ্ধতি" doesn't tell the reader
+# which one. Cached for the life of the process -- the set of colliding
+# titles changes only when books are added/renamed, which doesn't happen at
+# request time.
+_AMBIGUOUS_BOOK_NAMES: set[str] | None = None
+
+
+def _ambiguous_book_names() -> set[str]:
+    global _AMBIGUOUS_BOOK_NAMES
+    if _AMBIGUOUS_BOOK_NAMES is None:
+        with SessionLocal() as s:
+            rows = (
+                s.query(Book.name)
+                .group_by(Book.name)
+                .having(func.count(func.distinct(Book.id)) > 1)
+                .all()
+            )
+        _AMBIGUOUS_BOOK_NAMES = {name for (name,) in rows}
+    return _AMBIGUOUS_BOOK_NAMES
+
+
+def _display_book(name: str, category: str | None) -> str:
+    """Append a category disambiguator when `name` collides across book_ids.
+
+    Falls back to the bare name if this chunk's metadata predates the
+    book_id/category fields (old Chroma vectors from before ingest.py started
+    writing them) -- category is None there, so disambiguation is skipped
+    rather than appending "(None)".
+    """
+    if category and name in _ambiguous_book_names():
+        return f"{name} ({category})"
+    return name
+
+
+def _chunk(
+    doc: str, meta: dict, similarity: float, rerank_score: float | None = None
+) -> RetrievedChunk:
+    book_id = meta.get("book_id")
+    return RetrievedChunk(
+        row_key=_row_key(meta),
+        chunk_index=int(meta.get("chunk_index", 0)),
+        book=_display_book(meta.get("book", "Unknown"), meta.get("category")),
+        chapter=meta.get("chapter", "Unknown"),
+        source_db=meta.get("source_db", "unknown"),
+        content=doc,
+        similarity=similarity,
+        rerank_score=rerank_score,
+        book_id=int(book_id) if book_id is not None else None,
+    )

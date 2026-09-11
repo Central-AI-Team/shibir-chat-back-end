@@ -38,6 +38,11 @@ joblib==1.5.2
 jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
 kubernetes==34.1.0
+# LLM tracing / observability. Isolated to app/core/tracing.py + the wiring
+# in app/core/llm.py; opt-in via LANGFUSE_* env (disabled by default).
+# Pinned to the v2 "manual client" API -- v3/v4 are an OpenTelemetry rewrite
+# with a different surface; see app/core/tracing.py before bumping.
+langfuse==2.60.10
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
@@ -107,6 +112,7 @@ uvloop==0.22.1; sys_platform != "win32"
 watchfiles==1.1.1
 websocket-client==1.9.0
 websockets==15.0.1
+wrapt==1.17.3          # langfuse.openai uses wrapt to wrap the OpenAI SDK
 zipp==3.23.0
 
 pytest==9.1.1

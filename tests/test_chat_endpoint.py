@@ -69,7 +69,9 @@ def test_chat_note_intent_routes_to_note_generation():
 def test_chat_roleplay_intent_continues_persona_across_turns():
     with (
         patch("app.api.router.classify_intent", return_value="ROLEPLAY"),
-        patch("app.services.roleplay_service.get_client") as mock_get_client,
+        # roleplay_service now calls llm.complete(), which resolves its client
+        # through app.core.llm.get_client() -- patch there, not on the service.
+        patch("app.core.llm.get_client") as mock_get_client,
     ):
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -111,7 +113,8 @@ def test_chat_suggestion_intent_returns_sources_when_grounded():
     with (
         patch("app.api.router.classify_intent", return_value="SUGGESTION"),
         patch("app.services.suggestion_service.retrieve_relevant_docs", return_value=_CITATIONS),
-        patch("app.services.suggestion_service.get_client") as mock_get_client,
+        # suggestion_service now calls llm.complete(); patch the client there.
+        patch("app.core.llm.get_client") as mock_get_client,
     ):
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client

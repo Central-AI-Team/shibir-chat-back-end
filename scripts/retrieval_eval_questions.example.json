@@ -1,0 +1,65 @@
+[
+  {
+    "_README": [
+      "Dataset for scripts/eval_retrieval.py.",
+      "",
+      "SHAPE: a JSON LIST of {\"query\": str, \"answerable\": bool} -- exactly what",
+      "scripts/tune_threshold.py and scripts/eval_responses.py already consume --",
+      "plus one extra field, \"relevant_ids\". Those scripts ignore keys they do not",
+      "know about (including this _README), so one file feeds all three.",
+      "That is also why this note lives on the first entry instead of a top-level",
+      "key: a top-level object would stop being a list and break the other two.",
+      "",
+      "relevant_ids: the row_key of every page/article that genuinely answers the",
+      "query. A row_key looks like \"page_8219\" (or \"article_1234\" once articles",
+      "are ingested) and is written into every chunk's Chroma metadata by",
+      "app/rag/ingest.py. It is deliberately the PAGE-level id: a human can judge",
+      "\"this page answers the question\", but not \"chunk 3 of this page does\".",
+      "",
+      "  answerable: true  + non-empty relevant_ids -> those ids SHOULD be retrieved.",
+      "  answerable: false + empty relevant_ids     -> nothing relevant should",
+      "                                                surface; these entries feed",
+      "                                                the false-positive rate.",
+      "",
+      "HOW TO FILL IN relevant_ids WITHOUT HAND-HUNTING IDS:",
+      "  1. Write the query with \"relevant_ids\": [] and the right answerable flag.",
+      "  2. Run:  python -m scripts.eval_retrieval --label scripts/my_questions.json",
+      "     For every entry with an empty relevant_ids it prints the top candidates:",
+      "     row_key, book/chapter, scores and a text preview, plus a paste-ready",
+      "     JSON line.",
+      "  3. Paste the row_keys that actually answer the question. Leave out ones",
+      "     that are merely on-topic -- a loose gold set inflates recall and hides",
+      "     real retrieval failures.",
+      "  4. If NOTHING in the candidate list answers it, either the corpus does not",
+      "     cover it (set answerable: false, relevant_ids: []) or you have found a",
+      "     genuine retrieval miss -- in that case grep chroma_dump.csv for the",
+      "     right page and add its row_key anyway. Those are the most valuable",
+      "     entries in the set, because they are the ones the metrics must punish.",
+      "",
+      "Aim for 30-50 entries, roughly two thirds answerable. Mix Bengali script,",
+      "Banglish and English queries so --ablation can show what the query rewriter",
+      "actually buys you.",
+      "",
+      "The row_keys below are real ids from this corpus, labelled with --label,",
+      "so the example runs and scores out of the box. Replace them with your own."
+    ],
+    "query": "নামাজের গুরুত্ব ও ফজিলত কী?",
+    "answerable": true,
+    "relevant_ids": ["page_6498", "page_6971"]
+  },
+  {
+    "query": "যাকাতের অর্থ কোন কোন খাতে ব্যয় করা যায়?",
+    "answerable": true,
+    "relevant_ids": ["page_5429", "page_5204"]
+  },
+  {
+    "query": "islami shikkha bebosthar mullo kotota?",
+    "answerable": true,
+    "relevant_ids": ["page_7168", "page_5227"]
+  },
+  {
+    "query": "বাংলাদেশ ক্রিকেট দলের বর্তমান অধিনায়ক কে?",
+    "answerable": false,
+    "relevant_ids": []
+  }
+]

@@ -35,6 +35,7 @@ import random
 import re
 import time
 
+from app.core import tracing
 from app.core.config import settings
 from app.rag.generator import generate_answer
 from app.rag.retriever import retrieve_relevant_docs
@@ -94,6 +95,8 @@ def answer_question(query: str) -> QueryResponse:
             query=query, answer=answer, sources=[], response_time_ms=response_time_ms
         )
 
+    # The `retrieve` trace span (full candidate pool + rerank scores) is
+    # emitted inside retrieve_stages(); nothing to record here.
     citations = retrieve_relevant_docs(query)
 
     # The reranker score is the honest relevance signal. If even the best
@@ -102,6 +105,11 @@ def answer_question(query: str) -> QueryResponse:
     # an answer (generator.py's prompt has it say plainly that the books
     # don't cover this), just with no citations to attach.
     relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
+    tracing.record_gate(
+        grounded=relevant,
+        top_score=citations[0].rerank_score if citations else None,
+        threshold=settings.min_rerank_score,
+    )
     grounding = citations if relevant else []
 
     answer = generate_answer(query, grounding)

@@ -8,8 +8,9 @@ allowed to phrase a recommendation/opinion based on the retrieved context.
 
 from __future__ import annotations
 
+from app.core import tracing
 from app.core.config import settings
-from app.core.llm import get_client, get_model
+from app.core.llm import complete
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import Citation
 
@@ -56,8 +57,14 @@ def _format_context(citations: list[Citation]) -> str:
 
 
 def give_suggestion(query: str) -> tuple[str, list[Citation]]:
+    # The `retrieve` trace span is emitted inside retrieve_stages().
     citations = retrieve_relevant_docs(query)
     relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
+    tracing.record_gate(
+        grounded=relevant,
+        top_score=citations[0].rerank_score if citations else None,
+        threshold=settings.min_rerank_score,
+    )
     grounding = citations if relevant else []
 
     if relevant:
@@ -67,13 +74,10 @@ def give_suggestion(query: str) -> tuple[str, list[Citation]]:
     else:
         system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=query)
 
-    response = get_client().chat.completions.create(
-        model=get_model(),
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    )
+    response = complete("suggest", [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ])
     answer = response.choices[0].message.content
 
     return answer, grounding
