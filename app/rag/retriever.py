@@ -37,8 +37,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import func
+
 from app.core import tracing
 from app.core.config import settings
+from app.db.models import Book
+from app.db.session import SessionLocal
 from app.rag.chroma_client import get_collection, get_named_collection
 from app.rag.chunker import normalize
 from app.rag.embedder import embed_texts
@@ -65,6 +69,7 @@ class RetrievedChunk:
     content: str
     similarity: float
     rerank_score: float | None = None
+    book_id: int | None = None
 
 
 def retrieve_stages(
@@ -190,16 +195,56 @@ def _row_key(meta: dict) -> str:
     return str(meta.get("row_key") or f"page_{meta.get('page_id')}")
 
 
+# Two different books can share the exact same `books.name` (e.g. book_id 173
+# and 210 are both titled "কর্মপদ্ধতি" -- confirmed genuinely different books,
+# just an unlucky title collision upstream). They already live under distinct
+# book_ids, so retrieval itself never mixes their content -- this is a
+# citation-clarity problem only: "সূত্র: কর্মপদ্ধতি" doesn't tell the reader
+# which one. Cached for the life of the process -- the set of colliding
+# titles changes only when books are added/renamed, which doesn't happen at
+# request time.
+_AMBIGUOUS_BOOK_NAMES: set[str] | None = None
+
+
+def _ambiguous_book_names() -> set[str]:
+    global _AMBIGUOUS_BOOK_NAMES
+    if _AMBIGUOUS_BOOK_NAMES is None:
+        with SessionLocal() as s:
+            rows = (
+                s.query(Book.name)
+                .group_by(Book.name)
+                .having(func.count(func.distinct(Book.id)) > 1)
+                .all()
+            )
+        _AMBIGUOUS_BOOK_NAMES = {name for (name,) in rows}
+    return _AMBIGUOUS_BOOK_NAMES
+
+
+def _display_book(name: str, category: str | None) -> str:
+    """Append a category disambiguator when `name` collides across book_ids.
+
+    Falls back to the bare name if this chunk's metadata predates the
+    book_id/category fields (old Chroma vectors from before ingest.py started
+    writing them) -- category is None there, so disambiguation is skipped
+    rather than appending "(None)".
+    """
+    if category and name in _ambiguous_book_names():
+        return f"{name} ({category})"
+    return name
+
+
 def _chunk(
     doc: str, meta: dict, similarity: float, rerank_score: float | None = None
 ) -> RetrievedChunk:
+    book_id = meta.get("book_id")
     return RetrievedChunk(
         row_key=_row_key(meta),
         chunk_index=int(meta.get("chunk_index", 0)),
-        book=meta.get("book", "Unknown"),
+        book=_display_book(meta.get("book", "Unknown"), meta.get("category")),
         chapter=meta.get("chapter", "Unknown"),
         source_db=meta.get("source_db", "unknown"),
         content=doc,
         similarity=similarity,
         rerank_score=rerank_score,
+        book_id=int(book_id) if book_id is not None else None,
     )

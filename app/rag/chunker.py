@@ -34,6 +34,39 @@ def normalize(text: str) -> str:
     return _BLANKS.sub("\n\n", text).strip()
 
 
+_BOUNDARY_WINDOW = 100  # how far back _find_safe_boundary will search for a delimiter
+
+
+def _find_safe_boundary(text: str, target_pos: int, window: int = _BOUNDARY_WINDOW) -> int:
+    """Nearest safe cut point at/before target_pos, so a slice starting or
+    ending here never splits a word.
+
+    Preference order: Bengali danda (।), sentence-ending punctuation, newline,
+    then whitespace -- searched backward from target_pos within `window`
+    chars. Falls forward to the next whitespace if nothing turns up in the
+    window (better a slightly longer/shorter overlap than a broken word).
+    """
+    if target_pos <= 0:
+        return 0
+    if target_pos >= len(text):
+        return len(text)
+
+    search_start = max(0, target_pos - window)
+    segment = text[search_start:target_pos]
+
+    for delimiters in (["।"], [".", "!", "?", "؟"], ["\n"], [" ", "\t"]):
+        best = -1
+        for d in delimiters:
+            pos = segment.rfind(d)
+            if pos > best:
+                best = pos
+        if best != -1:
+            return search_start + best + 1  # cut just after the delimiter
+
+    forward = text.find(" ", target_pos)
+    return forward + 1 if forward != -1 else len(text)
+
+
 def _split_once(text: str, limit: int) -> list[str]:
     if len(text) <= limit:
         return [text]
@@ -81,7 +114,14 @@ def chunk_text(
 
     out = [merged[0]]
     for prev, cur in zip(merged, merged[1:]):
-        out.append((prev[-overlap:] + " " + cur).strip())
+        # prev is already a boundary-safe piece from _split_once, but a raw
+        # prev[-overlap:] slice for the carried-over tail is NOT -- it cuts at
+        # a fixed character count with no regard for word boundaries, which
+        # is exactly what was splitting words (Bengali/Arabic included) at
+        # chunk-to-chunk overlaps. Snap the tail's start to a safe boundary
+        # instead of a raw character offset.
+        tail_start = _find_safe_boundary(prev, max(0, len(prev) - overlap))
+        out.append((prev[tail_start:] + " " + cur).strip())
     return out
 
 
