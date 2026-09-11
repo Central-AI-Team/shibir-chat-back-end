@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shibir-chat/schemas/ocr_page_record.schema.json",
+  "title": "OCRPageRecord",
+  "description": "One row per physical page extracted via OCR (Vision or Document AI), normalized for loading into the books/chapters/pages pipeline. Engine-agnostic: raw engine responses live in a separate bronze layer, never here.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pipeline_stage",
+    "page_uid",
+    "source_file",
+    "source_file_hash",
+    "batch_id",
+    "ocr_engine",
+    "ocr_engine_version",
+    "ingested_at",
+    "category_id",
+    "book_id",
+    "page_number",
+    "raw_text",
+    "char_count",
+    "ocr_confidence",
+    "needs_review",
+    "status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.1",
+      "description": "Contract version. Bump on any breaking field change."
+    },
+
+    "pipeline_stage": {
+      "type": "string",
+      "enum": ["ocr_complete", "cleaned", "chapter_assigned", "chunked", "failed"],
+      "description": "Gate field. A page cannot move to 'chunked' (i.e. chunk_record rows may not reference this page_uid) while stage != 'chapter_assigned' or later, and chapter_id must be non-null once stage reaches 'chapter_assigned'. Enforce this in the pipeline, not just in application code, e.g. a CHECK constraint or an assertion in the chunker's input query."
+    },
+
+    "page_uid": {
+      "type": "string",
+      "pattern": "^[0-9]+-[0-9]+$",
+      "description": "Natural key: '{book_id}-{page_number}'. Used for idempotent upsert on reruns."
+    },
+
+    "source_file": {
+      "type": "string",
+      "description": "Original PDF filename as ingested, e.g. 'tafhimul_quran_vol1.pdf'."
+    },
+    "source_file_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "sha256 of the source PDF bytes. Lets you detect if the same file was re-uploaded/re-OCR'd."
+    },
+    "batch_id": {
+      "type": "string",
+      "description": "Ingestion run identifier (e.g. UUID or 'run-2026-09-11-03'). Groups all pages processed together."
+    },
+    "ocr_engine": {
+      "type": "string",
+      "enum": ["google_vision", "google_document_ai", "manual_correction"]
+    },
+    "ocr_engine_version": {
+      "type": "string",
+      "description": "API/model version string, e.g. 'v1' or processor version id. Needed because OCR quality shifts between model versions."
+    },
+    "ingested_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp this record was written, ISO 8601."
+    },
+
+    "category_id": { "type": "integer", "description": "FK to categories.id" },
+    "book_id": { "type": "integer", "description": "FK to books.id" },
+    "chapter_id": {
+      "type": ["integer", "null"],
+      "description": "FK to chapters.id. Null until a chapter-assignment pass runs — OCR has no concept of chapter boundaries on its own."
+    },
+    "page_number": { "type": "integer", "minimum": 1 },
+
+    "raw_text": {
+      "type": "string",
+      "description": "Untouched fullTextAnnotation.text (or Document AI document.text) for this page. Kept even after cleaning, for reproducibility."
+    },
+    "clean_text": {
+      "type": ["string", "null"],
+      "description": "raw_text after whitespace normalization / unicode NFC / stray-footnote stripping. Null until the cleaning pass runs."
+    },
+    "content_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "sha256 of clean_text. Two pages with the same hash are duplicate content — this is how you catch the Tarun/Nobin cross-DB duplicate-book problem programmatically instead of by eyeballing."
+    },
+    "char_count": { "type": "integer", "minimum": 0 },
+    "word_count": { "type": ["integer", "null"], "minimum": 0 },
+
+    "language_detected": {
+      "type": ["string", "null"],
+      "description": "ISO 639-1/639-3 code, e.g. 'bn', 'ar'. From the OCR engine's language detection."
+    },
+    "language_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+
+    "ocr_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Page-level confidence from the OCR engine."
+    },
+    "needs_review": {
+      "type": "boolean",
+      "description": "True if ocr_confidence fell below your review threshold (e.g. 0.85) or has_arabic_script is true. Computed at ingest time, not left for a downstream report."
+    },
+    "has_arabic_script": {
+      "type": "boolean",
+      "default": false,
+      "description": "Heuristic flag: page contains Arabic-range unicode. Flags candidates for the ayah word-order corruption issue found in the existing corpus."
+    },
+
+    "status": {
+      "type": "string",
+      "enum": ["success", "partial", "failed"],
+      "description": "Ingestion outcome for this page. 'partial' = OCR ran but confidence/text looks suspect; 'failed' = OCR call errored, raw_text will be empty."
+    },
+    "error_message": {
+      "type": ["string", "null"],
+      "description": "Populated only when status != 'success'."
+    }
+  }
+}
