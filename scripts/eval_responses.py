@@ -113,11 +113,19 @@ def _render_card(r: dict) -> str:
     got_answer_label = "হ্যাঁ" if r["got_answer"] else "না"
 
     if r["sources"]:
+        def _similarity_suffix(s: dict) -> str:
+            # Split out of the f-string below: nesting an f-string that reuses
+            # the outer quote character (both used ') is a SyntaxError before
+            # Python 3.12 (PEP 701) -- this project targets 3.11 (Dockerfile,
+            # pyproject.toml requires-python), so that syntax fails to even parse.
+            sim = s["similarity"]
+            return f", similarity={sim:.3f}" if sim is not None else ""
+
         sources_html = "".join(
             f'<li><span class="src-book">{html.escape(s["book"])}</span>'
             f' &mdash; {html.escape(s["chapter"])}'
             f' <span class="src-score">rerank={s["rerank_score"]:.3f}'
-            f'{f", similarity={s['similarity']:.3f}" if s["similarity"] is not None else ""}'
+            f'{_similarity_suffix(s)}'
             f'</span></li>'
             for s in r["sources"]
         )

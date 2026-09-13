@@ -19,7 +19,7 @@ it's easy to assume "it's just one box" means "it doesn't need much."
 |---|---|---|
 | RAM | **16 GB** | `bge-m3` (~2.2 GB) + `bge-reranker-v2-m3` (~2 GB) resident together already cost ~4.5 GB before Postgres, Chroma, an IDE, or a browser get anything — on an 8 GB box this reliably swap-thrashes or gets OOM-killed under any real retrieval load, not just under multiple concurrent requests. |
 | CPU | 4+ cores | The embedder/reranker are CPU-bound but not core-hungry at dev-traffic levels; RAM headroom, not core count, is what determines whether a single retrieval call takes seconds or minutes. |
-| Disk | **40–50 GB free**, dedicated to this project | `venv/` alone is 7.9 GB measured; + ~2.8 GB HF model cache; + `chroma_db/` (386 MB at 12,304 chunks currently); + a second isolated `venv-ragas/` (~1.3 GB) if running the RAGAS harness (`scripts/eval_ragas.py`) — see that script's module docstring for why it needs its own venv. Running low here doesn't fail gracefully — it fails mid-`pip install` or mid-eval-run. |
+| Disk | **40–50 GB free**, dedicated to this project | `.venv/` alone is 7.9 GB measured; + ~2.8 GB HF model cache; + `chroma_db/` (386 MB at 12,304 chunks currently); + a second isolated `venv-ragas/` (~1.3 GB) if running the RAGAS harness (`scripts/eval_ragas.py`) — see that script's module docstring for why it needs its own venv. Running low here doesn't fail gracefully — it fails mid-`uv sync` or mid-eval-run. |
 | GPU | Not required | CPU inference is fine at the current corpus size, *given* the RAM above isn't the constraint. Revisit only if the corpus grows an order of magnitude or eval-script iteration speed becomes the bottleneck. |
 
 None of the production tiers (Redis, managed Postgres, a separate Chroma server, a split
@@ -39,7 +39,7 @@ replicas behind a load balancer" approach will silently break:
 | Vector store (Chroma) | `app/rag/chroma_client.py` — `chromadb.PersistentClient` writing to a local `chroma_db/` directory | **Not safely**, as-is. Chroma's persistent-client mode is not designed for multiple processes concurrently opening the same on-disk index (this has caused real corruption/contention in this project's own ingest workflow). A shared network volume mounted read-write from N replicas is not a fix — it's the same problem with extra latency. |
 | Postgres (content, source of truth) | Standard SQLAlchemy engine, `app/db/session.py` | **Yes**, this is a normal RDBMS — connection pooling and read replicas work the usual way. |
 | LLM calls (OpenAI, optionally Groq) | `app/core/llm.py`, external API calls, no local state | **Yes**, but each provider has its own rate limits that don't scale just because you added replicas — see [LLM provider layer](#tier-5-llm-provider-layer) below. |
-| Corpus ingest (`python -m app.rag.ingest`) | Offline batch script, not in the request path | Not a live-traffic concern, but it competes for the same CPU/RAM as the embedder/reranker if run on the same host — schedule it separately (see [Ingest as its own job](#ingest-as-its-own-job)). |
+| Corpus ingest (`uv run python -m app.rag.ingest`) | Offline batch script, not in the request path | Not a live-traffic concern, but it competes for the same CPU/RAM as the embedder/reranker if run on the same host — schedule it separately (see [Ingest as its own job](#ingest-as-its-own-job)). |
 
 Everything below is organized around fixing these three (session store, model duplication,
 vector store) without a rewrite — each is an incremental, independently-shippable change.
@@ -67,7 +67,7 @@ vector store) without a rewrite — each is an incremental, independently-shippa
    └─────────┘ └───────────────────────┘ └───────────────┘ └──────────────┘
 
    ┌──────────────────────────────────────────────────────┐
-   │  Ingest job (python -m app.rag.ingest) — separate,     │
+   │  Ingest job (uv run python -m app.rag.ingest) — separate,│
    │  scheduled/on-demand, writes to the vector store tier  │
    │  above. Never runs on an API pod.                      │
    └──────────────────────────────────────────────────────┘
@@ -84,14 +84,14 @@ estimated, it's called out as such.
 
 | Tier | vCPU | RAM | Disk | Example instance class | Notes |
 |---|---|---|---|---|---|
-| **API replica** (models in-process, Tier 1's default) | 4 | 8 GB | 15 GB | AWS `m6i.xlarge` / GCP `n2-standard-4` | RAM floor is ~6 GB just for `bge-m3` + `bge-reranker-v2-m3` + PyTorch/Chroma-client overhead (see Tier 1) — 8 GB leaves working headroom instead of running at the edge. Disk: this project's own `venv/` with these deps is **7.9 GB measured** on Linux, plus ~2.8 GB for the two cached HF models (per `README.md`) — 15 GB comfortably covers venv + models + container image + logs. CPU-bound on rerank, not I/O-bound — don't undersize vCPU to save cost here. |
+| **API replica** (models in-process, Tier 1's default) | 4 | 8 GB | 15 GB | AWS `m6i.xlarge` / GCP `n2-standard-4` | RAM floor is ~6 GB just for `bge-m3` + `bge-reranker-v2-m3` + PyTorch/Chroma-client overhead (see Tier 1) — 8 GB leaves working headroom instead of running at the edge. Disk: this project's own `.venv/` with these deps is **7.9 GB measured** on Linux, plus ~2.8 GB for the two cached HF models (per `README.md`) — 15 GB comfortably covers the venv + models + container image + logs. CPU-bound on rerank, not I/O-bound — don't undersize vCPU to save cost here. |
 | **API replica** (models externalized to Tier 5's inference service) | 1–2 | 1–2 GB | 2 GB | AWS `t3.small`/`t3.medium` | Once the embedder/reranker live in a separate service, an API pod is a thin FastAPI/httpx layer — this is the payoff of doing that split. |
 | **Embedding + reranker inference service** (if split out per Tier 5) | 4–8 (CPU) or 1× small GPU | 8–12 GB | 8 GB | CPU: AWS `c6i.2xlarge`; GPU: AWS `g4dn.xlarge` (T4) | A GPU meaningfully speeds up both bi-encoder embedding and cross-encoder reranking under sustained load; CPU-only is fine at the traffic levels a single-digit number of API replicas would generate. Only worth deploying once you've actually made the Tier 5 split — don't provision this ahead of needing it. |
 | **Vector store — Chroma server** (Tier 3, Option A) | 2 | 2–4 GB | 10 GB, scale with corpus | AWS `t3.medium`/`m6i.large` | **Measured on this project's current corpus**: 12,304 chunks (~900 chars each, `bge-m3`'s 1024-dim vectors) occupy **386 MB** on disk — roughly 31 KB/chunk including the HNSW index and stored text. At this scale the vector-store tier is genuinely cheap; re-budget disk as `chunk_count × ~35 KB` (with headroom) if the corpus grows by an order of magnitude, and re-check after any chunk-size change in `app/rag/chunker.py` (chunk size directly changes chunk count for the same corpus). |
 | **Vector store — pgvector** (Tier 3, Option B, same Postgres) | — | — | add ~35 KB/chunk to the Postgres disk estimate below | — | No separate tier — sizing folds into the Postgres row. |
 | **Postgres** (managed) | 2 | 4 GB | 20 GB+, corpus-dependent | AWS RDS `db.t3.medium` / GCP Cloud SQL equivalent | Book/chapter/page content itself is text, not the bottleneck here — size mainly for connection count (pooled via PgBouncer, see Tier 4) and, if chosen, pgvector's addition above. |
 | **Redis** (session store) | 1 | 512 MB–1 GB | 1 GB | AWS ElastiCache `cache.t3.micro` | Session payloads are small (a persona string + up to `MAX_HISTORY=20` chat turns per session) — this tier is sized for connection count and availability, not data volume. Set an eviction policy (`allkeys-lru` or similar) and rely on the TTL in the Tier 2 sketch rather than persistence. |
-| **Ingest job** (batch, `python -m app.rag.ingest`) | 2–4 | 8 GB | 15 GB | Same class as an API replica, or a spot/preemptible instance | Needs the embedder resident (~2.2 GB) for the run's duration only — fine on a cheaper/spot instance since it's not latency-sensitive and can be retried. GPU optional (`requirements.txt` already carries CUDA extras behind platform markers) — only worth it for a large corpus's first full ingest, not incremental updates. |
+| **Ingest job** (batch, `uv run python -m app.rag.ingest`) | 2–4 | 8 GB | 15 GB | Same class as an API replica, or a spot/preemptible instance | Needs the embedder resident (~2.2 GB) for the run's duration only — fine on a cheaper/spot instance since it's not latency-sensitive and can be retried. GPU optional (`pyproject.toml` already carries CUDA extras behind platform markers) — only worth it for a large corpus's first full ingest, not incremental updates. |
 
 The two numbers worth re-deriving for your own deployment rather than trusting verbatim are
 the **API replica RAM floor** (re-measure if you change `embedding_model_name`/
@@ -204,7 +204,7 @@ content.
 
 ### Ingest as its own job
 
-`python -m app.rag.ingest` is CPU-bound and reads Postgres / writes the vector store — it is
+`uv run python -m app.rag.ingest` is CPU-bound and reads Postgres / writes the vector store — it is
 not part of the request-serving path and should never run inside an API pod. Run it as:
 
 - a Kubernetes `Job`/`CronJob` (or the equivalent scheduled task in your platform) triggered

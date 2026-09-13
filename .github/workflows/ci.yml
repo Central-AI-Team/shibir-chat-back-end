@@ -1,23 +1,88 @@
 name: CI
 
+# Gate for merges to main: PRs targeting main must pass this workflow.
+# NOTE: this replaces a leftover npm/Node placeholder that had nothing to do
+# with this (Python/FastAPI) project.
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+
+    # test_article_source_columns.py does real inserts/reads against Postgres
+    # (app/db/session.py -- no mocking there), so a live DB is required.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: shibir_test
+          POSTGRES_PASSWORD: shibir_test
+          POSTGRES_DB: shibir_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shibir_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # app/core/config.py's Settings.openai_api_key has NO default, so
+      # `settings = Settings()` (module import time) raises a pydantic
+      # ValidationError without this -- and that import happens transitively
+      # in almost every test file (app.main, app.rag.embedder, ...), even the
+      # ones that mock every actual OpenAI call. See repo settings notes below:
+      # this secret can be a harmless placeholder string, it is never used to
+      # make a real API call in this test suite.
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Points at the postgres service above, not the real dev/prod DB.
+      DATABASE_URL: postgresql+psycopg2://shibir_test:shibir_test@localhost:5432/shibir_test
+      # test_bengali_embedding.py loads the real BAAI/bge-m3 model and needs
+      # to download it on a cache miss -- must NOT be offline-only here.
+      HF_HUB_OFFLINE: "0"
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run build
-      - run: npm test
+      - name: Set up Python (matches Dockerfile's python:3.11-slim)
+        run: uv python install 3.11
+
+      # uv.lock pins ~150 packages including torch -- cache to avoid
+      # re-downloading/rebuilding all of them on every run.
+      - name: Cache uv package cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      # BAAI/bge-m3 (~2.2 GB) is downloaded once by test_bengali_embedding.py;
+      # cache it so only the first run (or a cache eviction) pays that cost.
+      - name: Cache HuggingFace model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-bge-m3-v1
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # No Alembic/migrations in this repo -- schema creation is otherwise
+      # only done ad hoc by scripts/migrate_sqlite_to_postgres.py. Create the
+      # tables the tests need against the fresh CI database directly.
+      - name: Create database schema
+        run: |
+          uv run python -c "
+          from app.db.base import Base
+          from app.db.session import engine
+          Base.metadata.create_all(engine)
+          "
+
+      - name: Run tests
+        run: uv run pytest -v

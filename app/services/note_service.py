@@ -68,7 +68,11 @@ def _llm(prompt: str, max_tokens: int = 2000) -> str:
     # becomes whichever token-cap kwarg (max_completion_tokens vs max_tokens)
     # the model settings.model_by_task["note"] resolves to actually needs.
     resp = complete("note", [{"role": "user", "content": prompt}], token_budget=max_tokens)
-    return resp.choices[0].message.content.strip()
+    # content is None on a safety-filtered/empty completion -- bare .strip()
+    # would raise AttributeError, uncaught anywhere between here and the
+    # router, turning one bad map/reduce call into an unhandled 500 for the
+    # whole chapter note instead of just an empty section.
+    return (resp.choices[0].message.content or "").strip()
 
 
 def _group(pages: list[str], budget: int = 12000) -> list[str]:

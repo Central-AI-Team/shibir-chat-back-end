@@ -1,0 +1,38 @@
+# Version control
+.git/
+.gitignore
+
+# Python virtual environments
+.venv/
+venv/
+venv-ragas/
+
+# Python bytecode / caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Secrets -- never ship into the image
+.env*
+
+# Tests and eval-only tooling (not needed at runtime)
+tests/
+scripts/*eval*
+
+# Notebooks and one-off analysis artifacts
+*.ipynb
+
+# SQLite source dumps / stray exports (should never be in the image)
+*.db
+chroma_dump.csv
+chroma_dump.xlsx
+
+# Generated / local-only data
+chroma_db/
+eval_reports/
+data/
+
+# Editor / AI-tool local config
+.claude/
+.qodo/

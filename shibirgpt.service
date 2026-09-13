@@ -7,8 +7,11 @@ Type=simple
 User=lab
 Group=lab
 WorkingDirectory=/home/lab/apps/shibirgpt
-#Environment="PATH=/path/to/your/project/venv/bin"
-ExecStart=/home/lab/apps/shibirgpt/run.sh 
+# uv's installer (see README) puts the binary in ~/.local/bin, which systemd's
+# own minimal PATH does not include -- without this, run.sh's `command -v uv`
+# check fails and the service crash-loops. Adjust the home dir if User= differs.
+Environment="PATH=/home/lab/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/lab/apps/shibirgpt/run.sh
 Restart=always
 RestartSec=10
 

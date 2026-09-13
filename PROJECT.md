@@ -75,7 +75,7 @@ app/
     generator.py                   generate_answer(query, citations) -> str. Bengali system
                                     prompt, temperature=0.2, numbered excerpts for citation.
                                     See "Prompt contract" below.
-    ingest.py                      Standalone script (python -m app.rag.ingest). Reads
+    ingest.py                      Standalone script (uv run python -m app.rag.ingest). Reads
                                     published pages/articles from Postgres (NOT from SQLite —
                                     that migration is one-time and already done), chunks each,
                                     embeds in batches of 64, and upserts into Chroma. Deletes
@@ -87,7 +87,7 @@ app/
 scripts/
   migrate_sqlite_to_postgres.py   One-time migration, already run. Do not re-run against a
                                    live corpus.
-  tune_threshold.py                python -m scripts.tune_threshold [questions.json]. Runs a
+  tune_threshold.py                uv run python -m scripts.tune_threshold [questions.json]. Runs a
                                     labeled question set through the real retrieval pipeline
                                     and suggests a MIN_RERANK_SCORE from the score gap between
                                     answerable and unanswerable questions. See
@@ -156,7 +156,7 @@ Only `GEMINI_API_KEY` and `DATABASE_URL` are required; everything else has a wor
 | `TOP_K` | `5` | Chunks sent to Gemini after reranking. |
 | `FETCH_K` | `25` | Candidates pulled from Chroma before reranking. |
 | `MIN_SIMILARITY` | `0.25` | Cheap cosine pre-filter before paying for the cross-encoder. Loose on purpose. |
-| `MIN_RERANK_SCORE` | `0.5` | The real "do we have an answer?" gate — see "Prompt contract" above. **Scores are Sigmoid-activated, in [0, 1]**, not raw bge-reranker logits. Smoke-tested on this corpus: on-topic questions scored 0.94–0.99, a fully off-topic question topped out at 0.011. Re-tune with `python -m scripts.tune_threshold` once you have ~30 real questions (20 answerable, 10 not). |
+| `MIN_RERANK_SCORE` | `0.5` | The real "do we have an answer?" gate — see "Prompt contract" above. **Scores are Sigmoid-activated, in [0, 1]**, not raw bge-reranker logits. Smoke-tested on this corpus: on-topic questions scored 0.94–0.99, a fully off-topic question topped out at 0.011. Re-tune with `uv run python -m scripts.tune_threshold` once you have ~30 real questions (20 answerable, 10 not). |
 | `TARUN_DB_PATH` / `NOBIN_DB_PATH` | `data/Tarun_Associate.db` / `data/Nobin_Associate.db` | Legacy — only used by the one-time `scripts/migrate_sqlite_to_postgres.py`, not by `ingest.py` anymore. |
 | `HOST` / `PORT` | `0.0.0.0` / `9200` | Not currently read by `run.sh`'s uvicorn invocation (hardcoded there) — see Known gaps. |
 
@@ -211,8 +211,8 @@ Unknown extra fields in the request body are silently ignored (default Pydantic 
 
 ## Common tasks
 
-- **Run the server**: `./run.sh` (creates venv, installs deps, starts uvicorn on :9200), or
-  manually: `source venv/bin/activate && HF_HUB_OFFLINE=1 uvicorn app.main:app --host 0.0.0.0 --port 9200`.
+- **Run the server**: `./run.sh` (syncs deps via uv, starts uvicorn on :9200), or manually:
+  `HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200`.
 - **Smoke test**: run three `/ask` calls — an on-topic question in Bengali script, the same
   question in Banglish (must return the same sources, not an empty/weak result), and a
   deliberately off-topic question (must return `sources: []`, not populated). Then one
@@ -220,7 +220,7 @@ Unknown extra fields in the request body are silently ignored (default Pydantic 
   version of the retrieval half of this.
 - **Tune the refusal threshold**: fill in `scripts/eval_questions.example.json` (copy it,
   don't edit in place) with ~30 real questions — 20 answerable from the corpus, 10 not — then
-  `python -m scripts.tune_threshold your_questions.json`.
+  `uv run python -m scripts.tune_threshold your_questions.json`.
 - **Deploy**: `shibirgpt.service` is a systemd unit that runs `run.sh` with
   `WorkingDirectory=/home/lab/apps/shibirgpt`, `Restart=always`.
 
@@ -241,7 +241,7 @@ s.execute(text("UPDATE articles SET embedded_at = NULL"))
 s.commit()
 ```
 ```bash
-HF_HUB_OFFLINE=1 python -m app.rag.ingest
+HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
 ```
 
 Why both: `ingest.py` only embeds rows where `embedded_at IS NULL OR updated_at >

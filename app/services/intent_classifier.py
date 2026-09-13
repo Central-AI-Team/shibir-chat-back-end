@@ -49,7 +49,13 @@ _INTENT_PATTERNS = (
     ("SUGGESTION", _SUGGESTION_RE),
 )
 
-_VALID_INTENTS = {"NOTE", "ROLEPLAY", "SUGGESTION", "QA"}
+# Order matters here: if the LLM ever ignores the "one word only" instruction
+# and its reply contains more than one of these as a substring, _classify_
+# with_llm's `if intent in raw` loop picks whichever comes first. A set has no
+# guaranteed iteration order (varies with Python's per-process hash seed), so
+# that pick would be non-deterministic across runs for the identical raw
+# response -- a tuple pins it to this priority order instead.
+_VALID_INTENTS = ("NOTE", "ROLEPLAY", "SUGGESTION", "QA")
 
 _CLASSIFIER_SYSTEM = """তুমি একজন ইনটেন্ট ক্লাসিফায়ার। ব্যবহারকারীর বার্তাটি পড়ে
 নিচের চারটি ক্যাটাগরির মধ্যে ঠিক একটি বেছে নাও:
