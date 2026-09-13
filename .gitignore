@@ -5,6 +5,7 @@ __pycache__/
 *.pyd
 
 # Virtual environment
+.venv/
 venv/
 # Isolated env for scripts/eval_ragas.py's ragas/datasets/langchain deps --
 # deliberately NOT the same venv as the app (see that script's docstring).
@@ -24,6 +25,10 @@ chroma_db/
 
 # OS files
 .DS_Store
+
+# LibreOffice/OpenOffice lock files (leaked into git once already -- see
+# .~lock.full_dataset.csv#, removed in the uv migration cleanup)
+.~lock.*#
 
 # Logs
 *.log

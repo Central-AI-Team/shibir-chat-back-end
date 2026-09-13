@@ -87,7 +87,11 @@ def generate_answer(
             # of hardcoding another model's quirks in here.
             **(extra_params or {}),
         )
-    return response.choices[0].message.content
+    # content is None on a safety-filtered/empty completion (finish_reason
+    # e.g. "content_filter") -- QueryResponse.answer/ChatResponse.answer are
+    # typed `str`, so returning None here would fail Pydantic validation with
+    # an unhandled 500 instead of a plain (if unhelpful) empty-ish answer.
+    return response.choices[0].message.content or ""
 
 
 def stream_answer(query: str, citations: list[Citation], *, trace_id: str | None = None):

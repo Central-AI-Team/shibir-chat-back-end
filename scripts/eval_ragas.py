@@ -41,10 +41,18 @@ just RAM).
 So: a separate venv-ragas/ (repo root, gitignored) holds ONLY ragas +
 datasets + the pinned pre-1.x langchain family (~1.3GB) -- see
 requirements-ragas.txt, a `pip freeze` snapshot of a known-working install,
-not requirements.txt. It also has pydantic-settings + python-dotenv (tiny,
-no disk risk) so it can import app.core.config for the judge/embedding
-model names WITHOUT importing anything else from app/ -- venv-ragas cannot
-run retrieval (no sentence-transformers/chromadb there), by design.
+not requirements.txt (and deliberately NOT folded into the main
+pyproject.toml/uv.lock -- it needs its own venv, not just its own
+dependency group, for the reasons above). It also has pydantic-settings +
+python-dotenv (tiny, no disk risk) so it can import app.core.config for the
+judge/embedding model names WITHOUT importing anything else from app/ --
+venv-ragas cannot run retrieval (no sentence-transformers/chromadb there),
+by design.
+
+Create/refresh it with uv (still a plain venv, not a uv project -- uv is
+just used here as a fast pip+venv):
+    uv venv venv-ragas --python 3.11
+    uv pip install -r requirements-ragas.txt --python venv-ragas
 
 Phase 1 (capture) -- run under the MAIN venv (has qa_service/retriever/the
     embedder+reranker): calls answer_question() once per question (real
@@ -59,7 +67,7 @@ Phase 2 (score) -- run under venv-ragas: reads that JSON file, builds a
 
 Usage:
     # Phase 1, from the MAIN venv:
-    venv/bin/python -m scripts.eval_ragas capture [questions.json]
+    uv run python -m scripts.eval_ragas capture [questions.json]
         [--limit N] [--seed N] [--out captured.json]
 
     # Phase 2, from venv-ragas, same repo root:
@@ -86,8 +94,8 @@ estimate and stops unless --yes is passed. Use --limit on capture for a
 small first pass, and --metrics on score to run a subset.
 
 Run capture from a shell where the app's dependencies and .env are available
-(same as `python -m app.rag.ingest`). Run score from venv-ragas/'s python,
-same repo root, same .env.
+(same as `uv run python -m app.rag.ingest`). Run score from venv-ragas/'s
+python, same repo root, same .env.
 """
 
 from __future__ import annotations

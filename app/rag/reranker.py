@@ -30,8 +30,12 @@ def _model() -> CrossEncoder:
 def rerank(query: str, docs: list[str], top_n: int) -> list[tuple[int, float]]:
     """Return [(original_index, score), ...] sorted best-first, truncated to top_n.
 
-    Scores are logits, not probabilities -- compare them to each other, not to
-    the cosine threshold used at the retrieval stage.
+    Scores are Sigmoid-activated, in [0, 1] -- sentence-transformers applies
+    that activation by default for a num_labels=1 model like
+    bge-reranker-v2-m3, and this is what settings.min_rerank_score is tuned
+    against (see config.py / PROJECT.md's "Prompt contract" section, smoke-
+    tested there at 0.94-0.99 on-topic vs 0.011 off-topic). NOT the cosine
+    similarity used at the retrieval stage -- don't compare the two directly.
     """
     if not docs:
         return []

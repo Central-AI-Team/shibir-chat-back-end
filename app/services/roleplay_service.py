@@ -39,7 +39,11 @@ def handle_roleplay(message: str, session: dict) -> str:
     messages.append({"role": "user", "content": message})
 
     response = complete("roleplay", messages)
-    reply = response.choices[0].message.content
+    # content is None on a safety-filtered/empty completion -- ChatResponse.answer
+    # is typed `str`, and a bare None would also get stored in session history and
+    # re-sent as {"role": "assistant", "content": None} on the next turn, which
+    # most providers reject outright.
+    reply = response.choices[0].message.content or ""
 
     # `session` is the same dict object held in session_store's module-level
     # store (get_or_create_session doesn't copy), so mutating it in place

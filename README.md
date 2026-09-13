@@ -22,14 +22,17 @@ gotchas), see [`PROJECT.md`](./PROJECT.md).
 
 ## Prerequisites
 
-- **Python 3.10 or higher** (the code uses `X | None` union type hints, which need 3.10+
-  even without a virtual environment quirk — tested on 3.12).
+- **Python 3.11 or higher** (`networkx`, a transitive dependency, requires 3.11+; the
+  app code itself only needs the 3.10+ `X | None` union type hints — tested on 3.12).
+- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** — manages the virtual
+  environment and dependencies (replaces pip/venv). Install it once, globally; it will
+  download the right Python for you if needed.
 - **PostgreSQL** (any recent version), with the content already loaded into it. This service
   reads from Postgres; it does not seed it.
 - A **Gemini API key** (https://aistudio.google.com/apikey). Free tier is capped at 20
   requests/day **per Google Cloud project** — fine for light testing, not for sustained use.
 - ~3 GB free disk for the embedding + reranker models (downloaded once, cached locally).
-- git, pip.
+- git.
 
 ## Installation
 
@@ -43,39 +46,24 @@ git clone <repository-url>
 cd shibir-chat-back-end
 ```
 
-### 2. Create and activate a virtual environment
+### 2. Install uv
 
-**Ubuntu / Debian:**
+**Ubuntu/Debian/macOS:**
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
-
-**macOS:**
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-(If `python3` isn't found, install it first: `brew install python`.)
 
 **Windows (PowerShell):**
 ```powershell
-py -m venv venv
-venv\Scripts\Activate.ps1
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
-If PowerShell blocks the activation script with an execution-policy error, run PowerShell as
-Administrator once and allow local scripts:
-`Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 
-**Windows (Command Prompt):**
-```bat
-py -m venv venv
-venv\Scripts\activate.bat
-```
+See [uv's install docs](https://docs.astral.sh/uv/getting-started/installation/) for other
+methods (pipx, Homebrew, etc).
 
 ### 3. Install PostgreSQL client libraries (if needed)
 
-`psycopg2-binary` in `requirements.txt` ships a self-contained wheel with `libpq` bundled in
+`psycopg2-binary` in `pyproject.toml` ships a self-contained wheel with `libpq` bundled in
 — on all three platforms this normally installs with **no separate PostgreSQL client install
 and no C compiler needed**. You only need a full PostgreSQL install if you're also running
 the database server itself on this machine:
@@ -86,14 +74,15 @@ the database server itself on this machine:
 
 ### 4. Install Python dependencies
 
-Same command on every OS:
+Same command on every OS — creates `.venv` (downloading a matching Python automatically if
+you don't already have one) and installs the exact versions pinned in `uv.lock`:
 ```bash
-pip install -r requirements.txt
+uv sync --locked
 ```
-`requirements.txt` is pinned from a Linux test environment, but GPU/CUDA packages
-(`nvidia-*`, `triton`) and `uvloop` (no Windows support) carry environment markers so `pip`
-only installs what's actually usable on your platform — this file installs cleanly on
-Windows and macOS as well as Linux, CPU-only or with an NVIDIA GPU.
+GPU/CUDA packages (`nvidia-*`, `triton`) and `uvloop` (no Windows support) carry environment
+markers so `uv` only installs what's actually usable on your platform — this installs cleanly
+on Windows and macOS as well as Linux, CPU-only or with an NVIDIA GPU. There's no separate
+"activate" step — prefix commands with `uv run` (e.g. `uv run uvicorn ...`), as shown below.
 
 ### 5. Configure environment variables
 
@@ -117,7 +106,7 @@ cached locally the first time they're used. `run.sh` sets `HF_HUB_OFFLINE=1`, wh
 that first download, so do one of these once before running the server or the ingest script:
 
 ```bash
-HF_HUB_OFFLINE=0 python -c "
+HF_HUB_OFFLINE=0 uv run python -c "
 from sentence_transformers import SentenceTransformer, CrossEncoder
 SentenceTransformer('BAAI/bge-m3')
 CrossEncoder('BAAI/bge-reranker-v2-m3')
@@ -127,7 +116,7 @@ print('models cached')
 On Windows PowerShell, set the variable first instead of inlining it:
 ```powershell
 $env:HF_HUB_OFFLINE = "0"
-python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-m3'); CrossEncoder('BAAI/bge-reranker-v2-m3'); print('models cached')"
+uv run python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-m3'); CrossEncoder('BAAI/bge-reranker-v2-m3'); print('models cached')"
 ```
 
 Needs ~2.8 GB of disk and a working internet connection. Subsequent runs work fully offline.
@@ -140,21 +129,21 @@ once, and again whenever the source content changes (see the "Reindexing" sectio
 **not** enough):
 
 ```bash
-python -m app.rag.ingest
+uv run python -m app.rag.ingest
 ```
 This is CPU-bound and can take a while on a large corpus without a GPU — expect anywhere from
 a few minutes to a few hours depending on corpus size and available RAM.
 
 ### 8. Run the server
 
-**Ubuntu/macOS** — either use the helper script (creates the venv and installs deps too, if
-you skipped the manual steps above):
+**Ubuntu/macOS** — either use the helper script (syncs dependencies too, if you skipped the
+manual steps above):
 ```bash
 ./run.sh
 ```
 or run uvicorn directly:
 ```bash
-HF_HUB_OFFLINE=1 uvicorn app.main:app --host 0.0.0.0 --port 9200
+HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
 ```
 
 **Windows** — `run.sh` is a bash script and won't run natively in PowerShell/cmd. Either use
@@ -162,7 +151,7 @@ HF_HUB_OFFLINE=1 uvicorn app.main:app --host 0.0.0.0 --port 9200
 Bash**, or run uvicorn directly:
 ```powershell
 $env:HF_HUB_OFFLINE = "1"
-uvicorn app.main:app --host 0.0.0.0 --port 9200
+uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
 ```
 
 The API is available at `http://127.0.0.1:9200`.
@@ -293,7 +282,8 @@ No UI is built for this; only the function is provided.
 - `scripts/` — one-time migration script and the `tune_threshold.py` refusal-threshold tuner
 - `tests/` — regression tests (Bengali tokenization/embedding correctness)
 - `chroma_db/` — generated vector store (gitignored; see "Reindexing" in `PROJECT.md`)
-- `requirements.txt` — Python dependencies (cross-platform: Linux, macOS, Windows)
+- `pyproject.toml` / `uv.lock` — Python dependencies (cross-platform: Linux, macOS, Windows),
+  managed with [uv](https://docs.astral.sh/uv/)
 
 See [`PROJECT.md`](./PROJECT.md) for the full architecture, prompt contract, and
 configuration reference.

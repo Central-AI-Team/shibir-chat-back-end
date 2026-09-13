@@ -7,25 +7,14 @@ export HF_HUB_OFFLINE=1
 
 echo "🚀 Starting FastAPI setup and server..."
 
-# Create virtual environment if it doesn't exist
-if [ ! -d "venv" ]; then
-    echo "📦 Creating virtual environment..."
-    python3 -m venv venv
-else
-    echo "✅ Virtual environment already exists"
+if ! command -v uv &> /dev/null; then
+    echo "❌ uv not found - install it first: https://docs.astral.sh/uv/getting-started/installation/"
+    exit 1
 fi
 
-# Activate virtual environment
-echo "🔌 Activating virtual environment..."
-source venv/bin/activate
-
-# Install dependencies
-if [ -f "requirements.txt" ]; then
-    echo "📥 Installing dependencies..."
-    pip install -r requirements.txt
-else
-    echo "⚠️  requirements.txt not found - skipping dependency installation"
-fi
+# Create/update the .venv from pyproject.toml + uv.lock
+echo "📥 Syncing dependencies..."
+uv sync --locked
 
 # Check if .env exists, if not create template
 if [ ! -f ".env" ]; then
@@ -45,4 +34,4 @@ fi
 
 # Run FastAPI server
 echo "🌐 Starting FastAPI server..."
-uvicorn app.main:app --host 0.0.0.0 --port 9200
+uv run uvicorn app.main:app --host 0.0.0.0 --port 9200

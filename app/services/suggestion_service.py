@@ -78,6 +78,9 @@ def give_suggestion(query: str) -> tuple[str, list[Citation]]:
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ])
-    answer = response.choices[0].message.content
+    # content is None on a safety-filtered/empty completion -- ChatResponse.answer
+    # is typed `str`, so a bare None here would fail Pydantic validation with an
+    # unhandled 500 instead of degrading gracefully.
+    answer = response.choices[0].message.content or ""
 
     return answer, grounding
