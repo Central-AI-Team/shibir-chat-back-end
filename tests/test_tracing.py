@@ -3,12 +3,15 @@
 The non-negotiable for this feature is that observability can never harm the
 request path. Two properties are pinned here:
 
-  1. DISABLED = NO-OP. With no Langfuse keys configured (the default, and the
-     state in CI / this repo's .env), tracing is completely inert: the langfuse
-     SDK is never imported, get_client() hands back the plain OpenAI client,
-     every tracing helper is a silent no-op, and complete() adds no extra
-     kwargs to the OpenAI call -- i.e. /chat behaves byte-identically to a
-     build without this module.
+  1. DISABLED = NO-OP. With no Langfuse keys configured (the default in CI;
+     tests here force this via monkeypatching the shared Settings singleton
+     rather than assuming the local .env has no keys, since a dev box may have
+     real Langfuse Cloud credentials configured -- see CLAUDE.md's "Tracing"
+     section), tracing is completely inert: the langfuse SDK is never
+     imported, get_client() hands back the plain OpenAI client, every tracing
+     helper is a silent no-op, and complete() adds no extra kwargs to the
+     OpenAI call -- i.e. /chat behaves byte-identically to a build without
+     this module.
 
   2. A BROKEN BACKEND CANNOT BREAK /chat. With tracing switched on but the
      Langfuse client raising on every call (slow / down / misconfigured host),
@@ -51,12 +54,22 @@ _CITATIONS = [
 # ---------------------------------------------------------------------------
 
 
-def test_tracing_is_disabled_without_keys():
-    # The repo .env carries no LANGFUSE_* keys, so this is the real default.
+def _force_tracing_disabled(monkeypatch):
+    """Override the shared Settings singleton directly rather than relying on
+    the repo's .env having no LANGFUSE_* keys -- a dev box with real Langfuse
+    Cloud credentials configured (see CLAUDE.md's "Tracing" section) must not
+    break this invariant's test coverage."""
+    monkeypatch.setattr(tracing.settings, "langfuse_public_key", "")
+    monkeypatch.setattr(tracing.settings, "langfuse_secret_key", "")
+
+
+def test_tracing_is_disabled_without_keys(monkeypatch):
+    _force_tracing_disabled(monkeypatch)
     assert tracing.is_enabled() is False
 
 
-def test_all_helpers_are_silent_noops_when_disabled():
+def test_all_helpers_are_silent_noops_when_disabled(monkeypatch):
+    _force_tracing_disabled(monkeypatch)
     assert tracing.is_enabled() is False  # precondition
 
     # None of these may raise, and none may return a trace object.
@@ -80,11 +93,12 @@ def test_all_helpers_are_silent_noops_when_disabled():
     tracing.clear_request_trace()
 
 
-def test_get_client_is_the_plain_openai_client_when_disabled():
+def test_get_client_is_the_plain_openai_client_when_disabled(monkeypatch):
     from openai import OpenAI
 
     from app.core.llm import _openai_class
 
+    _force_tracing_disabled(monkeypatch)
     assert tracing.is_enabled() is False
     assert _openai_class() is OpenAI
 
@@ -172,8 +186,9 @@ def test_chat_still_answers_when_the_tracing_backend_errors_on_every_call(monkey
     """Tracing switched on, but the Langfuse client raises on everything it is
     asked to do (unreachable host / outage). /chat must still return 200."""
     exploding = MagicMock()
-    exploding.trace.side_effect = ConnectionError("langfuse unreachable")
-    exploding.score.side_effect = ConnectionError("langfuse unreachable")
+    exploding.start_as_current_observation.side_effect = ConnectionError("langfuse unreachable")
+    exploding.start_observation.side_effect = ConnectionError("langfuse unreachable")
+    exploding.create_score.side_effect = ConnectionError("langfuse unreachable")
     exploding.flush.side_effect = ConnectionError("langfuse unreachable")
     exploding.shutdown.side_effect = ConnectionError("langfuse unreachable")
 
@@ -198,14 +213,25 @@ def test_chat_still_answers_when_the_tracing_backend_errors_on_every_call(monkey
 
 
 def test_pipeline_span_helpers_swallow_backend_errors(monkeypatch):
-    """The per-stage helpers run with a live (but broken) trace object; a
-    raising span/update call must be swallowed, not propagated."""
-    broken_trace = MagicMock()
-    broken_trace.span.side_effect = RuntimeError("langfuse span failed")
-    broken_trace.update.side_effect = RuntimeError("langfuse update failed")
+    """The per-stage helpers run with an active (but broken) trace context; a
+    raising start_observation/update call must be swallowed, not propagated."""
+    broken_client = MagicMock()
+    broken_client.start_observation.side_effect = RuntimeError("langfuse span failed")
+
+    broken_root = MagicMock()
+    broken_root.update.side_effect = RuntimeError("langfuse update failed")
 
     monkeypatch.setattr(tracing, "is_enabled", lambda: True)
-    token = tracing._current_trace.set(broken_trace)
+    monkeypatch.setattr(tracing, "_client", lambda: broken_client)
+
+    ctx = {
+        "root": broken_root,
+        "root_cm": None,
+        "attr_cm": None,
+        "trace_id": "tr-broken",
+        "root_id": "obs-broken",
+    }
+    token = tracing._current_ctx.set(ctx)
     try:
         # None of these may raise.
         tracing.record_intent("QA", method="llm")
@@ -216,7 +242,7 @@ def test_pipeline_span_helpers_swallow_backend_errors(monkeypatch):
             answer="উত্তর।", sources=_CITATIONS, mode="qa", response_time_ms=1.0
         )
     finally:
-        tracing._current_trace.reset(token)
+        tracing._current_ctx.reset(token)
 
 
 # ---------------------------------------------------------------------------
@@ -227,18 +253,28 @@ def test_pipeline_span_helpers_swallow_backend_errors(monkeypatch):
 def test_retrieve_span_lists_dropped_candidates_with_their_rerank_scores(monkeypatch):
     captured = {}
 
-    class _Span:
+    class _Obs:
         def end(self):
             pass
 
-    class _Trace:
-        def span(self, *, name, output):
+    class _FakeClient:
+        def start_observation(self, *, as_type, name, output=None, **kw):
+            captured["as_type"] = as_type
             captured["name"] = name
             captured["output"] = output
-            return _Span()
+            return _Obs()
 
     monkeypatch.setattr(tracing, "is_enabled", lambda: True)
-    token = tracing._current_trace.set(_Trace())
+    monkeypatch.setattr(tracing, "_client", lambda: _FakeClient())
+
+    ctx = {
+        "root": MagicMock(),
+        "root_cm": None,
+        "attr_cm": None,
+        "trace_id": "tr-1",
+        "root_id": "obs-1",
+    }
+    token = tracing._current_ctx.set(ctx)
     try:
         pool = [
             Citation(book="B", chapter="keep-1", source_db="d", content="x",
@@ -250,9 +286,10 @@ def test_retrieve_span_lists_dropped_candidates_with_their_rerank_scores(monkeyp
         ]
         tracing.record_retrieval(pool, top_k=2)
     finally:
-        tracing._current_trace.reset(token)
+        tracing._current_ctx.reset(token)
 
-    assert captured["name"] == "retrieve"
+    assert captured["as_type"] == "retriever"
+    assert captured["name"] == "retrieve-context"
     cands = captured["output"]["candidates"]
     assert captured["output"]["n"] == 3
     assert captured["output"]["top_k"] == 2

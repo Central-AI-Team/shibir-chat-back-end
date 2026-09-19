@@ -187,14 +187,17 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _qa_stream(message: str, *, trace_id: str | None = None):
+def _qa_stream(
+    message: str, *, trace_id: str | None = None, parent_observation_id: str | None = None
+):
     """Return (sources, answer_delta_iterator) for a QA message, mirroring
     the relevance gate in qa_service.answer_question -- that function stays
     the source of truth for the non-streaming path; keep this in sync.
 
-    trace_id is threaded through to stream_answer() so the streamed QA
-    generation nests under the request trace -- the streaming path can't rely
-    on the ContextVar for this (see below).
+    trace_id/parent_observation_id are threaded through to stream_answer() so
+    the streamed QA generation nests under the request's root span -- the
+    streaming path can't rely on ambient trace context for this (see
+    app/core/tracing.py's module docstring).
     """
     # Same cheap deterministic small-talk shortcut as answer_question: a
     # greeting has nothing to retrieve against, so answer it directly with
@@ -202,7 +205,7 @@ def _qa_stream(message: str, *, trace_id: str | None = None):
     if _is_conversational(message):
         return [], iter([random.choice(_CONVERSATIONAL_REPLIES)])
 
-    # The `retrieve` trace span is emitted inside retrieve_stages().
+    # The `retrieve-context` span is emitted inside retrieve_stages().
     citations = retrieve_relevant_docs(message)
     relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
     tracing.record_gate(
@@ -211,7 +214,9 @@ def _qa_stream(message: str, *, trace_id: str | None = None):
         threshold=settings.min_rerank_score,
     )
     grounding = citations if relevant else []
-    return grounding, stream_answer(message, grounding, trace_id=trace_id)
+    return grounding, stream_answer(
+        message, grounding, trace_id=trace_id, parent_observation_id=parent_observation_id
+    )
 
 
 @router.post("/chat/stream")
@@ -228,17 +233,20 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
     def gen():
         # One trace per streamed request. Starlette pulls this generator one
         # next() at a time via anyio.to_thread.run_sync, each call in its own
-        # copied context, so the ContextVar set inside start_request_trace()
-        # is only visible during the FIRST iteration (which is enough for the
-        # intent/rewrite/retrieve/gate spans -- they all run before the first
-        # yield). Anything that needs the trace after that -- the streamed QA
-        # generation, and finalize_request_trace() in the finally -- gets it
-        # from `trace` / `trace_id` captured here instead. No-op when disabled.
+        # copied context, so the ambient trace context set inside
+        # start_request_trace() is only visible during the FIRST iteration
+        # (which is enough for the intent/rewrite/retrieve/gate spans -- they
+        # all run before the first yield). Anything that needs the trace
+        # after that -- the streamed QA generation, and
+        # finalize_request_trace() in the finally -- gets it from `trace` /
+        # `trace_id` / `parent_observation_id` captured here instead. No-op
+        # when disabled. See app/core/tracing.py's module docstring.
         trace = tracing.start_request_trace(
             name="chat_stream", query=message, session_id=session_id,
             user_id=body.user_id,
         )
         trace_id = tracing.trace_id_of(trace)
+        parent_observation_id = tracing.parent_observation_id_of(trace)
         start = time.perf_counter()
         intent = "QA"
         answer = ""
@@ -249,7 +257,9 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
                 intent = classify_intent(message, was_roleplaying)
 
                 if intent == "QA":
-                    sources, deltas = _qa_stream(message, trace_id=trace_id)
+                    sources, deltas = _qa_stream(
+                        message, trace_id=trace_id, parent_observation_id=parent_observation_id
+                    )
                     yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
                     for delta in deltas:
                         answer += delta

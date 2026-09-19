@@ -143,6 +143,11 @@ class Settings(BaseSettings):
     langfuse_capture_io: bool = True
     # Optional build marker attached to every trace (e.g. a git short sha).
     langfuse_release: str = ""
+    # Separates real production traffic from local/dev/staging runs in the
+    # Langfuse UI (its default views filter to "production") -- set to
+    # "production" via the deployed box's .env, e.g. shibirgpt.service.
+    # Applies client-wide (every trace this process sends), not per-trace.
+    langfuse_environment: str = "development"
 
     # Browser same-origin policy blocks the front-end (a different origin --
     # the Vite dev server on :5173, or the deployed site) from calling this

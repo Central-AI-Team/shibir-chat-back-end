@@ -1,29 +1,58 @@
 """Langfuse tracing -- the ONLY module in the app that imports the langfuse SDK.
 
-Pinned to ``langfuse==2.60.10`` (the v2 "manual client" API: ``Langfuse()`` ->
-``trace.span()`` / ``trace.generation()``, plus the ``langfuse.openai`` drop-in
-wrapped client). Langfuse v3/v4 moved to an OpenTelemetry / ``@observe`` model
-with a different surface -- do NOT bump the pin without rewriting this file and
-the wiring in ``app/core/llm.py``.
+Pinned to ``langfuse==4.15.4`` (the OpenTelemetry-based "observations-first"
+API: ``Langfuse().start_observation()`` / ``start_as_current_observation()``,
+no more ``trace()``/``span()``/``generation()``, plus the ``langfuse.openai``
+drop-in wrapped client). Migrated from the v2 "manual client" API on
+2026-09-19: Langfuse Cloud moved this project's org onto its v4 backend,
+which sunsets the v2 SDK's legacy ingestion path entirely on 2026-11-16 --
+this was not optional modernization, the old pin was about to silently stop
+sending data at all. Do NOT downgrade without re-reading that deprecation
+notice (fetch https://langfuse.com/docs/observability/sdk/upgrade-path first
+-- the guidance moves).
+
+WHY THIS FILE HOLDS EXPLICIT OBJECT REFERENCES, NOT AMBIENT CONTEXT:
+  v4's "recommended" pattern is a single ``with start_as_current_observation()``
+  block whose children nest via ambient OpenTelemetry context (a contextvar
+  under the hood). That works fine within one thread/task -- verified live
+  that anyio's ``run_in_threadpool`` copies the calling contextvars.Context
+  into its worker thread, so ambient nesting survives run_in_threadpool calls
+  (used throughout this pipeline to keep blocking retrieval/LLM work off the
+  event loop). It does NOT survive Starlette's SSE streaming path: `gen()` in
+  router.py's ``chat_stream()`` is a plain sync generator that Starlette pulls
+  one ``next()`` at a time, each call getting its OWN fresh context copy from
+  the ASGI response sender -- not from the previous iteration. Whatever this
+  module attaches to ambient context during iteration 1 (the request's root
+  span) is gone by iteration 2. So: the root span/trace id/root observation
+  id are held as an explicit dict (``_current_ctx`` / the ``trace`` object
+  callers pass around), never re-derived from ambient context alone, and
+  ``app/core/llm.py`` always threads ``trace_id``/``parent_observation_id``
+  explicitly into the one call that runs post-first-yield
+  (``app/rag/generator.py``'s ``stream_answer()``). This mirrors exactly how
+  the old v2 code worked around the same Starlette behavior with its ContextVar
+  -- see git history on this file for that version if the shape here is
+  confusing.
 
 DESIGN RULE: observability must never harm the request path.
   * OPT-IN. With ``settings.langfuse_public_key`` / ``langfuse_secret_key``
     empty, every function here is a no-op, the langfuse SDK is never imported,
     ``app/core/llm.get_client()`` returns the plain OpenAI client, and ``/chat``
     behaves byte-identically to a build without this module.
-  * Fire-and-forget. The v2 client batches events on a background thread and
+  * Fire-and-forget. The client batches events on a background thread and
     flushes on its own timer; nothing here calls ``flush()`` on the request
     path. ``shutdown()`` (wired into the app lifespan) does the final flush.
   * Swallow everything. Every public helper is wrapped so any tracing error is
     logged at WARNING and never propagates into ``/chat``.
 
 WHAT A TRACE STORES when enabled (all on your own infra if self-hosted):
-  trace        -- raw user query, session id, optional user id, the final
+  root span    -- raw user query, session id, optional user id, the final
                   answer, the cited sources, which mode ran, total latency
-  spans        -- ``intent`` (+ how it was classified), ``rewrite`` (the query
-                  variants), ``retrieve`` (EVERY reranked candidate -- the ones
-                  kept AND the ones dropped -- each with a text preview + cosine
-                  similarity + rerank score), ``gate`` (grounded vs refused, top
+  spans        -- ``classify-intent`` (+ how it was classified), ``expand-
+                  query`` (the query variants), ``retrieve-context`` (a
+                  ``retriever``-typed observation covering EVERY reranked
+                  candidate -- kept AND dropped -- each with a text preview +
+                  cosine similarity + rerank score), ``check-relevance-gate``
+                  (a ``guardrail``-typed observation: grounded vs refused, top
                   rerank score, threshold)
   generations  -- every LLM call routed through ``app/core/llm.py``: model,
                   messages, completion, token usage, cost, latency, task label
@@ -47,14 +76,16 @@ logger = logging.getLogger(__name__)
 # How much of each retrieved chunk's text to keep in the trace preview.
 _PREVIEW_CHARS = 240
 
-# The active request trace. Made visible to app/core/llm.py (so every LLM call
-# links to it) and to the pipeline-stage helpers below WITHOUT threading a
-# trace argument through any service signature. Set in app/api/router.py at the
-# /chat boundary; read everywhere else. ContextVars propagate into
-# starlette.run_in_threadpool workers (verified on this Starlette/anyio), so the
-# threadpool-dispatched pipeline stages see the same trace object.
-_current_trace: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
-    "langfuse_current_trace", default=None
+# The active request's trace context: {"root": LangfuseSpan, "root_cm": the
+# start_as_current_observation() context manager (manually entered/exited --
+# see module docstring), "attr_cm": the propagate_attributes() context
+# manager for session_id/user_id, "trace_id": str, "root_id": str}. Made
+# visible to app/core/llm.py (so every LLM call links to it) and to the
+# pipeline-stage helpers below WITHOUT threading it through every service
+# signature. Set in app/api/router.py at the /chat boundary; read everywhere
+# else.
+_current_ctx: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "langfuse_current_ctx", default=None
 )
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -97,25 +128,27 @@ def _mask(*, data: Any) -> Any:
 
 @functools.lru_cache(maxsize=1)
 def _client() -> Optional[Any]:
-    """The one shared v2 client. This is also the exact instance the
-    ``langfuse.openai`` integration reuses (it fetches the same
-    ``LangfuseSingleton``), so traces, generations and scores all flow through
-    a single queue / flush thread."""
+    """The one shared client. Constructing it registers it as THE Langfuse
+    singleton (keyed by public_key) -- ``langfuse.openai``'s wrapped calls use
+    ``get_client()`` internally with no key, which finds this instance as long
+    as it was constructed before the first traced call. That's why ``init()``
+    builds this eagerly at app startup instead of waiting for the first
+    request."""
     if not is_enabled():
         return None
     try:
-        from langfuse.openai import LangfuseSingleton
+        from langfuse import Langfuse
 
-        return LangfuseSingleton().get(
+        return Langfuse(
             public_key=settings.langfuse_public_key,
             secret_key=settings.langfuse_secret_key,
             host=settings.langfuse_host,
             release=settings.langfuse_release or None,
+            environment=settings.langfuse_environment,
             mask=None if settings.langfuse_capture_io else _mask,
             # Keep a failing/unreachable Langfuse from stretching a graceful
             # shutdown's final flush (default is 20s per attempt).
             timeout=10,
-            sdk_integration="shibir-chat",
         )
     except Exception:
         logger.warning("langfuse: client init failed; tracing disabled", exc_info=True)
@@ -123,27 +156,33 @@ def _client() -> Optional[Any]:
 
 
 def init() -> None:
-    """Pay the one-time cost of importing ``langfuse.openai`` (~heavy: a few
-    seconds cold) and building the client at APP STARTUP, so the first /chat
-    request never eats it. Wired into the FastAPI lifespan. No-op when
-    disabled; never raises."""
+    """Pay the one-time cost of constructing the client and importing
+    ``langfuse.openai`` (~heavy: a few seconds cold) at APP STARTUP, so the
+    first /chat request never eats it. Wired into the FastAPI lifespan. No-op
+    when disabled; never raises."""
     if not is_enabled():
         return
     try:
         configure_openai_wrapper()
         if _client() is not None:
-            logger.info("langfuse: tracing enabled (host=%s)", settings.langfuse_host)
+            logger.info(
+                "langfuse: tracing enabled (host=%s, environment=%s)",
+                settings.langfuse_host,
+                settings.langfuse_environment,
+            )
     except Exception:
         logger.warning("langfuse: init failed; tracing effectively disabled", exc_info=True)
 
 
-# Set True only once ``import langfuse.openai`` has actually run and patched
-# ``openai``'s chat-completions method (the import is what installs the wrapper,
-# process-wide). app/core/llm.py's complete() reads this via
-# openai_wrapper_active(): the langfuse-only kwargs (name/metadata/trace_id) are
-# safe to pass ONLY when the patch is in place -- a plain client 400s on them.
-# So if langfuse is enabled but the import somehow fails, tracing stays off for
-# the OpenAI calls instead of breaking every request.
+# Set True only once ``import langfuse.openai`` has actually run -- that
+# import is what monkeypatches the real openai.OpenAI/AsyncOpenAI classes'
+# chat-completions methods, process-wide (unlike v2, there is no separate
+# per-attribute configure step). app/core/llm.py's complete() reads this via
+# openai_wrapper_active(): the langfuse-only kwargs (name/metadata/trace_id/
+# parent_observation_id/...) are safe to pass ONLY when the patch is in place
+# -- a plain client 400s on them. So if langfuse is enabled but the import
+# somehow fails, tracing stays off for the OpenAI calls instead of breaking
+# every request.
 _openai_wrapper_ready = False
 
 
@@ -154,25 +193,18 @@ def openai_wrapper_active() -> bool:
 
 
 def configure_openai_wrapper() -> None:
-    """Point ``langfuse.openai``'s drop-in client at our config. Called by
+    """Construct the shared client (so it's registered as the singleton
+    ``langfuse.openai``'s wrapped methods will find via ``get_client()``),
+    then import ``langfuse.openai`` to install its patch. Called by
     ``app/core/llm.py`` immediately before it constructs the wrapped OpenAI
-    client. No-op when disabled."""
+    client, and eagerly by ``init()``. No-op when disabled."""
     global _openai_wrapper_ready
     if not is_enabled():
         return
     try:
-        import openai
+        _client()  # must exist before the wrapper's get_client() calls resolve to it
+        import langfuse.openai  # noqa: F401  (import patches OpenAI's create methods)
 
-        import langfuse.openai  # noqa: F401  (import injects openai.langfuse_* attrs + patches create)
-
-        openai.langfuse_public_key = settings.langfuse_public_key
-        openai.langfuse_secret_key = settings.langfuse_secret_key
-        openai.langfuse_host = settings.langfuse_host
-        openai.langfuse_enabled = True
-        openai.langfuse_mask = None if settings.langfuse_capture_io else _mask
-        # Build the shared singleton NOW so the wrapper's own initialize()
-        # returns this instance instead of building a second client.
-        _client()
         _openai_wrapper_ready = True
     except Exception:
         logger.warning("langfuse: openai wrapper config failed (ignored)", exc_info=True)
@@ -186,110 +218,159 @@ def configure_openai_wrapper() -> None:
 @_safe
 def start_request_trace(
     *, name: str, query: str, session_id: str, user_id: str | None = None
-) -> Optional[Any]:
-    """Open one trace for a /chat request and stash it in the ContextVar so
-    every nested LLM call and pipeline stage groups under it. Returns the
-    trace (or None when disabled) -- callers ignore it and use the helpers
-    below."""
+) -> Optional[dict]:
+    """Open the root span for a /chat request and stash its context in the
+    ContextVar so every nested LLM call and pipeline stage groups under it.
+    Returns the context dict (or None when disabled) -- non-streaming callers
+    ignore it and use the helpers below; the streaming endpoint holds onto it
+    explicitly and passes it back into finalize_request_trace() (see the
+    module docstring for why)."""
     client = _client()
     if client is None:
         return None
-    trace = client.trace(
-        name=name,
-        input={"message": query},
-        session_id=session_id,
-        user_id=user_id,
-        release=settings.langfuse_release or None,
+    from langfuse import propagate_attributes
+
+    root_cm = client.start_as_current_observation(
+        as_type="span", name=name, input={"message": query}
     )
-    _current_trace.set(trace)
-    return trace
+    root = root_cm.__enter__()
+    attr_cm = propagate_attributes(session_id=session_id, user_id=user_id)
+    attr_cm.__enter__()
+    ctx = {
+        "root": root,
+        "root_cm": root_cm,
+        "attr_cm": attr_cm,
+        "trace_id": root.trace_id,
+        "root_id": root.id,
+    }
+    _current_ctx.set(ctx)
+    return ctx
 
 
-def current_trace() -> Optional[Any]:
-    return _current_trace.get()
+def current_trace() -> Optional[dict]:
+    return _current_ctx.get()
 
 
 def current_trace_id() -> Optional[str]:
     """The active trace id, for app/core/llm.py to link generations to. Cheap;
     safe to call on every LLM call."""
-    return trace_id_of(_current_trace.get())
+    ctx = _current_ctx.get()
+    return ctx["trace_id"] if ctx else None
 
 
-def trace_id_of(trace: Optional[Any]) -> Optional[str]:
-    """The id of a trace object (or None). For callers that hold the trace
-    explicitly rather than via the ContextVar -- see finalize_request_trace's
-    ``trace`` argument."""
-    return getattr(trace, "id", None) if trace is not None else None
+def current_parent_observation_id() -> Optional[str]:
+    """The active root span's own observation id, so LLM-call generations
+    nest under it instead of attaching flat at the trace level."""
+    ctx = _current_ctx.get()
+    return ctx["root_id"] if ctx else None
+
+
+def trace_id_of(trace: Optional[dict]) -> Optional[str]:
+    """The trace id of an explicitly-held context dict. For callers that hold
+    the context explicitly rather than via the ContextVar -- see
+    finalize_request_trace's ``trace`` argument."""
+    return trace["trace_id"] if trace else None
+
+
+def parent_observation_id_of(trace: Optional[dict]) -> Optional[str]:
+    """The root span's observation id of an explicitly-held context dict."""
+    return trace["root_id"] if trace else None
 
 
 @_safe
 def finalize_request_trace(
     *,
-    trace: Optional[Any] = None,
+    trace: Optional[dict] = None,
     answer: str,
     sources: list | None,
     mode: str,
     response_time_ms: float | None,
     error: bool = False,
 ) -> None:
-    """Attach the request outcome to the trace. Called from a ``finally`` at
-    the /chat boundary, so it also runs on the error paths.
+    """Attach the request outcome to the root span and close it. Called from
+    a ``finally`` at the /chat boundary, so it also runs on the error paths.
 
     ``trace`` may be passed explicitly by a caller whose control flow loses
     the ContextVar before the ``finally`` runs. The streaming endpoint is
-    exactly that case: Starlette pulls its response generator one ``next()``
-    at a time via ``anyio.to_thread.run_sync``, each call in its own copied
-    context, so the trace ``set`` in the first iteration is already gone by
-    the time the generator's ``finally`` executes. Non-streaming callers omit
+    exactly that case -- see the module docstring. Non-streaming callers omit
     this and the ContextVar is used as before.
+
+    ``mode`` goes into metadata, not a tag: it's only known once intent
+    classification finishes, and Langfuse's own guidance is that tags are for
+    dimensions known at observation-creation time -- metadata is the
+    documented escape hatch for exactly this case. ``error`` sets the
+    observation ``level`` instead of an ad hoc tag, which is what Langfuse's
+    UI natively filters/colors by.
     """
-    trace = trace if trace is not None else _current_trace.get()
-    if trace is None:
+    ctx = trace if trace is not None else _current_ctx.get()
+    if ctx is None:
         return
-    trace.update(
+    root = ctx["root"]
+    root.update(
         output={"answer": answer, "sources": _sources_view(sources), "mode": mode},
-        metadata={"response_time_ms": response_time_ms, "error": error},
-        tags=[f"mode:{mode}"] + (["error"] if error else []),
+        metadata={"response_time_ms": response_time_ms, "mode": mode},
+        level="ERROR" if error else "DEFAULT",
     )
+    for key in ("attr_cm", "root_cm"):
+        cm = ctx.get(key)
+        if cm is None:
+            continue
+        try:
+            cm.__exit__(None, None, None)
+        except Exception:
+            logger.warning("langfuse: closing %s failed (ignored)", key, exc_info=True)
 
 
 def clear_request_trace() -> None:
     """Drop the ContextVar reference. Matters for the streaming path, whose
     generator runs on a pooled worker thread that outlives the request."""
-    _current_trace.set(None)
+    _current_ctx.set(None)
 
 
 # ---------------------------------------------------------------------------
-# pipeline stages -- one thin span each, all no-op when there is no trace
+# pipeline stages -- one thin child observation each, all no-op when there is
+# no active trace. Each nests under the request's root span via AMBIENT
+# OpenTelemetry context (verified live: this survives anyio's
+# run_in_threadpool, and every call site here runs before the streaming
+# path's first `yield` -- see the module docstring for the boundary that
+# does NOT survive and how app/core/llm.py handles it instead).
 # ---------------------------------------------------------------------------
 
 
 @_safe
 def record_intent(intent: str, method: str) -> None:
     """method: "regex" | "llm" | "session" (an ongoing roleplay thread)."""
-    trace = _current_trace.get()
-    if trace is None:
+    if _current_ctx.get() is None:
         return
-    trace.span(
-        name="intent", output={"intent": intent, "classified_by": method}
+    client = _client()
+    if client is None:
+        return
+    client.start_observation(
+        as_type="span",
+        name="classify-intent",
+        output={"intent": intent, "classified_by": method},
     ).end()
 
 
 @_safe
 def record_rewrite(variants) -> None:
-    trace = _current_trace.get()
-    if trace is None:
+    if _current_ctx.get() is None:
+        return
+    client = _client()
+    if client is None:
         return
     variants = list(variants)
-    trace.span(
-        name="rewrite",
+    client.start_observation(
+        as_type="span",
+        name="expand-query",
         output={"variants": variants, "n_variants": len(variants)},
     ).end()
 
 
 @_safe
-def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve") -> None:
-    """One span covering the whole retrieve+rerank step.
+def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve-context") -> None:
+    """One ``retriever``-typed observation covering the whole retrieve+rerank
+    step.
 
     ``chunks`` is the ENTIRE candidate pool the cross-encoder scored, best
     (rerank) first, each carrying its cosine ``similarity`` AND its
@@ -302,11 +383,14 @@ def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve"
     on retrieval or the gate. Logging only the survivors (the old behaviour)
     hid exactly the row you needed to see.
     """
-    trace = _current_trace.get()
-    if trace is None:
+    if _current_ctx.get() is None:
+        return
+    client = _client()
+    if client is None:
         return
     chunks = list(chunks)
-    trace.span(
+    client.start_observation(
+        as_type="retriever",
         name=name,
         output={
             "n": len(chunks),
@@ -330,11 +414,17 @@ def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve"
 
 @_safe
 def record_gate(*, grounded: bool, top_score, threshold) -> None:
-    trace = _current_trace.get()
-    if trace is None:
+    """A ``guardrail``-typed observation: this is the pass/refuse decision
+    that keeps an ungrounded answer from being cited (see CLAUDE.md's
+    "Prompt contract")."""
+    if _current_ctx.get() is None:
         return
-    trace.span(
-        name="gate",
+    client = _client()
+    if client is None:
+        return
+    client.start_observation(
+        as_type="guardrail",
+        name="check-relevance-gate",
         output={
             "grounded": grounded,
             "outcome": "grounded" if grounded else "refused",
@@ -375,7 +465,7 @@ def score_trace(
     client = _client()
     if client is None:
         return
-    client.score(
+    client.create_score(
         trace_id=trace_id,
         name=name,
         value=value,
