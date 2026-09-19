@@ -94,7 +94,13 @@ def generate_answer(
     return response.choices[0].message.content or ""
 
 
-def stream_answer(query: str, citations: list[Citation], *, trace_id: str | None = None):
+def stream_answer(
+    query: str,
+    citations: list[Citation],
+    *,
+    trace_id: str | None = None,
+    parent_observation_id: str | None = None,
+):
     """Streaming counterpart of generate_answer(): yields answer text deltas
     as they arrive from the model.
 
@@ -103,11 +109,13 @@ def stream_answer(query: str, citations: list[Citation], *, trace_id: str | None
     stream=True and yielding chunks instead of returning the whole string.
     Used by POST /chat/stream; the non-streaming /chat path is unchanged.
 
-    trace_id, if given, is passed straight to complete() so the streamed
-    generation nests under the request's Langfuse trace. The streaming path
-    has to pass it explicitly because it is iterated in a threadpool where
-    the trace ContextVar app/core/llm.py would otherwise read is not visible
-    (see tracing.finalize_request_trace's docstring). None -> unchanged.
+    trace_id/parent_observation_id, if given, are passed straight to
+    complete() so the streamed generation nests under the request's Langfuse
+    root span. The streaming path has to pass these explicitly because this
+    generator is iterated by Starlette one `next()` at a time in a
+    threadpool, each call in its own copied context, so the ambient trace
+    context app/core/llm.py would otherwise read is not visible by this point
+    (see app/core/tracing.py's module docstring). None -> unchanged.
     """
     messages = [
         {"role": "system", "content": _SYSTEM},
@@ -115,7 +123,11 @@ def stream_answer(query: str, citations: list[Citation], *, trace_id: str | None
             context=_format_context(citations), query=query
         )},
     ]
-    extra = {"trace_id": trace_id} if trace_id else {}
+    extra = {}
+    if trace_id:
+        extra["trace_id"] = trace_id
+    if parent_observation_id:
+        extra["parent_observation_id"] = parent_observation_id
     for chunk in complete("qa", messages, stream=True, **extra):
         if not chunk.choices:
             continue

@@ -181,19 +181,33 @@ def complete(task: str, messages: list[dict], *, token_budget: int | None = None
 
     # langfuse.openai's global patch consumes these and strips them before the
     # real OpenAI call (so per-task cost/latency is filterable and the
-    # generation nests under the current /chat trace). A plain, unpatched
-    # client 400s on them. Guard on the patch actually being installed --
-    # NOT merely on tracing being enabled -- so an enabled-but-broken langfuse
-    # (import failed) can never turn every LLM call into a 400. When the patch
-    # is absent, strip any that a caller passed explicitly (e.g. stream_answer
-    # forwarding a trace_id).
-    _LANGFUSE_ONLY = ("name", "metadata", "trace_id", "session_id", "user_id", "tags")
+    # generation nests under the current /chat trace's root span). A plain,
+    # unpatched client 400s on them. Guard on the patch actually being
+    # installed -- NOT merely on tracing being enabled -- so an
+    # enabled-but-broken langfuse (import failed) can never turn every LLM
+    # call into a 400. When the patch is absent, strip any that a caller
+    # passed explicitly (e.g. stream_answer forwarding a trace_id).
+    _LANGFUSE_ONLY = (
+        "name",
+        "metadata",
+        "trace_id",
+        "parent_observation_id",
+        "session_id",
+        "user_id",
+        "tags",
+    )
     if tracing.openai_wrapper_active():
         params.setdefault("name", f"llm:{task}")
         params.setdefault("metadata", {"task": task, "model": model})
         trace_id = params.get("trace_id") or tracing.current_trace_id()
         if trace_id:
             params["trace_id"] = trace_id
+            # parent_observation_id requires trace_id to be set (the wrapper
+            # 400s otherwise) -- nests the generation under the request's
+            # root span instead of attaching it flat at the trace level.
+            parent_id = params.get("parent_observation_id") or tracing.current_parent_observation_id()
+            if parent_id:
+                params["parent_observation_id"] = parent_id
     else:
         for key in _LANGFUSE_ONLY:
             params.pop(key, None)

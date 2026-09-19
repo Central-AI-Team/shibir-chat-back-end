@@ -45,9 +45,13 @@ dependencies = [
     "kubernetes==34.1.0",
     # LLM tracing / observability. Isolated to app/core/tracing.py + the wiring
     # in app/core/llm.py; opt-in via LANGFUSE_* env (disabled by default).
-    # Pinned to the v2 "manual client" API -- v3/v4 are an OpenTelemetry rewrite
-    # with a different surface; see app/core/tracing.py before bumping.
-    "langfuse==2.60.10",
+    # v4, the OpenTelemetry-based API (manual observation objects via
+    # start_observation()/start_as_current_observation(), no more trace()/
+    # span()/generation()) -- migrated 2026-09-19 because Langfuse Cloud
+    # dropped this project's org onto the v4 backend, which sunsets the v2
+    # SDK's legacy ingestion path entirely on 2026-11-16. See
+    # app/core/tracing.py's module docstring before changing this further.
+    "langfuse==4.15.4",
     "markdown-it-py==4.0.0",
     "MarkupSafe==3.0.3",
     "mdurl==0.1.2",
@@ -66,11 +70,11 @@ dependencies = [
     "opentelemetry-semantic-conventions==0.59b0",
     "orjson==3.11.4",
     "overrides==7.7.0",
-    # NOTE: pinned <25.0, not the 25.0 that requirements.txt had -- langfuse
-    # 2.60.10 requires packaging<25.0; 25.0 is unresolvable alongside it (a
-    # pre-existing requirements.txt bug uv's resolver caught: pip's own
-    # resolver rejects `pip install packaging==25.0 langfuse==2.60.10` too,
-    # and the real venv/ here has 24.2, not 25.0).
+    # NOTE: pinned <25.0, not the 25.0 that requirements.txt had -- a
+    # pre-existing requirements.txt bug uv's resolver caught (the real venv/
+    # here has 24.2, not 25.0). langfuse==4.15.4 itself only needs
+    # packaging<27.0 (looser than the old 2.60.10 pin's <25.0), so this stays
+    # pinned at 24.2 for continuity, not because anything still requires it.
     "packaging==24.2",
     "pillow==12.0.0",
     "posthog==5.4.0",
