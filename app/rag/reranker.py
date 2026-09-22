@@ -13,11 +13,17 @@ bge-reranker-v2-m3 is the matching reranker for bge-m3 and supports Bengali.
 
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 
 from sentence_transformers import CrossEncoder
 
 from app.core.config import settings
+
+# Same reason as embedder._lock: serialise the lazy load (lru_cache doesn't
+# lock, so concurrent first requests would each load a ~2.2 GB copy) and the
+# CPU-bound predict() calls.
+_lock = threading.Lock()
 
 
 @lru_cache(maxsize=1)
@@ -39,6 +45,7 @@ def rerank(query: str, docs: list[str], top_n: int) -> list[tuple[int, float]]:
     """
     if not docs:
         return []
-    scores = _model().predict([(query, d) for d in docs])
+    with _lock:
+        scores = _model().predict([(query, d) for d in docs])
     ranked = sorted(enumerate(float(s) for s in scores), key=lambda x: x[1], reverse=True)
     return ranked[:top_n]
