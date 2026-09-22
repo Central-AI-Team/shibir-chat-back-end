@@ -17,11 +17,21 @@ queries with "query: ".
 
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 
 from sentence_transformers import SentenceTransformer
 
 from app.core.config import settings
+
+# The API serves requests from a threadpool, so two /chat calls can reach this
+# module at once. lru_cache does NOT lock: two concurrent first calls both
+# miss and each load a separate ~2.2 GB copy, which on a small box pushes it
+# into swap and stalls every request for minutes. Concurrent encode() calls
+# on CPU also just fight over the same cores (torch already uses all of them
+# per call), so serialising costs nothing and keeps memory bounded. One lock
+# covers both the load and the inference.
+_lock = threading.Lock()
 
 
 @lru_cache(maxsize=1)
@@ -44,12 +54,13 @@ def embed_texts(texts: list[str], batch_size: int = 16) -> list[list[float]]:
     normalize_embeddings=True is REQUIRED -- the Chroma collection is created
     with hnsw:space=cosine, and cosine only behaves correctly on unit vectors.
     """
-    return _model().encode(
-        texts,
-        batch_size=batch_size,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    ).tolist()
+    with _lock:
+        return _model().encode(
+            texts,
+            batch_size=batch_size,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        ).tolist()
 
 
 def embed_query(query: str) -> list[float]:

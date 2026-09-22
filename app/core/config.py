@@ -18,15 +18,17 @@ class Settings(BaseSettings):
 
     # Per-request timeout (seconds) for every LLM call in app/core/llm.py --
     # both the OpenAI client (get_client()) and the Groq-compatible client
-    # (get_client_for()) are constructed with this. Previously unset (relying
-    # on the openai SDK's own default), which meant a slow/hanging upstream
-    # call could block a /chat request indefinitely with no explicit,
-    # documented limit -- see CLAUDE.md's "Known gaps". 450s (7.5 min) is
-    # deliberately generous, well above anything observed live (gpt-5-mini
-    # rewrite calls have taken up to ~40s on long input; nothing in this app
-    # legitimately needs minutes), so it should only ever fire on a truly
-    # stuck request, not a normal slow one.
-    llm_request_timeout_seconds: int = 450
+    # (get_client_for()) are constructed with this. For a streamed answer it
+    # bounds the gap between chunks, not the whole answer. The slowest call
+    # observed live is a gpt-5-mini rewrite at ~40s on long input, so 90s
+    # leaves headroom while still failing a stuck call in reasonable time.
+    # (It was 450s, which made a stuck request look like a 7+ minute hang.)
+    llm_request_timeout_seconds: int = 90
+
+    # How many times the openai SDK retries a failed/timed-out LLM call. The
+    # SDK default is 2, so worst case is (1 + retries) * timeout -- with the
+    # old 450s timeout that was ~22 minutes. 1 retry covers a transient blip.
+    llm_max_retries: int = 1
 
     # Groq (OpenAI-compatible API, different base_url) -- used only by
     # scripts/eval_generation_ab.py for a different-provider challenger model
