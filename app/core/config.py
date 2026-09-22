@@ -16,6 +16,18 @@ class Settings(BaseSettings):
     openai_api_key: str
     openai_model: str = "gpt-5-mini"
 
+    # Per-request timeout (seconds) for every LLM call in app/core/llm.py --
+    # both the OpenAI client (get_client()) and the Groq-compatible client
+    # (get_client_for()) are constructed with this. Previously unset (relying
+    # on the openai SDK's own default), which meant a slow/hanging upstream
+    # call could block a /chat request indefinitely with no explicit,
+    # documented limit -- see CLAUDE.md's "Known gaps". 450s (7.5 min) is
+    # deliberately generous, well above anything observed live (gpt-5-mini
+    # rewrite calls have taken up to ~40s on long input; nothing in this app
+    # legitimately needs minutes), so it should only ever fire on a truly
+    # stuck request, not a normal slow one.
+    llm_request_timeout_seconds: int = 450
+
     # Groq (OpenAI-compatible API, different base_url) -- used only by
     # scripts/eval_generation_ab.py for a different-provider challenger model
     # and an independent judge model. Not read anywhere in the production

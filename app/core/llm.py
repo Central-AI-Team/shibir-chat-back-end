@@ -52,7 +52,10 @@ def _openai_class():
 
 @lru_cache(maxsize=1)
 def get_client() -> OpenAI:
-    return _openai_class()(api_key=settings.openai_api_key)
+    return _openai_class()(
+        api_key=settings.openai_api_key,
+        timeout=settings.llm_request_timeout_seconds,
+    )
 
 
 def get_model(task: str | None = None) -> str:
@@ -85,7 +88,11 @@ def get_client_for(base_url: str | None = None, api_key: str | None = None) -> O
     """
     if base_url is None and api_key is None:
         return get_client()
-    return _openai_class()(base_url=base_url, api_key=api_key)
+    return _openai_class()(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=settings.llm_request_timeout_seconds,
+    )
 
 
 # ---------------------------------------------------------------------------
