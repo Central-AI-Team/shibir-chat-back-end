@@ -8,8 +8,16 @@ random. These assertions would have caught that regression immediately.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
+
+# Loads the real ~2.2 GB bge-m3 model -- too heavy for CI / a small dev box.
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_MODEL_TESTS") != "1",
+    reason="loads the real embedding model; set RUN_MODEL_TESTS=1 to run",
+)
 
 from app.rag.chunker import chunk_text, normalize
 from app.rag.embedder import _model

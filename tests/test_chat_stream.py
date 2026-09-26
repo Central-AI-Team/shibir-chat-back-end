@@ -215,3 +215,21 @@ def test_stream_works_when_tracing_disabled(monkeypatch):
     assert r.status_code == 200
     assert seen["trace_id"] is None
     assert seen["parent_observation_id"] is None
+
+
+def test_stream_gpu_service_failure_emits_error_event():
+    from app.api.router import _LLM_UNAVAILABLE_DETAIL
+    from app.rag.gpu_client import GPUServiceError
+
+    with (
+        patch("app.api.router.classify_intent", return_value="QA"),
+        patch(
+            "app.api.router.retrieve_relevant_docs",
+            side_effect=GPUServiceError("GPU service /rerank: HTTP 503", 503),
+        ),
+    ):
+        response = client.post("/chat/stream", json={"message": "প্রশ্ন?"})
+
+    events = _events(response.text)
+    assert [e for e, _ in events] == ["error"]
+    assert json.loads(events[0][1])["detail"] == _LLM_UNAVAILABLE_DETAIL

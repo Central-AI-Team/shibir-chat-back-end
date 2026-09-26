@@ -171,3 +171,20 @@ def test_chat_qa_below_threshold_returns_no_sources():
 def test_chat_rejects_empty_message():
     response = client.post("/chat", json={"message": "   "})
     assert response.status_code == 400
+
+
+def test_chat_gpu_service_failure_returns_503():
+    from app.api.router import _LLM_UNAVAILABLE_DETAIL
+    from app.rag.gpu_client import GPUServiceError
+
+    with (
+        patch("app.api.router.classify_intent", return_value="QA"),
+        patch(
+            "app.services.qa_service.retrieve_relevant_docs",
+            side_effect=GPUServiceError("GPU service /embed: HTTP 503", 503),
+        ),
+    ):
+        response = client.post("/chat", json={"message": "প্রশ্ন?"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == _LLM_UNAVAILABLE_DETAIL

@@ -6,17 +6,26 @@ library and returns an answer grounded strictly in those excerpts — it refuses
 guesses when the library doesn't cover the question.
 
 For a deeper architecture walkthrough (retrieval pipeline, prompt contract, reindexing
-gotchas), see [`PROJECT.md`](./PROJECT.md).
+gotchas), see [`CLAUDE.md`](./CLAUDE.md).
 
 ## Features
 
-- `POST /ask` — retrieval-augmented Q&A: bi-encoder search (`BAAI/bge-m3`) over a chunked
-  Chroma vector store, cross-encoder reranking (`BAAI/bge-reranker-v2-m3`), then a grounded
-  Gemini answer. Works across Bengali script, Banglish, and English queries via automatic
-  query rewriting.
-- `POST /note` — generates a structured Bengali summary of an entire book chapter
-  (map-reduce over every published page, not similarity search).
+- `POST /chat` — the single entry point. Classifies each message into one of four modes and
+  dispatches internally:
+  - **qa** — retrieval-augmented Q&A: bi-encoder search (`BAAI/bge-m3`) over a chunked
+    Chroma vector store, cross-encoder reranking (`BAAI/bge-reranker-v2-m3`), then a grounded
+    answer from OpenAI `gpt-5-mini`. Works across Bengali script, Banglish, and English
+    queries via automatic query rewriting.
+  - **note** — a structured Bengali summary of a whole book (map-reduce over every published
+    page of each chapter, not similarity search).
+  - **roleplay** — multi-turn persona conversation (no retrieval).
+  - **suggestion** — book-grounded recommendation, with the same relevance gate as qa.
+- `POST /chat/stream` — same as `/chat`, as Server-Sent Events.
+- `GET /conversations`, `GET /conversations/{id}/messages`, `DELETE /conversations/{id}` —
+  in-process chat history (single worker only).
 - `GET /health` — plain liveness check.
+- Embedding and reranking run either locally (CPU, sentence-transformers) or on the external
+  GPU service `shibir-chat-gpu-service` (Modal) — see "GPU service" below.
 - Content is stored in PostgreSQL (`categories` → `books` → `chapters` → `pages`, plus a
   standalone `articles` table).
 
@@ -29,9 +38,9 @@ gotchas), see [`PROJECT.md`](./PROJECT.md).
   download the right Python for you if needed.
 - **PostgreSQL** (any recent version), with the content already loaded into it. This service
   reads from Postgres; it does not seed it.
-- A **Gemini API key** (https://aistudio.google.com/apikey). Free tier is capped at 20
-  requests/day **per Google Cloud project** — fine for light testing, not for sustained use.
-- ~3 GB free disk for the embedding + reranker models (downloaded once, cached locally).
+- An **OpenAI API key** (https://platform.openai.com/api-keys).
+- Either ~3 GB free disk (+ ~6 GB RAM) for the local embedding + reranker models, **or** a
+  running `shibir-chat-gpu-service` deployment and its API key (see "GPU service" below).
 - git.
 
 ## Installation
@@ -92,14 +101,17 @@ Copy `.env.example` to `.env`:
 - **Windows**: `copy .env.example .env`
 
 Then edit `.env` and set at minimum:
-- `GEMINI_API_KEY` — your key from https://aistudio.google.com/apikey
+- `OPENAI_API_KEY` — your OpenAI key
 - `DATABASE_URL` — SQLAlchemy DSN, e.g.
   `postgresql+psycopg2://user:password@localhost:5432/shibir_chat`
 
 Everything else in `.env.example` has a working default — see the comments in that file, or
-the configuration table in [`PROJECT.md`](./PROJECT.md).
+the configuration table in [`CLAUDE.md`](./CLAUDE.md).
 
 ### 6. Download the embedding and reranker models (first run only)
+
+Skip this step if you use the GPU service (`GPU_SERVICE_URL` set) — nothing is loaded locally
+then.
 
 The models (`BAAI/bge-m3`, `BAAI/bge-reranker-v2-m3`) are downloaded from Hugging Face and
 cached locally the first time they're used. `run.sh` sets `HF_HUB_OFFLINE=1`, which blocks
@@ -125,14 +137,15 @@ Needs ~2.8 GB of disk and a working internet connection. Subsequent runs work fu
 
 Reads published pages/articles from Postgres, chunks them, and embeds them into Chroma. Run
 once, and again whenever the source content changes (see the "Reindexing" section of
-[`PROJECT.md`](./PROJECT.md) for the full re-embed procedure — deleting `chroma_db/` alone is
+[`CLAUDE.md`](./CLAUDE.md) for the full re-embed procedure — deleting `chroma_db/` alone is
 **not** enough):
 
 ```bash
 uv run python -m app.rag.ingest
 ```
-This is CPU-bound and can take a while on a large corpus without a GPU — expect anywhere from
-a few minutes to a few hours depending on corpus size and available RAM.
+Locally this is CPU-bound and can take a while on a large corpus — expect anywhere from a few
+minutes to a few hours depending on corpus size and available RAM. With `GPU_SERVICE_URL` set,
+embedding runs on the GPU service in batches of 256 chunks and is much faster.
 
 ### 8. Run the server
 
@@ -160,32 +173,59 @@ The API is available at `http://127.0.0.1:9200`.
 
 - `GET /health` → `{"status": "ok"}`
 
-- `POST /ask`
-  - Request: `{"query": "your question in Bengali, Banglish, or English"}`
+- `POST /chat`
+  - Request: `{"message": "your question in Bengali, Banglish, or English", "session_id": null, "user_id": null}`
+    (omit `session_id` to start a new session; reuse the one returned to continue it)
   - Response:
     ```json
     {
-      "query": "...",
+      "mode": "qa",
       "answer": "... (always Bengali)",
       "sources": [
         {
           "book": "...", "chapter": "...", "source_db": "tarun",
           "content": "...", "similarity": 0.65, "rerank_score": 0.98
         }
-      ]
+      ],
+      "session_id": "...",
+      "response_time_ms": 842.17
     }
     ```
-    `sources` is an empty array whenever the answer is a refusal.
+    `mode` is `qa` | `note` | `roleplay` | `suggestion`. `sources` is an empty array whenever
+    nothing grounded the answer. If the LLM or the GPU service is unavailable, the response is
+    a `503` with a Bengali "temporarily unavailable" detail.
 
-- `POST /note`
-  - Request: `{"chapter_id": 2509}`
-  - Response: `{"book": "...", "chapter": "...", "pages_used": 139, "note": "..."}`
+- `POST /chat/stream` — same request; Server-Sent Events `sources`, then `token` (one or
+  more), then `done` (`mode`/`session_id`/`response_time_ms`), or a single `error` event.
+
+- `GET /conversations`, `GET /conversations/{id}/messages`, `DELETE /conversations/{id}`.
 
 Example:
 ```bash
-curl -s http://127.0.0.1:9200/ask -H "Content-Type: application/json" \
-  -d '{"query": "যাকাতের অর্থ কোন কোন খাতে ব্যয় করা যায়?"}'
+curl -s http://127.0.0.1:9200/chat -H "Content-Type: application/json" \
+  -d '{"message": "যাকাতের অর্থ কোন কোন খাতে ব্যয় করা যায়?"}'
 ```
+
+## GPU service (optional)
+
+Embedding (`BAAI/bge-m3`) and reranking (`BAAI/bge-reranker-v2-m3`) can run on the separate
+`shibir-chat-gpu-service` repository, deployed on Modal, instead of on this box's CPU. Set in
+`.env`:
+
+```
+GPU_SERVICE_URL=https://<workspace>--shibir-chat-gpu-service.modal.run
+GPU_API_KEY=...
+```
+
+With `GPU_SERVICE_URL` set, `app/rag/embedder.py` and `app/rag/reranker.py` call the service's
+`/embed` and `/rerank` endpoints (`app/rag/gpu_client.py`) and never import torch. The first
+call per process gets a longer timeout (`GPU_COLD_TIMEOUT_SECONDS`, default 120) to cover a
+Modal cold start; later calls use `GPU_TIMEOUT_SECONDS` (default 30). Connection errors, 5xx
+and 429 are retried with backoff (`GPU_MAX_RETRIES`, default 2); other 4xx fail at once.
+
+The service must serve the same embedding model as the existing Chroma index — every `/embed`
+response's `model` and `dim` (1024) are checked, and a mismatch raises instead of writing
+incompatible vectors. Leave `GPU_SERVICE_URL` empty to use the local models.
 
 ## LLM tracing with Langfuse (self-hosted)
 
@@ -234,11 +274,11 @@ traces. To turn it **off** again: remove the two keys (or set
 | Level | Data |
 |---|---|
 | trace | raw user query, resolved session id, optional `user_id`, final answer, cited sources, which mode ran, total latency |
-| span `intent` | the intent + how it was decided (`regex` / `llm` / `session`) |
-| span `rewrite` | the query-rewrite variants that were searched |
-| span `retrieve` | every reranked candidate — the ones kept **and** the ones dropped — each with a text preview + cosine similarity + rerank score + a `kept` flag (so "the right page was retrieved but reranked to 0.42" is visible at a glance) |
-| span `gate` | grounded vs refused, top rerank score, the threshold |
-| `generation` (×N) | each LLM call: model, messages, completion, **token usage + cost**, latency, and a `task` label (`intent` / `rewrite` / `persona` / `qa` / `note` / `suggest` / `roleplay`) so you can filter cost/latency per task |
+| span `classify-intent` | the intent + how it was decided (`regex` / `llm` / `session`) |
+| span `expand-query` | the query-rewrite variants that were searched |
+| `retriever` observation `retrieve-context` | every reranked candidate — the ones kept **and** the ones dropped — each with a text preview + cosine similarity + rerank score + a `kept` flag (so "the right page was retrieved but reranked to 0.42" is visible at a glance) |
+| `guardrail` observation `check-relevance-gate` | grounded vs refused, top rerank score, the threshold |
+| `generation` `llm:{task}` (×N) | each LLM call: model, messages, completion, **token usage + cost**, latency, and a `task` label (`intent` / `rewrite` / `persona` / `qa` / `note` / `suggest` / `roleplay`) so you can filter cost/latency per task |
 
 ### Privacy / retention
 
@@ -273,19 +313,21 @@ No UI is built for this; only the function is provided.
 - `app/` — application code
   - `main.py` — FastAPI app factory
   - `core/config.py` — centralized settings (reads `.env`)
-  - `api/router.py` — HTTP routes (`/health`, `/ask`, `/note`)
+  - `api/router.py` — HTTP routes (`/health`, `/chat`, `/chat/stream`, `/conversations`)
   - `db/` — SQLAlchemy models and session (Postgres)
-  - `services/` — orchestration layer (`qa_service.py`, `note_service.py`)
+  - `services/` — orchestration layer (qa, note, roleplay, suggestion, intent classifier,
+    session store)
   - `schemas/` — Pydantic request/response models
-  - `rag/` — chunking, embedding, reranking, query rewriting, Chroma client, retriever,
-    generator, and the ingest script
+  - `rag/` — chunking, embedding, reranking, GPU-service client, query rewriting, Chroma
+    client, retriever, generator, and the ingest script
 - `scripts/` — one-time migration script and the `tune_threshold.py` refusal-threshold tuner
-- `tests/` — regression tests (Bengali tokenization/embedding correctness)
-- `chroma_db/` — generated vector store (gitignored; see "Reindexing" in `PROJECT.md`)
+- `tests/` — pytest suite (`uv run pytest`). `tests/test_bengali_embedding.py` loads the real
+  model and is skipped unless `RUN_MODEL_TESTS=1`.
+- `chroma_db/` — generated vector store (gitignored; see "Reindexing" in `CLAUDE.md`)
 - `pyproject.toml` / `uv.lock` — Python dependencies (cross-platform: Linux, macOS, Windows),
   managed with [uv](https://docs.astral.sh/uv/)
 
-See [`PROJECT.md`](./PROJECT.md) for the full architecture, prompt contract, and
+See [`CLAUDE.md`](./CLAUDE.md) for the full architecture, prompt contract, and
 configuration reference.
 
 ## License

@@ -88,13 +88,22 @@ app/
                                  period → space splitting, ~900 chars/chunk, 150 overlap).
                                  Previously ingest.py embedded one whole DB page as one
                                  vector; pages now split into multiple chunks first.
-    embedder.py                  embed_text(s) via sentence-transformers, BAAI/bge-m3
-                                  (1024-dim, multilingual). Loaded once at import time (lru_cache).
-    reranker.py                   rerank(query, docs, top_n) via a CrossEncoder,
-                                   BAAI/bge-reranker-v2-m3. Scores are Sigmoid-activated,
-                                   i.e. in [0, 1] — NOT raw logits (see config.py note on
+    embedder.py                  embed_text(s)/embed_query, BAAI/bge-m3 (1024-dim,
+                                  multilingual). Two backends, see "GPU service" below:
+                                  GPU mode (settings.gpu_service_url set) calls /embed on
+                                  the external service; otherwise a local sentence-
+                                  transformers model, imported + loaded lazily on first use
+                                  (lru_cache + lock) so GPU mode never imports torch.
+    reranker.py                   rerank(query, docs, top_n), BAAI/bge-reranker-v2-m3.
+                                   Same two backends. Scores are Sigmoid-activated, i.e.
+                                   in [0, 1] — NOT raw logits (see config.py note on
                                    min_rerank_score before assuming a >2 "clearly relevant"
-                                   cutoff; that heuristic does not apply here).
+                                   cutoff; that heuristic does not apply here). In GPU mode
+                                   this means the service's `prob` field, never `score`.
+    gpu_client.py                 post(path, json) to the external GPU service: one shared
+                                   httpx.Client, X-API-Key header, cold/normal timeouts,
+                                   retry only on connection errors/5xx/429, raises
+                                   GPUServiceError. See "GPU service" below.
     query_rewriter.py             expand_query(query) -> tuple[str, ...]. Converts Banglish /
                                    English / Bengali input into Bengali-script search variants
                                    via one LLM call routed through complete("rewrite", ...) —
@@ -125,7 +134,7 @@ app/
     ingest.py                      Standalone script (uv run python -m app.rag.ingest). Reads
                                     published pages/articles from Postgres (NOT from SQLite —
                                     that migration is one-time and already done), chunks each,
-                                    embeds in batches of 64, and upserts into Chroma. Deletes
+                                    embeds in batches of 64 (256 in GPU mode), upserts into Chroma. Deletes
                                     a row's old chunks before re-upserting (chunk count changes
                                     when content is edited, so upsert-only would leave stale
                                     orphaned chunks). Only processes rows where
@@ -213,7 +222,9 @@ OpenAI is the production LLM provider (`OPENAI_API_KEY` / `OPENAI_MODEL`, defaul
 extraction, QA generation, note map/reduce, suggestion generation) funnel through this one
 module — no call site constructs an `openai.OpenAI` client directly:
 
-- **`get_client()`** — the shared, cached OpenAI client for `settings.openai_api_key`.
+- **`get_client()`** — the shared, cached OpenAI client for `settings.openai_api_key`,
+  constructed with `settings.llm_request_timeout_seconds` (default 90) and
+  `settings.llm_max_retries` (default 1).
 - **`get_model(task)`** — looks up `task` in `settings.model_by_task`, falling back to
   `settings.openai_model` for any task not (yet) explicitly routed. `model_by_task` is empty
   by default, so every task uses `gpt-5-mini` until deliberately routed elsewhere.
@@ -245,8 +256,12 @@ Only `OPENAI_API_KEY` and `DATABASE_URL` are required; everything else has a wor
 | `OPENAI_MODEL` | `gpt-5-mini` | A reasoning model — it spends completion-token budget on internal reasoning before emitting visible output. Give it a generous token budget (2000+ for short JSON-style outputs); too low silently truncates and fails downstream parsing. |
 | `DATABASE_URL` | `postgresql+psycopg2://...` | SQLAlchemy DSN format — **not** parseable by `psql` directly. Use a Python script with `app.db.session.SessionLocal` for one-off queries/admin, not raw `psql -c`. |
 | `GROQ_API_KEY` / `GROQ_BASE_URL` | *(empty)* / `https://api.groq.com/openai/v1` | Eval-only — see "LLM provider" above. Empty by default; not read anywhere in the production request path. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `90` / `1` | Per-call timeout and SDK retries for every OpenAI/Groq call in `app/core/llm.py`. For a streamed answer the timeout bounds the gap between chunks, not the whole answer. |
 | `EMBEDDING_MODEL_NAME` | `BAAI/bge-m3` | Multilingual, 1024-dim, handles Bengali (unlike the old `all-MiniLM-L6-v2`, which tokenized Bengali entirely to `[UNK]`). Changing this requires a full reindex — see below. |
 | `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Cross-encoder used only at query time (not stored in Chroma), so changing it does NOT require a reindex. |
+| `GPU_SERVICE_URL` / `GPU_API_KEY` | *(empty)* / *(empty)* | Set the URL to run embedding + reranking on `shibir-chat-gpu-service` (Modal) instead of locally — see "GPU service" below. Key is sent as `X-API-Key`. |
+| `GPU_TIMEOUT_SECONDS` / `GPU_COLD_TIMEOUT_SECONDS` | `30` / `120` | The cold timeout applies until the first successful call in the process (Modal scale-from-zero); the normal one after. |
+| `GPU_MAX_RETRIES` | `2` | Retries after the first attempt, only on connection errors / 5xx / 429. |
 | `CHROMA_PERSIST_DIR` | `chroma_db` | Relative to the working directory the process is started from. |
 | `CHROMA_COLLECTION_NAME` | `documents_bge_m3` | Name encodes the embedding model on purpose — changing `EMBEDDING_MODEL_NAME` without also bumping this would silently mix incompatible-dimension vectors into one collection (Chroma would just reject them with a dimension-mismatch error, which is the point). |
 | `TOP_K` | `5` | Chunks sent to the LLM after reranking. |
@@ -301,14 +316,16 @@ Response:
 `mode` is one of `"qa" | "note" | "roleplay" | "suggestion"` (whichever the classifier picked
 for this turn). `sources` is `[]` for NOTE and ROLEPLAY, and for QA/SUGGESTION whenever
 retrieval didn't clear `settings.min_rerank_score` — never populated alongside a "not found"
-answer. See "Prompt contract" above. A failed upstream LLM call (quota, bad key, outage) comes
-back as a `503` with a Bengali "temporarily unavailable" detail, not a bare `500`.
+answer. See "Prompt contract" above. A failed upstream LLM call (quota, bad key, outage) or a
+failed GPU-service call (`GPUServiceError`) comes back as a `503` with a Bengali "temporarily
+unavailable" detail, not a bare `500`.
 
 `POST /chat/stream` — same request shape and dispatch as `POST /chat`, but Server-Sent Events:
 a `sources` event, then one or more `token` events (QA streams the answer token-by-token via
 `generator.stream_answer()`; NOTE/ROLEPLAY/SUGGESTION emit their whole answer as a single
 `token` event since they don't generate incrementally), then a `done` event carrying
-`mode`/`session_id`/`response_time_ms`. An upstream LLM failure emits an `error` event instead.
+`mode`/`session_id`/`response_time_ms`. An upstream LLM or GPU-service failure emits an
+`error` event instead.
 
 `GET /conversations` → sidebar list, newest-activity-first:
 ```json
@@ -346,8 +363,37 @@ in the retrieved excerpts (not just restate cited facts, the way QA's prompt req
 it doesn't, a different ungrounded prompt has the model say plainly that the books don't cover
 this, then optionally offer a general (explicitly non-book) suggestion.
 
+## GPU service (`app/rag/gpu_client.py`)
+
+Embedding and reranking can run on a separate repository, `shibir-chat-gpu-service`, deployed
+on Modal. Enabled by setting `GPU_SERVICE_URL`; empty means the local CPU models. API:
+
+- `POST /embed` `{texts[1..256], normalize, batch_size}` → `{model, dim, vectors}`
+- `POST /rerank` `{query, documents[1..200], top_k, max_length}` → `{model, results: [{index, score, prob}]}`
+- header `X-API-Key: $GPU_API_KEY`
+
+Contract this backend relies on (do not regress):
+- `embed_texts` sends slices of ≤256 texts with `normalize=True, batch_size=64`, and raises
+  `GPUServiceError` unless every response has `dim == 1024` and
+  `model == settings.embedding_model_name` — a different model would silently poison the
+  existing Chroma index.
+- `rerank` sends slices of ≤200 docs with `max_length=1024` (same as the local CrossEncoder)
+  and `top_k=top_n`, maps indices back to the original list, merges, and returns **`prob`**
+  (sigmoid, 0..1) — never `score` (raw logit). `MIN_RERANK_SCORE=0.5` is tuned on sigmoid
+  scores and would be meaningless against logits.
+- Only connection errors (`ConnectError`/`ConnectTimeout`/`RemoteProtocolError`), 5xx and 429
+  are retried (exponential backoff 0.5s, 1s, ...). Other 4xx and read timeouts raise
+  immediately. Request bodies and the API key are never logged.
+- GPU mode never imports torch/sentence-transformers (both are imported lazily inside
+  `_model()`). torch/sentence-transformers are still in `pyproject.toml` for the local
+  fallback; removing them is a separate follow-up.
+- Chroma still runs in this process — only the model inference moved.
+
 ## Common tasks
 
+- **Run tests**: `uv run pytest`. `tests/test_bengali_embedding.py` loads the real bge-m3 model
+  and is skipped unless `RUN_MODEL_TESTS=1`; GPU-mode tests (`tests/test_gpu_client.py`) use
+  `httpx.MockTransport`, no network.
 - **Run the server**: `./run.sh` (syncs deps via uv, starts uvicorn on :9200), or manually:
   `HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200`.
 - **Smoke test**: run three `/chat` calls with `{"message": "..."}` — an on-topic question in
@@ -392,7 +438,7 @@ survive a supposed "reindex" undetected.
 On this corpus (4,143 published pages, 0 articles), a full reindex produces roughly 12,000
 chunks (~3 chunks/page at the current `chunk_size=900`/`overlap=150`) and is CPU-bound — plan
 for a long run on a memory-constrained machine (multiple hours observed under swap pressure;
-much faster with more free RAM or a GPU).
+much faster with more free RAM, or with `GPU_SERVICE_URL` set so embedding runs on the Modal GPU service).
 
 ## Tracing (`app/core/tracing.py`)
 
@@ -441,9 +487,11 @@ every LLM call in the app into a 400.
 
 ## Known gaps / things a future change might need to address
 
-- `app/core/llm.py`'s `get_client()` constructs the OpenAI client with no request timeout — a
-  slow or hanging upstream call can block a `/chat` request indefinitely. Fix this before the
-  next production push.
+- `tests/test_query_rewriter.py` replaces `sys.modules["app.core.llm"]` with a `MagicMock`
+  and never restores it, so `tests/test_tracing.py::test_get_client_is_the_plain_openai_client_when_disabled`
+  fails in a full `uv run pytest` run (passes alone).
+- torch / sentence-transformers / `nvidia-*` are still hard dependencies even when the GPU
+  service is used — dropping them (or moving them to an optional extra) is a planned follow-up.
 - `.github/workflows/deploy.yml` (triggered on push to `main`) is still a placeholder — its
   one step is `echo "Add your deploy steps here (Vercel, AWS, Docker push, etc.)"`.
   `.github/workflows/ci.yml` gates PRs into `main` with a real Postgres-backed pytest run, but

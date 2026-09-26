@@ -99,12 +99,26 @@ class Settings(BaseSettings):
     embedding_model_name: str = "BAAI/bge-m3"
     reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
 
+    # --- External GPU service (shibir-chat-gpu-service on Modal) ----------
+    # When gpu_service_url is set, app/rag/embedder.py and reranker.py call
+    # its /embed and /rerank endpoints (via app/rag/gpu_client.py) instead of
+    # loading bge-m3 / bge-reranker-v2-m3 locally -- torch is then never
+    # imported. Empty (default) = the local sentence-transformers path.
+    gpu_service_url: str = ""
+    gpu_api_key: str = ""           # sent as the X-API-Key header
+    gpu_timeout_seconds: float = 30
+    # The first call in a process may hit a scaled-to-zero Modal container
+    # that has to boot and load both models, so it gets a longer timeout.
+    gpu_cold_timeout_seconds: float = 120
+    # Retries after the first attempt, only on connection errors / 5xx / 429.
+    gpu_max_retries: int = 2
+
     database_url: str = "postgresql+psycopg2://user:password@localhost:5432/shibir_chat"
 
     chroma_persist_dir: str = "chroma_db"
     chroma_collection_name: str = "documents_bge_m3"  # new name = new index
 
-    top_k: int = 5        # chunks sent to Gemini after reranking
+    top_k: int = 5        # chunks sent to the LLM after reranking
     fetch_k: int = 25     # candidates pulled from Chroma before reranking (PER query variant, then merged)
 
     # Extra search strings app/rag/query_rewriter.expand_query() generates

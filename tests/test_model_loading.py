@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pytest
 
+from app.core.config import settings
 from app.rag import embedder, reranker
 
 
@@ -39,9 +40,15 @@ class _SlowFake:
 
 @pytest.fixture(autouse=True)
 def _fresh_models(monkeypatch):
+    import sentence_transformers
+
     _SlowFake.instances = 0
-    monkeypatch.setattr(embedder, "SentenceTransformer", _SlowFake)
-    monkeypatch.setattr(reranker, "CrossEncoder", _SlowFake)
+    # Local-model path only -- force it even if .env points at the GPU service.
+    monkeypatch.setattr(settings, "gpu_service_url", "")
+    # embedder/reranker import these lazily inside _model(), so patch the
+    # source module's attributes.
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", _SlowFake)
+    monkeypatch.setattr(sentence_transformers, "CrossEncoder", _SlowFake)
     embedder._model.cache_clear()
     reranker._model.cache_clear()
     yield
