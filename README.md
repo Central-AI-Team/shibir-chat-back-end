@@ -1,293 +1,295 @@
 # Shibir Chat Back-End
 
-This is the back-end service for Shibir Chat, built with FastAPI. You ask a question (in
-Bengali script, Banglish, or English), it retrieves relevant excerpts from a Bengali book
-library and returns an answer grounded strictly in those excerpts — it refuses rather than
-guesses when the library doesn't cover the question.
+FastAPI back-end for **Shibir Chat**, a Bengali-language assistant that answers questions from a
+curated library of books. Users can write in Bengali script, Banglish (romanized Bengali) or
+English. The service retrieves the most relevant book excerpts and has an LLM answer **only from
+those excerpts**, with numbered citations. When the library does not cover a question, it says so
+instead of guessing.
 
-For a deeper architecture walkthrough (retrieval pipeline, prompt contract, reindexing
-gotchas), see [`PROJECT.md`](./PROJECT.md).
+This is a retrieval-augmented generation (RAG) service, not a general-purpose chatbot.
 
-## Features
+## Contents
 
-- `POST /ask` — retrieval-augmented Q&A: bi-encoder search (`BAAI/bge-m3`) over a chunked
-  Chroma vector store, cross-encoder reranking (`BAAI/bge-reranker-v2-m3`), then a grounded
-  Gemini answer. Works across Bengali script, Banglish, and English queries via automatic
-  query rewriting.
-- `POST /note` — generates a structured Bengali summary of an entire book chapter
-  (map-reduce over every published page, not similarity search).
-- `GET /health` — plain liveness check.
-- Content is stored in PostgreSQL (`categories` → `books` → `chapters` → `pages`, plus a
-  standalone `articles` table).
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [API](#api)
+- [Operations](#operations)
+- [Development](#development)
+- [Project layout](#project-layout)
+- [Further documentation](#further-documentation)
+- [License](#license)
 
-## Prerequisites
+## How it works
 
-- **Python 3.11 or higher** (`networkx`, a transitive dependency, requires 3.11+; the
-  app code itself only needs the 3.10+ `X | None` union type hints — tested on 3.12).
-- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** — manages the virtual
-  environment and dependencies (replaces pip/venv). Install it once, globally; it will
-  download the right Python for you if needed.
-- **PostgreSQL** (any recent version), with the content already loaded into it. This service
-  reads from Postgres; it does not seed it.
-- A **Gemini API key** (https://aistudio.google.com/apikey). Free tier is capped at 20
-  requests/day **per Google Cloud project** — fine for light testing, not for sustained use.
-- ~3 GB free disk for the embedding + reranker models (downloaded once, cached locally).
-- git.
+```
+                    POST /chat  {"message": "..."}
+                              │
+                     intent classifier  (regex first, LLM fallback)
+          ┌──────────────┬────┴─────────┬──────────────────┐
+          ▼              ▼              ▼                  ▼
+         QA         SUGGESTION        NOTE             ROLEPLAY
+          │              │              │                  │
+   query rewrite → embed (bge-m3)       │           persona + history
+   → Chroma search → rerank             │           (no retrieval)
+   (bge-reranker-v2-m3)                 │
+          │              │     every page of the book,
+   relevance gate (MIN_RERANK_SCORE)    map-reduced into a note
+          │              │              │                  │
+          └──────────────┴──────┬───────┴──────────────────┘
+                                ▼
+                  OpenAI gpt-5-mini → Bengali answer + sources
+```
 
-## Installation
+- **Content** lives in PostgreSQL (`categories` → `books` → `chapters` → `pages`, plus `articles`).
+- **Embeddings** of chunked pages live in a local Chroma vector store (`chroma_db/`).
+- **Embedding and reranking** run either on this machine's CPU or on the separate
+  `shibir-chat-gpu-service` deployed on [Modal](https://modal.com). See [GPU service](#gpu-service).
+- **The LLM** is OpenAI `gpt-5-mini`, called through a single module (`app/core/llm.py`).
 
-The steps are the same on every OS; only the shell commands differ. Ubuntu/Debian, macOS,
-and Windows instructions are given separately below — pick yours.
+## Requirements
 
-### 1. Clone the repository
+| Requirement | Notes |
+|---|---|
+| Python 3.11+ | uv downloads a matching interpreter automatically if needed. |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | Manages the virtual environment and dependencies. |
+| PostgreSQL | Must already contain the book content. This service reads it and does not seed it. |
+| OpenAI API key | https://platform.openai.com/api-keys |
+| **Either** ~6 GB free RAM and ~3 GB disk | For the local embedding and reranker models (CPU mode). |
+| **or** a `shibir-chat-gpu-service` URL and API key | GPU mode. No local models are loaded. |
+
+## Quick start
 
 ```bash
+# 1. Clone and install dependencies (exact versions from uv.lock)
 git clone <repository-url>
 cd shibir-chat-back-end
-```
-
-### 2. Install uv
-
-**Ubuntu/Debian/macOS:**
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-**Windows (PowerShell):**
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-See [uv's install docs](https://docs.astral.sh/uv/getting-started/installation/) for other
-methods (pipx, Homebrew, etc).
-
-### 3. Install PostgreSQL client libraries (if needed)
-
-`psycopg2-binary` in `pyproject.toml` ships a self-contained wheel with `libpq` bundled in
-— on all three platforms this normally installs with **no separate PostgreSQL client install
-and no C compiler needed**. You only need a full PostgreSQL install if you're also running
-the database server itself on this machine:
-
-- **Ubuntu/Debian**: `sudo apt install postgresql`
-- **macOS**: `brew install postgresql@16 && brew services start postgresql@16`
-- **Windows**: https://www.postgresql.org/download/windows/ (installer includes the server)
-
-### 4. Install Python dependencies
-
-Same command on every OS — creates `.venv` (downloading a matching Python automatically if
-you don't already have one) and installs the exact versions pinned in `uv.lock`:
-```bash
 uv sync --locked
-```
-GPU/CUDA packages (`nvidia-*`, `triton`) and `uvloop` (no Windows support) carry environment
-markers so `uv` only installs what's actually usable on your platform — this installs cleanly
-on Windows and macOS as well as Linux, CPU-only or with an NVIDIA GPU. There's no separate
-"activate" step — prefix commands with `uv run` (e.g. `uv run uvicorn ...`), as shown below.
 
-### 5. Configure environment variables
+# 2. Configure
+cp .env.example .env          # Windows: copy .env.example .env
+# edit .env: set OPENAI_API_KEY and DATABASE_URL (and GPU_SERVICE_URL / GPU_API_KEY for GPU mode)
 
-Copy `.env.example` to `.env`:
+# 3. CPU mode only: download the models once (~2.8 GB)
+HF_HUB_OFFLINE=0 uv run python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-m3'); CrossEncoder('BAAI/bge-reranker-v2-m3')"
 
-- **Ubuntu/macOS**: `cp .env.example .env`
-- **Windows**: `copy .env.example .env`
+# 4. Build the vector store (embeds new or changed pages only)
+HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
 
-Then edit `.env` and set at minimum:
-- `GEMINI_API_KEY` — your key from https://aistudio.google.com/apikey
-- `DATABASE_URL` — SQLAlchemy DSN, e.g.
-  `postgresql+psycopg2://user:password@localhost:5432/shibir_chat`
-
-Everything else in `.env.example` has a working default — see the comments in that file, or
-the configuration table in [`PROJECT.md`](./PROJECT.md).
-
-### 6. Download the embedding and reranker models (first run only)
-
-The models (`BAAI/bge-m3`, `BAAI/bge-reranker-v2-m3`) are downloaded from Hugging Face and
-cached locally the first time they're used. `run.sh` sets `HF_HUB_OFFLINE=1`, which blocks
-that first download, so do one of these once before running the server or the ingest script:
-
-```bash
-HF_HUB_OFFLINE=0 uv run python -c "
-from sentence_transformers import SentenceTransformer, CrossEncoder
-SentenceTransformer('BAAI/bge-m3')
-CrossEncoder('BAAI/bge-reranker-v2-m3')
-print('models cached')
-"
-```
-On Windows PowerShell, set the variable first instead of inlining it:
-```powershell
-$env:HF_HUB_OFFLINE = "0"
-uv run python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-m3'); CrossEncoder('BAAI/bge-reranker-v2-m3'); print('models cached')"
-```
-
-Needs ~2.8 GB of disk and a working internet connection. Subsequent runs work fully offline.
-
-### 7. Build the vector store
-
-Reads published pages/articles from Postgres, chunks them, and embeds them into Chroma. Run
-once, and again whenever the source content changes (see the "Reindexing" section of
-[`PROJECT.md`](./PROJECT.md) for the full re-embed procedure — deleting `chroma_db/` alone is
-**not** enough):
-
-```bash
-uv run python -m app.rag.ingest
-```
-This is CPU-bound and can take a while on a large corpus without a GPU — expect anywhere from
-a few minutes to a few hours depending on corpus size and available RAM.
-
-### 8. Run the server
-
-**Ubuntu/macOS** — either use the helper script (syncs dependencies too, if you skipped the
-manual steps above):
-```bash
+# 5. Run the server on :9200
 ./run.sh
-```
-or run uvicorn directly:
-```bash
-HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
+# or: HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
 ```
 
-**Windows** — `run.sh` is a bash script and won't run natively in PowerShell/cmd. Either use
-**WSL** (Windows Subsystem for Linux) and follow the Ubuntu instructions inside it, or **Git
-Bash**, or run uvicorn directly:
+Check it:
+
+```bash
+curl -s http://127.0.0.1:9200/health
+curl -s http://127.0.0.1:9200/chat -H "Content-Type: application/json" \
+  -d '{"message": "যাকাতের অর্থ কোন কোন খাতে ব্যয় করা যায়?"}'
+```
+
+Interactive API docs are served at `http://127.0.0.1:9200/docs`.
+
+### Windows
+
+`run.sh` is a bash script. Use WSL or Git Bash, or run uvicorn directly in PowerShell:
+
 ```powershell
 $env:HF_HUB_OFFLINE = "1"
 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
 ```
 
-The API is available at `http://127.0.0.1:9200`.
+`psycopg2-binary` bundles `libpq`, and the CUDA/`uvloop` packages carry platform markers, so
+`uv sync` works on Linux, macOS and Windows without extra system packages.
 
-## API Usage
-
-- `GET /health` → `{"status": "ok"}`
-
-- `POST /ask`
-  - Request: `{"query": "your question in Bengali, Banglish, or English"}`
-  - Response:
-    ```json
-    {
-      "query": "...",
-      "answer": "... (always Bengali)",
-      "sources": [
-        {
-          "book": "...", "chapter": "...", "source_db": "tarun",
-          "content": "...", "similarity": 0.65, "rerank_score": 0.98
-        }
-      ]
-    }
-    ```
-    `sources` is an empty array whenever the answer is a refusal.
-
-- `POST /note`
-  - Request: `{"chapter_id": 2509}`
-  - Response: `{"book": "...", "chapter": "...", "pages_used": 139, "note": "..."}`
-
-Example:
-```bash
-curl -s http://127.0.0.1:9200/ask -H "Content-Type: application/json" \
-  -d '{"query": "যাকাতের অর্থ কোন কোন খাতে ব্যয় করা যায়?"}'
-```
-
-## LLM tracing with Langfuse (self-hosted)
-
-End-to-end tracing of live `/chat` requests: one trace per request, with every
-LLM call **and** every RAG pipeline stage (intent → rewrite → retrieve → rerank
-→ gate → generate) grouped under it. Use it to debug real misses ("the right
-page *was* retrieved but scored 0.42, below the 0.5 gate") and to track
-cost/latency/quality over time.
-
-**It is opt-in and cannot affect the app.** With no keys set, the langfuse SDK
-is never imported, `get_client()` returns the plain OpenAI client, and `/chat`
-behaves byte-identically — no added latency, no background thread. When enabled,
-event delivery is fire-and-forget on a background thread (nothing is flushed on
-the request path), and every tracing call is wrapped so a slow/down/erroring
-Langfuse can never break or delay a response.
-
-### 1. Run a self-hosted Langfuse
+### Docker
 
 ```bash
-git clone https://github.com/langfuse/langfuse
-cd langfuse
-docker compose up -d          # brings up Langfuse + its Postgres/ClickHouse
-# open http://localhost:3000 , create an account + a project,
-# then Project Settings → API Keys → create → copy the public & secret keys
+docker compose up --build
 ```
 
-Everything stays on your infra — trace data (user queries, book excerpts,
-answers) never leaves the machine running that compose stack.
+`docker-compose.yml` starts the app together with an **empty** Postgres 16 container. Load the
+content into it (or point `DATABASE_URL` at an existing database) and run the ingest step before
+expecting answers. Chroma data and the Hugging Face model cache are kept in named volumes.
 
-### 2. Turn it on in this app
+## Configuration
 
-Add to `.env` (see `.env.example`):
+All settings are environment variables, read from `.env` by `app/core/config.py`. Only two are
+required:
 
-```
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=http://localhost:3000
-```
-
-Restart the server. That's it — `POST /chat` and `POST /chat/stream` now emit
-traces. To turn it **off** again: remove the two keys (or set
-`LANGFUSE_ENABLED=false`).
-
-### What a trace contains
-
-| Level | Data |
+| Variable | Purpose |
 |---|---|
-| trace | raw user query, resolved session id, optional `user_id`, final answer, cited sources, which mode ran, total latency |
-| span `intent` | the intent + how it was decided (`regex` / `llm` / `session`) |
-| span `rewrite` | the query-rewrite variants that were searched |
-| span `retrieve` | every reranked candidate — the ones kept **and** the ones dropped — each with a text preview + cosine similarity + rerank score + a `kept` flag (so "the right page was retrieved but reranked to 0.42" is visible at a glance) |
-| span `gate` | grounded vs refused, top rerank score, the threshold |
-| `generation` (×N) | each LLM call: model, messages, completion, **token usage + cost**, latency, and a `task` label (`intent` / `rewrite` / `persona` / `qa` / `note` / `suggest` / `roleplay`) so you can filter cost/latency per task |
+| `OPENAI_API_KEY` | OpenAI key used for every LLM call. |
+| `DATABASE_URL` | SQLAlchemy DSN, e.g. `postgresql+psycopg2://user:password@localhost:5432/shibir_chat`. |
 
-### Privacy / retention
+Commonly changed optional settings:
 
-Traces contain user queries and book excerpts. Self-hosted, that data stays on
-your infra. API keys/secrets are never written into traces. To keep the trace
-**structure** (spans, token usage, cost, latency, rerank scores, gate decision)
-while redacting every query/excerpt/prompt/answer **text** field, set:
+| Variable | Default | Purpose |
+|---|---|---|
+| `GPU_SERVICE_URL` / `GPU_API_KEY` | *(empty)* | Enable GPU mode (see below). |
+| `MIN_RERANK_SCORE` | `0.5` | Relevance gate. Below it, the answer is not grounded and `sources` is empty. |
+| `TOP_K` / `FETCH_K` | `5` / `25` | Excerpts sent to the LLM / candidates fetched before reranking. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `90` | Timeout per LLM call. |
+| `CORS_ALLOW_ORIGINS` | local Vite + production front-end | JSON list of allowed browser origins. |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | *(empty)* | Enable tracing (see [docs/tracing.md](docs/tracing.md)). |
+
+`.env.example` lists every variable with comments. The full reference, including why each default
+was chosen, is in the Configuration section of [CLAUDE.md](CLAUDE.md#11-configuration-appcoreconfigpy).
+
+### GPU service
+
+Set `GPU_SERVICE_URL` and `GPU_API_KEY` to run embedding and reranking on `shibir-chat-gpu-service`
+(Modal) instead of locally. In this mode the app never imports torch.
+
+- The first call, or any call after `GPU_WARM_WINDOW_SECONDS` (240 s) of inactivity, gets a longer
+  timeout (`GPU_COLD_TIMEOUT_SECONDS`, 120 s) to cover the container's cold start. Other calls
+  use `GPU_TIMEOUT_SECONDS` (30 s).
+- Connection failures, 5xx and 429 responses are retried with exponential backoff
+  (`GPU_MAX_RETRIES`, default 2). Other errors fail immediately.
+- Every response's `model` (and `dim` for embeddings) is checked against the configured models,
+  so a misconfigured service can never write incompatible vectors into the index.
+- If the service is unavailable, `/chat` returns `503` and `/chat/stream` emits an `error` event.
+
+Leave `GPU_SERVICE_URL` empty to use the local models.
+
+## API
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Liveness check. Returns `{"status": "ok"}`. |
+| `POST` | `/chat` | Main entry point. Classifies the message and returns an answer. |
+| `POST` | `/chat/stream` | Same as `/chat`, as Server-Sent Events. |
+| `GET` | `/conversations` | Sessions handled by this process, most recent first. |
+| `GET` | `/conversations/{id}/messages` | Messages in one session (`404` if unknown). |
+| `DELETE` | `/conversations/{id}` | Delete a session (`204`, or `404` if unknown). |
+
+### `POST /chat`
+
+Request:
+
+```json
+{ "message": "your question", "session_id": null, "user_id": null }
+```
+
+- `session_id`: omit to start a new session. Send back the returned value to continue it.
+- `user_id`: optional; used only to group traces in Langfuse.
+
+Response:
+
+```json
+{
+  "mode": "qa",
+  "answer": "… (always Bengali)",
+  "sources": [
+    {
+      "book": "…", "chapter": "…", "source_db": "tarun",
+      "content": "…", "similarity": 0.65, "rerank_score": 0.98
+    }
+  ],
+  "session_id": "…",
+  "response_time_ms": 842.17
+}
+```
+
+| `mode` | Behavior | `sources` |
+|---|---|---|
+| `qa` | Answers from retrieved excerpts, with `[১]`-style citations. | Excerpts used, or `[]` if nothing passed the relevance gate. |
+| `suggestion` | Book-grounded recommendation; clearly labelled as general advice when the books do not cover it. | As for `qa`. |
+| `note` | Structured summary of a whole book named in the message. | `[]` |
+| `roleplay` | Multi-turn conversation in a persona. Continues until an exit phrase such as "stop roleplay". | `[]` |
+
+Errors: `400` for an empty message; `503` with a Bengali "temporarily unavailable" message when
+the LLM or the GPU service fails.
+
+### `POST /chat/stream`
+
+Same request body. The response is `text/event-stream` with these events, in order:
+
+1. `sources`: `{"sources": [...]}`
+2. `token` (one or more): `{"text": "..."}`. `qa` streams token by token; other modes send
+   the whole answer in one event.
+3. `done`: `{"mode", "session_id", "response_time_ms"}`
+
+On an upstream failure a single `error` event (`{"detail": "..."}`) is sent instead.
+
+> **Note:** Sessions are held in process memory. They are lost on restart and are not shared
+> between workers, so run a single uvicorn worker until a shared session store is added.
+
+## Operations
+
+### Ingesting and reindexing
+
+`uv run python -m app.rag.ingest` embeds every published page or article that is new or has
+changed since it was last embedded (tracked by `embedded_at`). Run it after content changes.
+
+A **full reindex** (for example after changing the embedding model) requires both deleting
+`chroma_db/` **and** resetting `embedded_at` to `NULL` in Postgres. Deleting only the directory
+produces an empty index while the ingest reports success. The exact steps are in
+[CLAUDE.md → Ingestion and reindexing](CLAUDE.md#9-ingestion-and-reindexing).
+
+On the current corpus (about 4,100 pages, 12,000 chunks) a CPU reindex can take hours on a
+memory-constrained machine. GPU mode is much faster.
+
+### Deployment
+
+Production runs as the systemd unit `shibirgpt.service`, which executes `run.sh`. The
+`deploy.yml` GitHub Actions workflow is still a placeholder. For scaling beyond one instance, see
+[docs/deployment.md](docs/deployment.md).
+
+### Observability
+
+Optional Langfuse tracing records each request's pipeline stages, rerank scores, LLM calls, token
+usage and cost. It is off by default and cannot affect requests when on. See
+[docs/tracing.md](docs/tracing.md).
+
+## Development
+
+```bash
+uv run pytest                                               # full suite, no network or models needed
+RUN_MODEL_TESTS=1 uv run pytest tests/test_bengali_embedding.py   # loads the real bge-m3 model
+```
+
+CI (`.github/workflows/ci.yml`) runs the test suite against a Postgres service on every pull
+request to `main`.
+
+Quality evaluation scripts (retrieval recall, threshold tuning, intent routing, answer quality)
+live in `scripts/` and are described in [docs/evaluation.md](docs/evaluation.md).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch, commit and review workflow.
+
+## Project layout
 
 ```
-LANGFUSE_CAPTURE_IO=false
+app/
+  main.py            FastAPI app, CORS, startup/shutdown hooks
+  api/router.py      HTTP routes
+  core/              settings (config.py), LLM client (llm.py), tracing (tracing.py)
+  services/          qa, suggestion, note, roleplay, intent classifier, session store
+  rag/               chunker, embedder, reranker, GPU client, query rewriter,
+                     Chroma client, retriever, generator, ingest script
+  db/                SQLAlchemy models and session
+  schemas/           Pydantic request/response models
+scripts/             migrations, corpus cleanup, evaluation and debugging tools
+tests/               pytest suite
+docs/                deployment, evaluation and tracing guides
+chroma_db/           generated vector store (not committed)
 ```
 
-Retention is your call — configure it in the Langfuse project settings / its
-data-retention job.
+## Further documentation
 
-### Connecting evals to traces (scoring hook)
-
-`app/core/tracing.py` exposes `score_trace(trace_id, name, value, comment=...)`,
-a thin wrapper over Langfuse's score API. Use it to land quality signals on
-logged real queries:
-
-- a future frontend 👍/👎 button (POST the trace id back, call `score_trace`),
-- a batch job that scores logged queries,
-- the offline eval scripts (`eval_responses` / `eval_ragas`) emitting their
-  per-question scores against traces of logged queries — attach the trace id to
-  the run, then call `score_trace` per question.
-
-No UI is built for this; only the function is provided.
-
-## Project Structure
-
-- `app/` — application code
-  - `main.py` — FastAPI app factory
-  - `core/config.py` — centralized settings (reads `.env`)
-  - `api/router.py` — HTTP routes (`/health`, `/ask`, `/note`)
-  - `db/` — SQLAlchemy models and session (Postgres)
-  - `services/` — orchestration layer (`qa_service.py`, `note_service.py`)
-  - `schemas/` — Pydantic request/response models
-  - `rag/` — chunking, embedding, reranking, query rewriting, Chroma client, retriever,
-    generator, and the ingest script
-- `scripts/` — one-time migration script and the `tune_threshold.py` refusal-threshold tuner
-- `tests/` — regression tests (Bengali tokenization/embedding correctness)
-- `chroma_db/` — generated vector store (gitignored; see "Reindexing" in `PROJECT.md`)
-- `pyproject.toml` / `uv.lock` — Python dependencies (cross-platform: Linux, macOS, Windows),
-  managed with [uv](https://docs.astral.sh/uv/)
-
-See [`PROJECT.md`](./PROJECT.md) for the full architecture, prompt contract, and
-configuration reference.
+| Document | Audience |
+|---|---|
+| [CLAUDE.md](CLAUDE.md) | Maintainers and AI coding agents: architecture, contracts that must not regress, full configuration reference, known gaps. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to set up, branch, commit, test and open pull requests. |
+| [docs/deployment.md](docs/deployment.md) | Scaling beyond a single instance. |
+| [docs/evaluation.md](docs/evaluation.md) | Measuring retrieval and answer quality. |
+| [docs/tracing.md](docs/tracing.md) | Langfuse tracing setup and trace contents. |
+| [SECURITY.md](SECURITY.md) | Reporting vulnerabilities and handling secrets. |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Expectations for working together. |
 
 ## License
 
-Specify your license here.
+No license has been chosen yet. Until one is added, all rights are reserved by the project owners
+and the code may not be used or redistributed outside the team.

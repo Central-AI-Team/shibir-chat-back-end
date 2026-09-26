@@ -30,16 +30,18 @@ def qr():
     query_rewriter module import করে return করে।
     app.core.llm stub করা হয়েছে।
     """
+    import importlib
     import sys
 
-    # Minimal stubs — শুধু যা query_rewriter.py import করে
-    sys.modules["app.core.llm"] = mock.MagicMock()
-    sys.modules["app.rag.chunker"] = mock.MagicMock(normalize=lambda x: x.strip())
+    # Minimal stubs — শুধু যা query_rewriter.py import করে। MonkeyPatch
+    # teardown-এ আসল module ফিরিয়ে দেয় (বা মুছে দেয়), নইলে পরের test file-গুলো
+    # (যেমন test_tracing.py) MagicMock পেত।
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(sys.modules, "app.core.llm", mock.MagicMock())
+        mp.setitem(sys.modules, "app.rag.chunker", mock.MagicMock(normalize=lambda x: x.strip()))
 
-    # এখন নিরাপদে import করা যাবে
-    import importlib
-    mod = importlib.import_module("app.rag.query_rewriter")
-    return mod
+        # এখন নিরাপদে import করা যাবে
+        yield importlib.import_module("app.rag.query_rewriter")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

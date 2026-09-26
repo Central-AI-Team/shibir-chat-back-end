@@ -1,474 +1,494 @@
-# Shibir Chat Back-End — Claude Code Project Guide
+# Shibir Chat Back-End: Maintainer and Agent Guide
 
-Claude Code auto-loads `CLAUDE.md` from the repo root at the start of every session — that's
-why this file exists. It's written so Claude Code can pick up this project cold and be
-immediately useful. Read this before making changes.
+This is the technical reference for the codebase. Claude Code loads it automatically at the start
+of every session, and `GEMINI.md` imports it for Gemini CLI. Human maintainers should read it too.
+For setup and API usage, start with [README.md](README.md).
 
-## What this project is
+Read the **Prompt contract**, **GPU service** and **Reindexing** sections before changing
+retrieval, generation or ingestion code. They describe behaviour that has regressed before.
 
-A FastAPI backend for a Bengali-language Q&A chatbot. A user asks a question, the service
-retrieves relevant excerpts from a religious/educational book library (stored as embeddings
-in a Chroma vector store) and asks an LLM (OpenAI `gpt-5-mini`) to answer **strictly from
-those excerpts** — it is instructed to refuse rather than hallucinate when the excerpts don't
-cover the question. This is retrieval-augmented generation (RAG), not a general-purpose
-chatbot.
+## 1. What this project is
 
-## Architecture
+A FastAPI back-end for a Bengali-language question-answering assistant. A user sends a message in
+Bengali script, Banglish or English. The service retrieves relevant excerpts from a library of
+religious and educational books (chunked, embedded and stored in Chroma) and asks an LLM (OpenAI
+`gpt-5-mini`) to answer **strictly from those excerpts**, refusing rather than inventing an answer
+when they do not cover the question.
+
+It is a retrieval-augmented generation (RAG) service, not a general-purpose chatbot.
+
+## 2. Architecture
+
+The code has three layers: `api` → `services` → `rag`/`db`. There is exactly one vector store and
+one production LLM provider, so there are deliberately no repository or interface abstractions;
+they would add indirection with no real swap-ability at this size.
 
 ```
 app/
-  main.py               FastAPI app factory. Just creates the app and includes the router.
-  core/config.py         Single source of config — a pydantic-settings Settings object that
-                          reads .env. Nothing else in the app should call os.getenv() or
-                          load_dotenv() directly; import `settings` from here instead.
-  core/llm.py             Shared OpenAI chat-completions client + per-task model routing —
-                          see "LLM provider" below. The only sanctioned way to call the LLM;
-                          no call site should construct an OpenAI client directly.
-  core/tracing.py         Langfuse tracing, opt-in — see "Tracing" below.
-  api/router.py           HTTP layer. Routes: GET /health, POST /chat, POST /chat/stream,
-                          GET /conversations, GET /conversations/{id}/messages,
-                          DELETE /conversations/{id}. Thin — just binds request schemas to
-                          the service layer and returns the result. See "API contract" below.
-  db/
-    models.py                SQLAlchemy models: Category, Book, Chapter, Page, Article. All
-                              content now lives in Postgres (migrated off the old per-source
-                              SQLite files) — see "Data model" below.
-    session.py                SessionLocal — plain sessionmaker bound to settings.database_url.
+  main.py                 FastAPI app: CORS middleware, router, lifespan hooks
+                          (tracing.init() on startup, tracing.shutdown() on shutdown).
+  core/
+    config.py             The single source of configuration: a pydantic-settings Settings
+                          object reading .env. No other module calls os.getenv() or
+                          load_dotenv(); import `settings` from here.
+    llm.py                Shared OpenAI client and per-task model routing. The only
+                          sanctioned way to call an LLM (§5).
+    tracing.py            Opt-in Langfuse tracing (§10).
+  api/
+    router.py             HTTP routes (§7). Thin: validates input, dispatches to services,
+                          maps upstream failures to 503 / SSE `error`.
   services/
-    qa_service.py               Orchestration: answer_question(query) calls
-                                 retrieve_relevant_docs() then decides, from the top
-                                 rerank_score alone, whether to ground generate_answer() in
-                                 those citations or call it with an empty citation list. See
-                                 "Prompt contract" below — this is the fix for the old
-                                 "answer says no but sources are attached anyway" bug.
-    note_service.py              generate_chapter_note(chapter_id) -> dict. NOT retrieval —
-                                  pulls every published page of a chapter in reading order
-                                  from Postgres and map-reduces it into one note. A chapter
-                                  summary is an aggregation task; similarity search over a
-                                  handful of chunks can't do that. generate_book_notes_from_text(text)
-                                  is what POST /chat's NOTE intent actually calls: it resolves
-                                  a book from free-form text (plain substring match against
-                                  book names, not an LLM call), then runs generate_chapter_note()
-                                  over every chapter of that book.
-    roleplay_service.py          handle_roleplay(message, session) -> str. Extracts a persona
-                                  from the user's first roleplay message (one LLM call, task
-                                  "persona"), then holds a multi-turn conversation in that
-                                  persona using the session's history. No RAG — see "Roleplay
-                                  and suggestion services" below.
-    suggestion_service.py        give_suggestion(query) -> (str, list[Citation]). Same
-                                  retrieval + relevance gate as qa_service, but the prompt is
-                                  explicitly allowed to phrase a recommendation/opinion instead
-                                  of only restating cited facts — grounded when the gate
-                                  passes, an explicit "not book-grounded" disclaimer when it
-                                  doesn't. See "Roleplay and suggestion services" below.
-    session_store.py              In-process dict of chat sessions (mode, persona, history).
-                                   Backs POST /chat's session_id continuity AND the
-                                   /conversations endpoints. Single-worker only — see
-                                   "API contract" below.
-    intent_classifier.py          classify_intent(message, has_active_roleplay_session) -> one
-                                   of NOTE/ROLEPLAY/SUGGESTION/QA. Regex-first (Bengali +
-                                   Banglish patterns), falls back to one LLM call (task
-                                   "intent") only when nothing matches. An active roleplay
-                                   session short-circuits to ROLEPLAY unless the message
-                                   matches an explicit exit phrase.
-  schemas/query.py           Pydantic models. ChatRequest (message/session_id/user_id) and
-                              ChatResponse (mode/answer/sources/session_id/response_time_ms)
-                              back POST /chat and /chat/stream — see "API contract" below.
-                              Citation (book/chapter/source_db/content/similarity/rerank_score)
-                              is the shared source shape. ConversationSummary and
-                              ConversationMessage back the /conversations endpoints.
-                              QueryRequest/QueryResponse/NoteRequest/NoteByTextRequest/
-                              NoteByTextResponse/ChapterNote are leftover from the removed
-                              /ask, /note, /note-by-text routes. QueryResponse is still used
-                              internally as qa_service.answer_question()'s return type; the
-                              other five are unused by any route or service today.
+    intent_classifier.py  classify_intent(message, has_active_roleplay_session) -> NOTE |
+                          ROLEPLAY | SUGGESTION | QA. Regex first (Bengali + Banglish
+                          patterns); one LLM call (task "intent") only if nothing matches.
+                          An active roleplay session stays ROLEPLAY unless the message
+                          matches an exit phrase ("stop roleplay", "রোলপ্লে বন্ধ", ...).
+    qa_service.py         answer_question(query) -> QueryResponse. Retrieval, relevance gate,
+                          grounded generation (§4).
+    suggestion_service.py give_suggestion(query) -> (str, list[Citation]). Same retrieval and
+                          gate as QA, different prompt (§8).
+    note_service.py       generate_chapter_note(chapter_id) and
+                          generate_book_notes_from_text(text). Not retrieval: loads every
+                          published page of a chapter in reading order and map-reduces it.
+                          The book is resolved from free text by substring match on book
+                          names (no LLM call).
+    roleplay_service.py   handle_roleplay(message, session) -> str. Persona extraction on the
+                          first turn (task "persona"), then multi-turn chat. No retrieval (§8).
+    session_store.py      In-process dict of sessions (mode, persona, history capped at
+                          MAX_HISTORY = 20). Backs session continuity and /conversations.
+                          Single worker only.
   rag/
-    chunker.py                  normalize(text) (NFC + whitespace cleanup — apply at ingest
-                                 AND query time) and chunk_text(text) (paragraph → danda →
-                                 period → space splitting, ~900 chars/chunk, 150 overlap).
-                                 Previously ingest.py embedded one whole DB page as one
-                                 vector; pages now split into multiple chunks first.
-    embedder.py                  embed_text(s) via sentence-transformers, BAAI/bge-m3
-                                  (1024-dim, multilingual). Loaded once at import time (lru_cache).
-    reranker.py                   rerank(query, docs, top_n) via a CrossEncoder,
-                                   BAAI/bge-reranker-v2-m3. Scores are Sigmoid-activated,
-                                   i.e. in [0, 1] — NOT raw logits (see config.py note on
-                                   min_rerank_score before assuming a >2 "clearly relevant"
-                                   cutoff; that heuristic does not apply here).
-    query_rewriter.py             expand_query(query) -> tuple[str, ...]. Converts Banglish /
-                                   English / Bengali input into Bengali-script search variants
-                                   via one LLM call routed through complete("rewrite", ...) —
-                                   see "LLM provider" below — cached (lru_cache). Falls back to
-                                   the raw query on any failure — including on a truncated/empty
-                                   LLM response, so watch for silent no-op fallback if you ever
-                                   lower the token budget again (see the comment in that file
-                                   for the incident this guards against).
-    chroma_client.py               get_collection() — the ONLY place that constructs the
-                                    Chroma PersistentClient. Collection is created with
-                                    hnsw:space="cosine" (required for the similarity
-                                    thresholding in retriever.py to make sense — Chroma's
-                                    default metric is L2).
-    retriever.py                   retrieve_relevant_docs(query) -> list[Citation]. Pipeline:
-                                    expand_query() → embed all variants → Chroma fetch_k=25
-                                    nearest neighbors per variant, merged and deduped → drop
-                                    anything below min_similarity → cross-encoder rerank down
-                                    to top_k=5. Returns citations carrying both similarity
-                                    (cosine, cheap pre-filter) and rerank_score (cross-encoder,
-                                    the real relevance signal).
-    generator.py                   generate_answer(query, citations) -> str, routed through
-                                    complete("qa", ...). Bengali system prompt, numbered
-                                    excerpts for citation. No temperature override — gpt-5-mini
-                                    is a reasoning model and rejects any value other than its
-                                    fixed default (1); see "LLM provider" below. Also exposes
-                                    stream_answer() for POST /chat/stream, same prompt/context,
-                                    stream=True. See "Prompt contract" below.
-    ingest.py                      Standalone script (uv run python -m app.rag.ingest). Reads
-                                    published pages/articles from Postgres (NOT from SQLite —
-                                    that migration is one-time and already done), chunks each,
-                                    embeds in batches of 64, and upserts into Chroma. Deletes
-                                    a row's old chunks before re-upserting (chunk count changes
-                                    when content is edited, so upsert-only would leave stale
-                                    orphaned chunks). Only processes rows where
-                                    embedded_at IS NULL OR updated_at > embedded_at.
+    chunker.py            normalize(text): NFC + whitespace cleanup; apply at ingest AND
+                          query time. chunk_text(text): paragraph → danda (।) → period →
+                          space splitting, ~900 chars per chunk, 150 overlap.
+    query_rewriter.py     expand_query(query) -> tuple[str, ...]. One LLM call (task
+                          "rewrite") turns Banglish/English/Bengali into Bengali-script
+                          search variants. lru_cached per process. Falls back to the raw
+                          query on any failure, including a truncated or empty response;
+                          see the incident comment in the file before lowering its token budget.
+    embedder.py           embed_text / embed_texts / embed_query with BAAI/bge-m3 (1024-dim,
+                          multilingual). GPU mode calls the external service (§6); otherwise
+                          a local sentence-transformers model, imported and loaded lazily
+                          under a lock, so GPU mode never imports torch.
+    reranker.py           rerank(query, docs, top_n) -> [(index, score)] with
+                          BAAI/bge-reranker-v2-m3. Same two backends. Scores are
+                          sigmoid-activated, in [0, 1], never raw logits.
+    gpu_client.py         post(path, json) to the GPU service: shared httpx.Client,
+                          X-API-Key, cold/warm timeouts, selective retries, GPUServiceError.
+    chroma_client.py      get_collection(): the ONLY place a Chroma PersistentClient is
+                          created. The collection uses hnsw:space="cosine" (Chroma's default
+                          is L2, which would break similarity thresholds).
+    retriever.py          retrieve_relevant_docs(query) -> list[Citation]:
+                          expand_query → embed all variants → Chroma FETCH_K neighbours per
+                          variant → merge + dedupe → drop below MIN_SIMILARITY → rerank →
+                          TOP_K. Citations carry `similarity` (cosine pre-filter) and
+                          `rerank_score` (the real relevance signal).
+    generator.py          generate_answer(query, citations) -> str (task "qa") and
+                          stream_answer() for /chat/stream. Bengali system prompt with
+                          numbered excerpts (§4).
+    ingest.py             `uv run python -m app.rag.ingest`. Embeds published pages/articles
+                          from Postgres into Chroma (§9).
+  db/
+    models.py             SQLAlchemy models: Category, Book, Chapter, Page, Article (§3).
+    session.py            SessionLocal and engine, bound to settings.database_url.
+    base.py               Declarative Base.
+  schemas/query.py        Pydantic models. ChatRequest / ChatResponse (/chat, /chat/stream),
+                          Citation (shared source shape), ConversationSummary /
+                          ConversationMessage (/conversations). QueryResponse is
+                          answer_question()'s internal return type. QueryRequest,
+                          NoteRequest, NoteByTextRequest, NoteByTextResponse and ChapterNote
+                          are unused leftovers from the removed /ask, /note, /note-by-text
+                          routes.
 
-scripts/
-  migrate_sqlite_to_postgres.py   One-time migration, already run. Do not re-run against a
-                                   live corpus.
-  tune_threshold.py                uv run python -m scripts.tune_threshold [questions.json]. Runs a
-                                    labeled question set through the real retrieval pipeline
-                                    and suggests a MIN_RERANK_SCORE from the score gap between
-                                    answerable and unanswerable questions. See
-                                    eval_questions.example.json for the input shape.
-
-chroma_db/                Generated vector store (gitignored). See "Reindexing" below —
-                           deleting this is only half of a reindex.
+scripts/                  Migrations, corpus cleanup, evaluation and debugging tools.
+                          Run as `uv run python -m scripts.<name>`. See docs/evaluation.md.
+  migrate_sqlite_to_postgres.py   One-time SQLite → Postgres migration. Already run; do not
+                                  re-run against the live corpus.
+  add_source_type_to_articles.py  One-time migration adding source_type/source_ref/
+                                  source_metadata to articles.
+  clean_corpus.py                 Soft-excludes flagged pages (§3).
+  dedupe_pages.py                 Flags byte-identical duplicate pages.
+tests/                    pytest suite; no network or real models by default (§11).
+docs/                     deployment.md, evaluation.md, tracing.md.
+chroma_db/                Generated vector store, git-ignored. Deleting it is only half of
+                          a reindex (§9).
 ```
 
-There are deliberately only three layers (api → services → rag/db). There is exactly one
-vector store and one LLM provider, so no repository/interface abstraction was introduced —
-it would add indirection with no real swappability benefit at this size.
+## 3. Data model
 
-## Data model
+All content lives in Postgres (`categories`, `books`, `chapters`, `pages`, `articles`). The
+original per-source SQLite files (`Tarun_Associate.db`, `Nobin_Associate.db`) were migrated once;
+`Page.source_db` / `Page.source_page_id` are kept only as provenance so the migration is
+idempotent. The running app does not read them.
 
-Content lives in Postgres now (`categories`, `books`, `chapters`, `pages`, `articles` —
-`app/db/models.py`). The old per-source SQLite files (`Tarun_Associate.db`,
-`Nobin_Associate.db`) were migrated in with `scripts/migrate_sqlite_to_postgres.py`; each
-`Page` keeps `source_db` / `source_page_id` purely as provenance so the migration script is
-idempotent, not for anything the running app reads.
+- Only rows with `status == 'published'` are embedded.
+- `embedded_at` records the last successful embed. `NULL` means never embedded;
+  `updated_at > embedded_at` means stale.
+- `Page.excluded_from_rag` / `Page.exclusion_reason` (added by `scripts/clean_corpus.py`) are a
+  reversible soft-exclude: `ingest.py` skips excluded pages, and no row is ever deleted.
+  Clearing the flag and re-ingesting restores a page. See §14 for what is currently excluded.
 
-Only `status == 'published'` rows are ever candidates for embedding (`ingest.py` filters on
-this). `embedded_at` tracks the last successful embed per row — `NULL` means "never
-embedded", and `updated_at > embedded_at` means "stale, needs re-embedding".
+**Chroma layout.** Chunk ids are `f"{prefix}_{row.id}_c{chunk_index}"` (for example
+`page_842_c0`, `article_12_c0`). Metadata: `book`, `chapter`, `page_id`, `chunk_index`,
+`row_key`, `source_db`, `book_id`, `category`.
 
-`Page` also has `excluded_from_rag` (bool) / `exclusion_reason` (text), added by
-`scripts/clean_corpus.py`'s migration. `ingest.py._due_pages()` skips
-`excluded_from_rag == true` rows in addition to the `published`/`embedded_at` filters above —
-this is a reversible soft-exclude for pages a corpus analysis flagged as junk/duplicate (no
-Postgres row is ever deleted; flipping the flag back + re-ingesting restores a page). See
-"Known gaps" below for which flagged pages are actually excluded today.
+- `row_key` (`f"{prefix}_{row.id}"`) is what `ingest.py` deletes by before re-upserting a row,
+  and the unit of relevance in the evaluation sets.
+- `book_id` and `category` let the retriever tell apart different books with the same display
+  name (for example book ids 173 and 210 are both "কর্মপদ্ধতি"); the category is appended to the
+  citation.
 
-Chroma chunk ids are `f"{prefix}_{row.id}_c{chunk_index}"` (e.g. `page_842_c0`, `page_842_c1`,
-`article_12_c0`) with metadata `{"book", "chapter", "page_id", "chunk_index", "row_key",
-"source_db", "book_id", "category"}`. `row_key` (`f"{prefix}_{row.id}"`) is what `ingest.py`
-deletes-by before re-upserting a row's chunks. `book_id`/`category` let `retriever.py`
-disambiguate two different books that happen to share the same display name (e.g. book_id 173
-and 210 are both named "কর্মপদ্ধতি") by appending the category to the citation.
+## 4. Prompt contract (do not regress)
 
-## Prompt contract (important — do not regress this)
+`generator.py`'s system prompt requires the model to:
 
-`generator.py`'s system prompt instructs the model to:
-1. Answer **only** from the numbered `উদ্ধৃত অংশ` (excerpt) blocks — no outside knowledge.
-2. **Partial answers are allowed.** If the excerpts partially cover the question, answer with
-   what's there and name the gap in one sentence, rather than refusing outright. Refuse only
-   if the topic isn't mentioned at all.
-3. Cite every claim with `[১]` / `[২]` style excerpt numbers.
-4. Answer entirely in standard Bengali — no English sentences, no Banglish.
-5. No temperature override — `gpt-5-mini` is a reasoning model and only accepts its fixed
-   default (1); see "LLM provider" below.
+1. Answer **only** from the numbered `উদ্ধৃত অংশ` (excerpt) blocks, with no outside knowledge.
+2. Give **partial answers** when the excerpts partly cover the question, naming the gap in one
+   sentence. Refuse only when the topic is not mentioned at all.
+3. Cite every claim with `[১]`, `[২]`, ... excerpt numbers.
+4. Write entirely in standard Bengali: no English sentences, no Banglish.
 
-**The relevance gate is decided upstream, in `qa_service.py`, by score — not by the LLM's
-judgment — but the LLM is always called.** If the top citation's `rerank_score` is below
-`settings.min_rerank_score`, `qa_service.answer_question()` still calls `generate_answer()`,
-just with an empty citation list; the system prompt's rule 3 above then has the model say
-plainly, in its own words, that the books don't cover the question, instead of the code
-returning a canned refusal string. `sources` is `[]` either way — nothing grounded the answer,
-so nothing is cited. This is deliberate: the old version always attached sources regardless of
-whether the LLM actually used them, so the UI could show "not in the database" next to a
-populated sources list. Retrieval quality and the answer text can no longer contradict each
-other. If you change this gate, re-verify with an on-topic, an off-topic (Bengali), and a
-Banglish on-topic question — see "Smoke test" below.
+No `temperature` is passed: `gpt-5-mini` is a reasoning model and rejects any value except its
+default of 1 (§5).
 
-**Conversational shortcut.** `qa_service._is_conversational()` (mirrored by
-`_qa_stream()`'s check in `router.py` for the streaming path) regex-matches short greetings /
-well-wishes / thanks / farewells (Bengali and common Banglish spellings, e.g. "hello", "kemon
-achen", "dhonnobad") *before* retrieval runs. A match short-circuits to a random canned
-friendly reply from a small fixed set — no retriever call, no LLM call, `sources: []`. Anything
-longer than six words falls through to normal retrieval, so a real question that happens to
-open with "হ্যালো" still gets answered normally.
+**The relevance gate is decided in code, by score, and the LLM is always called.** If the top
+citation's `rerank_score` is below `settings.min_rerank_score`, `qa_service.answer_question()`
+calls `generate_answer()` with an **empty** citation list, and the prompt has the model explain in
+its own words that the books do not cover the question. `sources` is `[]` in that case. There is
+no canned refusal string.
 
-## LLM provider (`app/core/llm.py`)
+This fixes an old bug where sources were always attached, so the UI could show "not in the
+library" next to a populated source list. The answer text and the sources can no longer
+contradict each other. After changing the gate, re-verify with an on-topic Bengali question, the
+same question in Banglish, and an off-topic question (§12).
 
-OpenAI is the production LLM provider (`OPENAI_API_KEY` / `OPENAI_MODEL`, default
-`gpt-5-mini`). All six call sites (intent classification, query rewriting, persona
-extraction, QA generation, note map/reduce, suggestion generation) funnel through this one
-module — no call site constructs an `openai.OpenAI` client directly:
+**Conversational shortcut.** `qa_service._is_conversational()` (mirrored in `router._qa_stream()`
+for streaming) matches short greetings, thanks and farewells in Bengali and common Banglish
+spellings ("hello", "kemon achen", "dhonnobad") **before** retrieval. A match returns a random
+reply from a small fixed set with no retrieval, no LLM call and `sources: []`. Messages longer
+than six words always go through normal retrieval, so a real question that starts with "হ্যালো" is
+still answered.
 
-- **`get_client()`** — the shared, cached OpenAI client for `settings.openai_api_key`.
-- **`get_model(task)`** — looks up `task` in `settings.model_by_task`, falling back to
-  `settings.openai_model` for any task not (yet) explicitly routed. `model_by_task` is empty
-  by default, so every task uses `gpt-5-mini` until deliberately routed elsewhere.
-- **`complete(task, messages, *, token_budget=None, **overrides)`** — the actual call. Resolves
-  `task`'s model via `get_model()`, then applies that model's own parameter quirks via
-  `MODEL_ADAPTERS` before calling `chat.completions.create()`. This is the only sanctioned way
-  for a call site to hit the LLM.
-- **`MODEL_ADAPTERS`** — a per-model table of `(provider, token_param)`. The reason it exists:
-  `gpt-5-mini` (and other OpenAI reasoning models) need `max_completion_tokens`, not
-  `max_tokens`, for a token cap, and only accept the fixed default `temperature=1` — passing
-  any other value is a 400. A call site never hardcodes this; it passes `token_budget=N` to
-  `complete()` and gets whichever kwarg name the resolved model actually needs.
-- **Groq routing (`get_client_for`)** — a second, OpenAI-compatible provider, used today only
-  by `scripts/eval_generation_ab.py` (A/B testing Bengali answer quality against
-  `settings.generation_candidates`, judged by `settings.generation_judge_model`). Not reachable
-  from the production request path.
+## 5. LLM provider (`app/core/llm.py`)
 
-Task names for `model_by_task`: `intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`,
-`roleplay`.
+OpenAI is the production provider (`OPENAI_API_KEY`, `OPENAI_MODEL`, default `gpt-5-mini`). Every
+LLM call (tasks `intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`, `roleplay`) goes through
+this module; no call site constructs an `openai.OpenAI` client itself.
 
-## Configuration (`app/core/config.py`)
+- **`get_client()`**: the shared, cached OpenAI client, built with
+  `settings.llm_request_timeout_seconds` (default 90) and `settings.llm_max_retries` (default 1).
+- **`get_model(task)`**: looks up `task` in `settings.model_by_task`, falling back to
+  `settings.openai_model`. `model_by_task` is empty by default, so every task uses `gpt-5-mini`.
+- **`complete(task, messages, *, token_budget=None, **overrides)`**: the call itself. It
+  resolves the model, applies that model's parameter rules from `MODEL_ADAPTERS`, and calls
+  `chat.completions.create()`.
+- **`MODEL_ADAPTERS`**: per-model `(provider, token_param)`. Reasoning models such as
+  `gpt-5-mini` need `max_completion_tokens` instead of `max_tokens`, and reject any
+  `temperature` other than 1 with a 400. Call sites pass `token_budget=N` and never hard-code
+  either parameter.
+- **Groq (`get_client_for`)**: a second, OpenAI-compatible provider used only by
+  `scripts/eval_generation_ab.py`. It is not reachable from the request path.
 
-All settings are read from `.env` (see `.env.example` for the full documented list).
-Only `OPENAI_API_KEY` and `DATABASE_URL` are required; everything else has a working default:
+`gpt-5-mini` spends completion tokens on hidden reasoning before producing output. Give it a
+generous budget (2000+ even for short JSON outputs). Too small a budget truncates silently and
+breaks downstream parsing.
 
-| Env var | Default | Notes |
+**Routing a task to a cheaper model** requires `scripts/eval_task_routing.py` first, and the
+result should be recorded next to `model_by_task` in `config.py`. For `rewrite`, repeat each query
+several times: `openai/gpt-oss-20b` passed a single run but misspelled key Banglish terms in 7 of
+18 repeated rewrites, collapsing retrieval, and was reverted on 2026-09-24.
+
+## 6. GPU service (`app/rag/gpu_client.py`)
+
+Embedding and reranking can run on the separate `shibir-chat-gpu-service` repository, deployed on
+Modal. It is enabled by setting `GPU_SERVICE_URL` (the base URL, for example
+`https://<workspace>--shibir-chat-gpu-service-gpuservice-web.modal.run`, with no path). When it is
+empty, the local CPU models are used.
+
+Service API (header `X-API-Key: $GPU_API_KEY`):
+
+- `POST /embed` `{texts[1..256], normalize, batch_size}` → `{model, dim, vectors}`
+- `POST /rerank` `{query, documents[1..200], top_k, max_length}` →
+  `{model, results: [{index, score, prob}]}`
+
+Contract this back-end relies on (do not regress):
+
+- **Embedding:** `embed_texts` sends slices of at most 256 texts with `normalize=True,
+  batch_size=64`, and raises `GPUServiceError` unless every response has `dim == 1024`,
+  `model == settings.embedding_model_name` and one vector per text. A different model would
+  silently corrupt the existing index.
+- **Reranking:** `rerank` sends slices of at most 200 documents with `max_length=1024` (matching
+  the local CrossEncoder) and `top_k=top_n`, checks `model == settings.reranker_model_name`, maps
+  indices back to the original list, merges, and returns **`prob`** (sigmoid, 0–1), never
+  `score` (raw logit). `MIN_RERANK_SCORE` is calibrated on sigmoid scores.
+- **Retries:** only connection failures (`ConnectError`, `ConnectTimeout`, `RemoteProtocolError`,
+  `ReadError`, `WriteError`; both endpoints are idempotent), 5xx and 429 are retried, with
+  exponential backoff (0.5 s, 1 s, ...). Other 4xx responses and read timeouts raise immediately.
+- **Timeouts:** chosen per call. A call uses `gpu_cold_timeout_seconds` if it is the first in
+  the process or more than `gpu_warm_window_seconds` after the last success; otherwise
+  `gpu_timeout_seconds`. It is not a once-per-process flag: Modal scales to zero after 300 s
+  idle, and a short timeout on a cold start would surface as a 503.
+- **Errors:** `router.py` maps `GPUServiceError` to the same Bengali 503 used for LLM failures,
+  and to an SSE `error` event on `/chat/stream`.
+- **Tracing:** each `post()` is a Langfuse span `gpu:embed` / `gpu:rerank` with
+  `{n_items, latency_ms, cold, attempts, status}`, never the texts.
+- **Privacy:** request bodies and the API key are never logged.
+- **No torch in GPU mode:** torch and sentence-transformers are imported lazily inside `_model()`.
+  They remain dependencies for the local fallback (§14).
+- Chroma still runs in this process; only model inference moved.
+
+## 7. API contract
+
+| Method | Path | Result |
 |---|---|---|
-| `OPENAI_API_KEY` | *(required)* | See "LLM provider" above — the only sanctioned entry point for LLM calls is `app/core/llm.py`. |
-| `OPENAI_MODEL` | `gpt-5-mini` | A reasoning model — it spends completion-token budget on internal reasoning before emitting visible output. Give it a generous token budget (2000+ for short JSON-style outputs); too low silently truncates and fails downstream parsing. |
-| `DATABASE_URL` | `postgresql+psycopg2://...` | SQLAlchemy DSN format — **not** parseable by `psql` directly. Use a Python script with `app.db.session.SessionLocal` for one-off queries/admin, not raw `psql -c`. |
-| `GROQ_API_KEY` / `GROQ_BASE_URL` | *(empty)* / `https://api.groq.com/openai/v1` | Eval-only — see "LLM provider" above. Empty by default; not read anywhere in the production request path. |
-| `EMBEDDING_MODEL_NAME` | `BAAI/bge-m3` | Multilingual, 1024-dim, handles Bengali (unlike the old `all-MiniLM-L6-v2`, which tokenized Bengali entirely to `[UNK]`). Changing this requires a full reindex — see below. |
-| `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Cross-encoder used only at query time (not stored in Chroma), so changing it does NOT require a reindex. |
-| `CHROMA_PERSIST_DIR` | `chroma_db` | Relative to the working directory the process is started from. |
-| `CHROMA_COLLECTION_NAME` | `documents_bge_m3` | Name encodes the embedding model on purpose — changing `EMBEDDING_MODEL_NAME` without also bumping this would silently mix incompatible-dimension vectors into one collection (Chroma would just reject them with a dimension-mismatch error, which is the point). |
-| `TOP_K` | `5` | Chunks sent to the LLM after reranking. |
-| `FETCH_K` | `25` | Candidates pulled from Chroma before reranking (per query variant, then merged). |
-| `MIN_SIMILARITY` | `0.25` | Cheap cosine pre-filter before paying for the cross-encoder. Loose on purpose. |
-| `MIN_RERANK_SCORE` | `0.5` | The real "do we have an answer?" gate — see "Prompt contract" above. **Scores are Sigmoid-activated, in [0, 1]**, not raw bge-reranker logits. Smoke-tested on this corpus: on-topic questions scored 0.94–0.99, a fully off-topic question topped out at 0.011. Re-tune with `uv run python -m scripts.tune_threshold` once you have ~30 real questions (20 answerable, 10 not). |
-| `TARUN_DB_PATH` / `NOBIN_DB_PATH` | `data/Tarun_Associate.db` / `data/Nobin_Associate.db` | Legacy — only used by the one-time `scripts/migrate_sqlite_to_postgres.py`, not by `ingest.py` anymore. |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | *(empty)* / *(empty)* | Opt-in tracing — see "Tracing" below. With either empty, `app/core/tracing.py` is a complete no-op: the langfuse SDK is never imported, `get_client()` returns the plain OpenAI client, `/chat` behaves byte-identically to a build without tracing. |
-| `LANGFUSE_HOST` | `http://localhost:3000` | Self-hosted or Langfuse Cloud endpoint. **Not** `LANGFUSE_BASE_URL` — that's the `langfuse-cli` tool's own env var convention, different from this app's `Settings.langfuse_host` field; setting the wrong one leaves tracing silently pointed at `localhost:3000` even with real Cloud keys configured (fail-safe design swallows the resulting connection errors — see "Tracing" below). |
-| `LANGFUSE_ENABLED` | `true` | Master switch — tracing is active only when this is true **and** both keys are set. |
-| `LANGFUSE_CAPTURE_IO` | `true` | Set `false` to redact every prompt/completion/query/excerpt text field in a trace while keeping structure, scores, token usage, cost and latency. |
-| `LANGFUSE_RELEASE` | *(empty)* | Optional build marker (e.g. a git short sha) attached to every trace. |
-| `LANGFUSE_ENVIRONMENT` | `development` | Separates real production traffic from dev/staging runs in the Langfuse UI (its default views filter to `production`). Set to `production` via the deployed box's `.env` (e.g. `shibirgpt.service`). |
-| `HOST` / `PORT` | `0.0.0.0` / `9200` | Not currently read by `run.sh`'s uvicorn invocation (hardcoded there) — see Known gaps. |
+| `GET` | `/health` | `{"status": "ok"}` |
+| `POST` | `/chat` | `ChatResponse` |
+| `POST` | `/chat/stream` | Server-Sent Events |
+| `GET` | `/conversations` | `[ConversationSummary]`, most recent activity first |
+| `GET` | `/conversations/{session_id}/messages` | `[{"role": "user" \| "assistant", "content"}]`, or 404 |
+| `DELETE` | `/conversations/{session_id}` | 204, or 404 |
 
-## API contract
+The old `/ask`, `/note` and `/note-by-text` routes were removed. Their service functions are still
+called from `/chat`.
 
-`GET /health` → `{"status": "ok"}`
+**`POST /chat` request**
 
-`POST /chat` — the single entry point for every user-facing interaction. The old `/ask`,
-`/note`, `/note-by-text` endpoints are **removed**; their underlying service functions are
-unchanged and still called from here, just not exposed as separate routes.
-`app.services.intent_classifier.classify_intent()` routes the free-text `message` into one of
-four modes and dispatches internally — see "Roleplay and suggestion services" below for
-ROLEPLAY/SUGGESTION, "Prompt contract" above for QA, and the Architecture tree above for NOTE.
-
-Request:
 ```json
-{"message": "your question in any language — Bengali script, Banglish, or English", "session_id": null, "user_id": null}
+{"message": "question in Bengali script, Banglish or English", "session_id": null, "user_id": null}
 ```
-`session_id` is optional — omit it (or pass `null`) to start a new session; the response
-echoes back the `session_id` to reuse on the next turn. `user_id` is optional and only used to
-group Langfuse traces per end user when tracing is enabled (see "Tracing" below) — no request
-logic reads it.
 
-Response:
+`session_id` is optional; the response returns the id to reuse on the next turn. `user_id` is
+optional and only groups Langfuse traces; no request logic reads it. Unknown fields are ignored.
+An empty message returns 400.
+
+**`POST /chat` response**
+
 ```json
 {
   "mode": "qa",
-  "answer": "... (always Bengali)",
+  "answer": "… (always Bengali)",
   "sources": [
     {
-      "book": "...", "chapter": "...", "source_db": "tarun",
-      "content": "full chunk text (includes the বই:/অধ্যায়: header)",
+      "book": "…", "chapter": "…", "source_db": "tarun",
+      "content": "full chunk text, including the বই:/অধ্যায়: header",
       "similarity": 0.6471, "rerank_score": 0.9861
     }
   ],
-  "session_id": "...",
+  "session_id": "…",
   "response_time_ms": 842.17
 }
 ```
-`mode` is one of `"qa" | "note" | "roleplay" | "suggestion"` (whichever the classifier picked
-for this turn). `sources` is `[]` for NOTE and ROLEPLAY, and for QA/SUGGESTION whenever
-retrieval didn't clear `settings.min_rerank_score` — never populated alongside a "not found"
-answer. See "Prompt contract" above. A failed upstream LLM call (quota, bad key, outage) comes
-back as a `503` with a Bengali "temporarily unavailable" detail, not a bare `500`.
 
-`POST /chat/stream` — same request shape and dispatch as `POST /chat`, but Server-Sent Events:
-a `sources` event, then one or more `token` events (QA streams the answer token-by-token via
-`generator.stream_answer()`; NOTE/ROLEPLAY/SUGGESTION emit their whole answer as a single
-`token` event since they don't generate incrementally), then a `done` event carrying
-`mode`/`session_id`/`response_time_ms`. An upstream LLM failure emits an `error` event instead.
+- `mode` is `qa`, `note`, `roleplay` or `suggestion`.
+- `sources` is `[]` for `note` and `roleplay`, and for `qa`/`suggestion` whenever retrieval did
+  not pass the gate. It is never populated alongside a "not found" answer.
+- An upstream failure (OpenAI `APIError` or `GPUServiceError`) returns **503** with a Bengali
+  "temporarily unavailable" detail, never a bare 500.
 
-`GET /conversations` → sidebar list, newest-activity-first:
-```json
-[{"id": "...", "title": "first user message, trimmed", "message_count": 4, "created_at": "...", "updated_at": "..."}]
-```
+**`POST /chat/stream`**: the same request and dispatch, returned as events `sources`, then one or
+more `token`, then `done` (`mode`, `session_id`, `response_time_ms`). QA streams token by token
+through `generator.stream_answer()`; the other modes send their whole answer as one `token`. An
+upstream failure emits a single `error` event instead.
 
-`GET /conversations/{session_id}/messages` → `[{"role": "user"|"assistant", "content": "..."}]`
-turns for that session, or `404` if the id is unknown.
+The front-end (`shibir-chat-front-end`) depends on these shapes. Keep changes backward-compatible.
 
-`DELETE /conversations/{session_id}` → `204` on success, `404` if the id is unknown.
+**Sessions are single-worker.** `/conversations` and session continuity read
+`app.services.session_store`, a module-level dict. Sessions are lost on restart and invisible to
+other workers or pods. A shared store (Redis or a table) is required before running more than one
+worker.
 
-**`/conversations` reads `app.services.session_store`, an in-process module-level `dict` —
-single-worker only.** Sessions are lost on process restart and invisible across workers (e.g.
-`uvicorn --workers N` or multiple pods each get their own copy). Fine for the current
-single-worker deployment; a shared store (Redis or a DB table) is required before scaling to
-multiple workers.
+## 8. Roleplay and suggestion
 
-Unknown extra fields in the request body are silently ignored (default Pydantic behavior).
+**Roleplay** (`roleplay_service.handle_roleplay`) uses no retrieval by design; it is a persona
+conversation, not a book lookup. The first roleplay message is used to extract a persona (task
+`persona`). Later turns continue in that persona using the session history. The classifier keeps
+the session in ROLEPLAY until an exit phrase is sent; `router.py` then clears `persona`, so the
+next roleplay starts fresh.
 
-## Roleplay and suggestion services
+**Suggestion** (`suggestion_service.give_suggestion`) uses the same retrieval and gate as QA, but
+its grounded prompt allows the model to phrase a recommendation or opinion based on the excerpts
+rather than only restating them. When the gate fails, a separate prompt has the model say the
+books do not cover the topic and then, optionally, offer clearly labelled general advice.
 
-`app/services/roleplay_service.py` (`handle_roleplay`) — no RAG retrieval by design: it's a
-free-form persona conversation, not a book lookup. On the first message of a roleplay session
-it extracts a persona description with one LLM call (task `"persona"`), then holds a
-multi-turn conversation in that persona using the session's history (`session_store.py`,
-capped at `MAX_HISTORY` turns). `router.py`'s `classify_intent(...)` keeps an ongoing roleplay
-session routed to ROLEPLAY on every follow-up turn unless the message matches an explicit exit
-phrase (e.g. "stop roleplay" / "রোলপ্লে বন্ধ"), at which point the session's `persona` is
-cleared so a future roleplay starts fresh.
+## 9. Ingestion and reindexing
 
-`app/services/suggestion_service.py` (`give_suggestion`) — reuses `retrieve_relevant_docs()`
-and the same relevance gate as `qa_service.answer_question()`, but with its own prompt: when
-the gate passes, the model is explicitly allowed to phrase a recommendation/opinion grounded
-in the retrieved excerpts (not just restate cited facts, the way QA's prompt requires); when
-it doesn't, a different ungrounded prompt has the model say plainly that the books don't cover
-this, then optionally offer a general (explicitly non-book) suggestion.
+`uv run python -m app.rag.ingest`:
 
-## Common tasks
+1. selects published, non-excluded pages and published articles where
+   `embedded_at IS NULL OR updated_at > embedded_at`;
+2. chunks each row and prefixes each chunk with a Bengali `বই:` / `অধ্যায়:` header;
+3. deletes the row's existing chunks by `row_key` (a row's chunk count changes when its content
+   changes, so upsert alone would leave orphans);
+4. embeds and upserts in batches (64 locally, 256 in GPU mode) and sets `embedded_at`.
 
-- **Run the server**: `./run.sh` (syncs deps via uv, starts uvicorn on :9200), or manually:
-  `HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200`.
-- **Smoke test**: run three `/chat` calls with `{"message": "..."}` — an on-topic question in
-  Bengali script, the same question in Banglish (must return the same sources, not an
-  empty/weak result), and a deliberately off-topic question (must return `sources: []`, not
-  populated, with `mode: "qa"`). Then one `/chat` call phrased as a note request (e.g. "এই
-  বইয়ের নোট বানাও ...") against a real book title — check `mode: "note"` in the response. See
-  `scripts/tune_threshold.py` for a scripted version of the retrieval half of this.
-- **Tune the refusal threshold**: fill in `scripts/eval_questions.example.json` (copy it,
-  don't edit in place) with ~30 real questions — 20 answerable from the corpus, 10 not — then
-  `uv run python -m scripts.tune_threshold your_questions.json`.
-- **Deploy**: `shibirgpt.service` is a systemd unit that runs `run.sh` with
-  `WorkingDirectory=/home/lab/apps/shibirgpt`, `Restart=always`. Note: this is a manual/legacy
-  path — see "Known gaps" below for the state of the GitHub Actions deploy workflow.
-
-## Reindexing
-
-**Both of the following are required. Deleting only one leaves the migration/reindex
-silently broken:**
+**A full reindex needs both steps below.** Doing only the first leaves an empty index while the
+ingest reports "0 pages need embedding" and exits successfully. That is how the old MiniLM index
+once survived a supposed reindex.
 
 ```bash
 rm -rf chroma_db
 ```
+
 ```python
+# DATABASE_URL is a SQLAlchemy DSN and cannot be passed to psql directly.
 from sqlalchemy import text
 from app.db.session import SessionLocal
+
 s = SessionLocal()
 s.execute(text("UPDATE pages SET embedded_at = NULL"))
 s.execute(text("UPDATE articles SET embedded_at = NULL"))
 s.commit()
 ```
+
 ```bash
 HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
 ```
 
-Why both: `ingest.py` only embeds rows where `embedded_at IS NULL OR updated_at >
-embedded_at`. If you delete `chroma_db/` but leave `embedded_at` set on every row, the script
-runs, logs "0 pages need embedding", exits successfully, and you're left with an **empty**
-vector store that looks like a clean run. This is exactly how the old MiniLM index could
-survive a supposed "reindex" undetected.
+The current corpus (4,143 published pages, 0 articles) produces about 12,000 chunks. On CPU this
+takes hours on a memory-constrained machine; in GPU mode it is much faster. Never run ingest while
+another process (an evaluation script, a second ingest) has the same `chroma_db/` open.
 
-On this corpus (4,143 published pages, 0 articles), a full reindex produces roughly 12,000
-chunks (~3 chunks/page at the current `chunk_size=900`/`overlap=150`) and is CPU-bound — plan
-for a long run on a memory-constrained machine (multiple hours observed under swap pressure;
-much faster with more free RAM or a GPU).
+## 10. Tracing (`app/core/tracing.py`)
 
-## Tracing (`app/core/tracing.py`)
+Langfuse SDK v4 (OpenTelemetry-based; migrated from v2 on 2026-09-19, see the module docstring).
+Setup and trace contents are documented in [docs/tracing.md](docs/tracing.md). What matters when
+changing code:
 
-Langfuse-based observability (SDK v4, OpenTelemetry-based — migrated 2026-09-19 off the old v2
-"manual client" API; see the module's own docstring for why and what changed), wired into
-`app/main.py`'s lifespan (`tracing.init()` on startup pays the langfuse SDK import cost up front
-instead of on the first request; `tracing.shutdown()` flushes buffered events on graceful
-shutdown) and into `app/core/llm.py` (every `complete()` call links to the active request's
-root span).
+- **Opt-in and fail-safe.** With either key empty, every helper is a no-op, the SDK is never
+  imported, and `get_client()` returns the plain OpenAI client. Every helper catches its own
+  exceptions, so Langfuse can never break a request.
+- **One root span per `/chat` or `/chat/stream` request**, opened in `router.py`. Its context is
+  stored in a `ContextVar` **and** returned explicitly, because ambient OpenTelemetry context
+  survives `run_in_threadpool` but not Starlette's SSE streaming, which pulls `gen()` one `next()`
+  at a time in a fresh context. `stream_answer()` and `finalize_request_trace()` therefore take
+  the trace id, parent observation id and trace explicitly.
+- Nested observations: `classify-intent`, `expand-query`, `retrieve-context` (retriever),
+  `check-relevance-gate` (guardrail), `gpu:embed` / `gpu:rerank`, and one generation per LLM call
+  named `llm:{task}`.
+- `mode` is written to root-span **metadata** at finalization, not as a tag: it is only known
+  after classification, and v4 tags must be set when an observation is created. Failed requests
+  set `level=ERROR`.
+- `llm.py`'s `openai_wrapper_active()` guard: Langfuse's OpenAI wrapper adds kwargs (`name`,
+  `metadata`, `trace_id`, `parent_observation_id`, ...) that a plain client rejects with a 400.
+  The guard is true only once `langfuse.openai` has actually patched the OpenAI client, not
+  merely when tracing is enabled. If that import fails, `complete()` strips those kwargs and the
+  call proceeds untraced.
 
-**Opt-in and fail-safe.** With `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` empty (the
-default), every function in `tracing.py` is a no-op, the langfuse SDK is never imported, and
-`get_client()` in `llm.py` returns the plain `openai.OpenAI` — `/chat` behaves byte-identically
-to a build without this module. Every public helper also swallows its own exceptions (logs a
-warning, never raises), so a broken or unreachable Langfuse instance can never break a request.
+## 11. Configuration (`app/core/config.py`)
 
-One root span is opened per `/chat` (or `/chat/stream`) request in `router.py`. Its context
-(root span object, trace id, root observation id) is held in a `ContextVar` AND returned
-explicitly, because ambient OpenTelemetry context only reliably survives `run_in_threadpool`
-hops within a single request — it does **not** survive Starlette's SSE streaming path, where
-`gen()` is pulled one `next()` at a time, each call getting a fresh context copy (see
-`tracing.py`'s module docstring for the full reasoning and how `app/rag/generator.py`'s
-`stream_answer()` works around it with an explicit `trace_id`/`parent_observation_id`). Every
-nested pipeline stage and LLM call groups under the root span without threading it through
-service signatures: `classify-intent` (span; how the message was classified), `expand-query`
-(span; the rewritten query variants), `retrieve-context` (a `retriever`-typed observation —
-every reranked candidate, kept and dropped, with cosine similarity + rerank score),
-`check-relevance-gate` (a `guardrail`-typed observation: grounded vs. refused, top rerank
-score, threshold), and one `generation` per LLM call (model, messages, completion, token usage,
-cost, latency — named `llm:{task}`, e.g. `llm:qa`, `llm:intent`). `LANGFUSE_CAPTURE_IO=false`
-redacts every text field (query, excerpts, prompts, completions, answer) while keeping
-structure/scores/usage/cost. `LANGFUSE_ENVIRONMENT` (default `development`) separates real
-traffic from dev/staging runs in the Langfuse UI — set to `production` on the deployed box.
-`mode` (qa/note/roleplay/suggestion) lands in the root span's `metadata` at finalize, not as a
-tag — it's only known after intent classification runs, and v4's tags must be set at
-observation-creation time via `propagate_attributes()`, so metadata is the documented escape
-hatch. A failed request sets `level=ERROR` on the root span instead of an ad hoc tag.
+All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_API_KEY` and
+`DATABASE_URL` are required.
 
-`llm.py`'s `openai_wrapper_active()` guard exists because Langfuse's OpenAI wrapper injects
-extra kwargs (`name`, `metadata`, `trace_id`, `parent_observation_id`, ...) that only the
-*wrapped* client understands — a plain `openai.OpenAI` client 400s on them. The guard is true
-only once `langfuse.openai`'s import has actually patched `openai`'s chat-completions methods,
-**not** merely when tracing is enabled — so if Langfuse is enabled but that import fails,
-`complete()` strips those kwargs and tracing silently stays off for that call instead of turning
-every LLM call in the app into a 400.
+**Core**
 
-## Known gaps / things a future change might need to address
+| Variable | Default | Notes |
+|---|---|---|
+| `OPENAI_API_KEY` | *(required)* | Used only through `app/core/llm.py`. |
+| `OPENAI_MODEL` | `gpt-5-mini` | Reasoning model; see the token-budget note in §5. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `90` / `1` | Per LLM call. For streaming, the timeout bounds the gap between chunks. |
+| `MODEL_BY_TASK` | `{}` | JSON map from task (`intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`, `roleplay`) to model. Change only after an evaluation (§5). |
+| `DATABASE_URL` | `postgresql+psycopg2://…` | SQLAlchemy DSN, **not** usable with `psql`. Use `app.db.session.SessionLocal` for one-off queries. |
+| `CORS_ALLOW_ORIGINS` | local Vite (`:5173`) + `https://shibirgpt.potropollob.com` | JSON list. An explicit allow-list, not `*`. |
+| `HOST` / `PORT` | `0.0.0.0` / `9200` | Not read by `run.sh` or the Dockerfile, which hard-code them (§14). |
 
-- `app/core/llm.py`'s `get_client()` constructs the OpenAI client with no request timeout — a
-  slow or hanging upstream call can block a `/chat` request indefinitely. Fix this before the
-  next production push.
-- `.github/workflows/deploy.yml` (triggered on push to `main`) is still a placeholder — its
-  one step is `echo "Add your deploy steps here (Vercel, AWS, Docker push, etc.)"`.
-  `.github/workflows/ci.yml` gates PRs into `main` with a real Postgres-backed pytest run, but
-  nothing actually deploys on merge yet.
-- `app/services/session_store.py` is an in-process `dict` — single-worker only. A real
-  multi-worker/multi-pod deployment needs a shared store (Redis or a DB table) first; see
-  "API contract" above.
-- Vector store is still ChromaDB. Migration to something like pgvector/Qdrant for scale (the
-  corpus is a growing target of several million+ chunks) is planned but not started.
-- No lint/format tooling — `pyproject.toml`'s `[dependency-groups] dev` only has `pytest`, no
-  `ruff` or equivalent.
-- `min_rerank_score` is a single global threshold. If the corpus grows to cover very
-  different domains, a per-book or per-category threshold might separate "answerable" from
-  "not answerable" better than one global cutoff — not needed at the current corpus size.
-- `query_rewriter.expand_query()` costs one LLM call per unique query (cached via `lru_cache`,
-  so repeats are free within a process lifetime, but the cache doesn't persist across
-  restarts). If that call ever fails, it silently falls back to the raw query — fine for
-  Bengali-script input, degrades Banglish retrieval quality back to pre-fix levels.
-- Corpus cleanup (`scripts/clean_corpus.py`, `Page.excluded_from_rag`) is data-confirmed but
-  only partially applied: `book203_cross_contamination.csv`'s 106 flagged duplicate pages are
-  excluded (confirmed live in Postgres: `excluded_from_rag = true` with reason
-  `book203_cross_contamination.csv:loser`). `orphaned_source_pages.csv` was a no-op — its one
-  row never reached Postgres. `arabic_placeholder_pages.csv` (343 data rows) was deliberately **not**
-  applied: on inspection most of its rows aren't actually broken (many are pristine pages that
-  merely contain Arabic script, and a chunk of the rest still have a usable Bengali
-  translation/tafsir alongside a lost Arabic original) — applying it as-is would delete
-  legitimately useful pages and hurt recall. It needs regenerating with a real broken-page
-  heuristic before it's safe to apply.
+**Retrieval**
+
+| Variable | Default | Notes |
+|---|---|---|
+| `EMBEDDING_MODEL_NAME` | `BAAI/bge-m3` | Multilingual, 1024-dim. The previous `all-MiniLM-L6-v2` tokenized all Bengali to `[UNK]`. Changing it requires a full reindex **and** a new collection name. |
+| `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Used only at query time; changing it needs no reindex but does need `MIN_RERANK_SCORE` re-tuned. |
+| `CHROMA_PERSIST_DIR` | `chroma_db` | Relative to the working directory. |
+| `CHROMA_COLLECTION_NAME` | `documents_bge_m3` | Encodes the embedding model on purpose, so a model change without a new name fails loudly on dimension mismatch. |
+| `TOP_K` | `5` | Excerpts sent to the LLM after reranking. |
+| `FETCH_K` | `25` | Chroma candidates per query variant, before merging and reranking. |
+| `MAX_VARIANTS` | `4` | Extra rewrite variants beyond the canonical Bengali form. Each costs one embed and one search; tune with `eval_query_expansion`. |
+| `MIN_SIMILARITY` | `0.25` | Loose cosine pre-filter before the reranker. |
+| `MIN_RERANK_SCORE` | `0.5` | The relevance gate (§4). Sigmoid scores in [0, 1]: on-topic questions scored 0.94–0.99, an off-topic one peaked at 0.011. The ">2 is relevant" logit heuristic quoted for this model does **not** apply. Re-tune with `tune_threshold` on at least 30 questions. |
+
+**GPU service** (§6)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GPU_SERVICE_URL` / `GPU_API_KEY` | *(empty)* | Setting the URL enables GPU mode. The key is sent as `X-API-Key`. |
+| `GPU_TIMEOUT_SECONDS` / `GPU_COLD_TIMEOUT_SECONDS` | `30` / `120` | Warm and cold-start timeouts. |
+| `GPU_WARM_WINDOW_SECONDS` | `240` | Idle time after which the next call is treated as cold. Keep it below the service's Modal `scaledown_window` (300). |
+| `GPU_MAX_RETRIES` | `2` | Retries after the first attempt, for retryable failures only. |
+
+**Tracing** (§10)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | *(empty)* | Both are required to enable tracing. |
+| `LANGFUSE_HOST` | `http://localhost:3000` | Self-hosted or Cloud URL. **Not** `LANGFUSE_BASE_URL` (that is `langfuse-cli`'s variable); using the wrong one silently points tracing at localhost. |
+| `LANGFUSE_ENABLED` | `true` | Master switch. |
+| `LANGFUSE_CAPTURE_IO` | `true` | `false` redacts all text while keeping structure, scores, usage, cost and latency. |
+| `LANGFUSE_RELEASE` | *(empty)* | Optional build marker. |
+| `LANGFUSE_ENVIRONMENT` | `development` | Set to `production` on the deployed server. |
+
+**Evaluation and legacy** (not read on the request path)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GROQ_API_KEY` / `GROQ_BASE_URL` | *(empty)* / `https://api.groq.com/openai/v1` | For `eval_generation_ab` only. |
+| `GENERATION_CANDIDATES` / `GENERATION_JUDGE_MODEL` | `["gpt-5", "openai/gpt-oss-120b"]` / `qwen/qwen3.6-27b` | `eval_generation_ab`. The judge must not share a model family with any candidate. |
+| `RAGAS_JUDGE_MODEL` / `RAGAS_EMBEDDING_MODEL` | `gpt-5-mini` / `text-embedding-3-large` | `eval_ragas`. |
+| `TARUN_DB_PATH` / `NOBIN_DB_PATH` | `data/Tarun_Associate.db` / `data/Nobin_Associate.db` | Used only by the one-time SQLite migration. |
+
+## 12. Common tasks
+
+- **Run the server:** `./run.sh` (runs `uv sync --locked`, then uvicorn on `:9200` with
+  `HF_HUB_OFFLINE=1`), or `HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200`.
+- **Run tests:** `uv run pytest`. No network or real models are needed.
+  `tests/test_bengali_embedding.py` loads the real bge-m3 model and runs only with
+  `RUN_MODEL_TESTS=1`. GPU-mode tests use `httpx.MockTransport`. Tests that patch `sys.modules`
+  or module globals must restore them on teardown.
+- **Smoke test** after any retrieval, gate or prompt change, using `POST /chat`:
+  1. an on-topic question in Bengali script: expect `mode: "qa"` and populated `sources`;
+  2. the same question in Banglish: expect the same sources, not an empty or weak result;
+  3. an off-topic question: expect `mode: "qa"` and `sources: []`;
+  4. a note request such as "এই বইয়ের নোট বানাও …" with a real book title: expect `mode: "note"`.
+- **Tune the relevance gate:** copy `scripts/eval_questions.example.json` (don't edit it in place),
+  add about 30 real questions (20 answerable, 10 not), and run
+  `uv run python -m scripts.tune_threshold your_questions.json`.
+- **Measure quality:** see [docs/evaluation.md](docs/evaluation.md).
+- **Deploy:** the systemd unit `shibirgpt.service` runs `run.sh` from `/home/lab/apps/shibirgpt`
+  with `Restart=always`. `docker-compose.yml` is an alternative single-host setup. Scaling
+  guidance: [docs/deployment.md](docs/deployment.md).
+
+## 13. Conventions for changes
+
+- Keep configuration in `Settings`; add every new variable to `.env.example` and §11.
+- Route every LLM call through `complete(task, ...)` with `token_budget=`.
+- Apply `chunker.normalize()` to text at both ingest and query time.
+- Comments in this codebase record *why*: incidents, measurements, rejected alternatives. Keep
+  them accurate when changing the code they describe.
+- Update this file when you change a contract, a default, or anything listed in §14.
+
+## 14. Known gaps
+
+- **Heavy dependencies in GPU mode:** torch, sentence-transformers and the `nvidia-*` packages are
+  still required even when `GPU_SERVICE_URL` is set. Moving them to an optional extra is planned.
+- **No deployment pipeline:** `.github/workflows/deploy.yml` is a placeholder (`echo`). CI
+  (`ci.yml`) runs the Postgres-backed test suite on pull requests to `main`, but nothing deploys
+  on merge.
+- **Hard-coded host and port:** `run.sh` and the Dockerfile start uvicorn on `0.0.0.0:9200`
+  regardless of `HOST`/`PORT`.
+- **Single-worker sessions:** `session_store.py` is an in-process dict (§7).
+- **No API authentication or rate limiting**, and `/conversations` exposes every session in the
+  process to any caller. See [SECURITY.md](SECURITY.md).
+- **Vector store:** still local Chroma. A move to pgvector or Qdrant is planned for a corpus of
+  several million chunks, but not started.
+- **No lint/format tooling:** the dev dependency group contains only `pytest`.
+- **Single global gate:** `min_rerank_score` applies to every book. Per-category thresholds may be
+  needed if the corpus spans very different domains.
+- **Rewrite fallback:** `expand_query()` costs one LLM call per unique query (cached only for the
+  process lifetime). If it fails, retrieval silently uses the raw query, which is fine for Bengali
+  script but degrades Banglish recall.
+- **Partial corpus cleanup:**
+  - Applied: the 106 duplicate pages in `book203_cross_contamination.csv` are excluded (reason
+    `book203_cross_contamination.csv:loser`).
+  - No-op: `orphaned_source_pages.csv`, whose one row never reached Postgres.
+  - Deliberately **not** applied: `arabic_placeholder_pages.csv` (343 rows). Most flagged pages
+    are not actually broken (many just contain Arabic script, or keep a usable Bengali
+    translation), so applying it would hurt recall. It needs regenerating with a real
+    broken-page heuristic first.

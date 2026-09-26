@@ -9,6 +9,7 @@ threads at once.
 
 from __future__ import annotations
 
+import importlib.util
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -16,6 +17,13 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pytest
 
+# Not pytest.importorskip(): that imports sentence_transformers (and torch) at
+# collection time, which makes test_gpu_client's "GPU mode never imports
+# torch" check skip itself for the whole run. find_spec only looks.
+if importlib.util.find_spec("sentence_transformers") is None:
+    pytest.skip("sentence_transformers not installed", allow_module_level=True)
+
+from app.core.config import settings  # noqa: E402
 from app.rag import embedder, reranker
 
 
@@ -39,9 +47,15 @@ class _SlowFake:
 
 @pytest.fixture(autouse=True)
 def _fresh_models(monkeypatch):
+    import sentence_transformers
+
     _SlowFake.instances = 0
-    monkeypatch.setattr(embedder, "SentenceTransformer", _SlowFake)
-    monkeypatch.setattr(reranker, "CrossEncoder", _SlowFake)
+    # Local-model path only -- force it even if .env points at the GPU service.
+    monkeypatch.setattr(settings, "gpu_service_url", "")
+    # embedder/reranker import these lazily inside _model(), so patch the
+    # source module's attributes.
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", _SlowFake)
+    monkeypatch.setattr(sentence_transformers, "CrossEncoder", _SlowFake)
     embedder._model.cache_clear()
     reranker._model.cache_clear()
     yield

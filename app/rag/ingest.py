@@ -25,8 +25,12 @@ from app.db.session import SessionLocal
 from app.rag.chroma_client import get_collection
 from app.rag.chunker import build_document, chunk_text
 from app.rag.embedder import embed_texts
+from app.rag.gpu_client import is_enabled as gpu_enabled
 
-BATCH_SIZE = 64  # chunks per Chroma upsert / embedding batch
+# Chunks per Chroma upsert / embedding batch. In GPU mode one batch is one
+# /embed request (the service's max), so fewer round-trips; locally 64 keeps
+# memory bounded on CPU.
+BATCH_SIZE = 256 if gpu_enabled() else 64
 
 _NEEDS_EMBEDDING = or_(Page.embedded_at.is_(None), Page.updated_at > Page.embedded_at)
 
