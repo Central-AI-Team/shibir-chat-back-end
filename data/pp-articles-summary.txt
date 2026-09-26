@@ -1,0 +1,239 @@
+========================================================================
+DATA SUMMARY REPORT
+========================================================================
+Dataset: data/pp-articles-modified.sql
+Generated: 2026-09-17 16:16:55
+
+┌──────────────────────────────────────────────────────────────────────┐
+│                               DASHBOARD                              │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+                            │  KEY METRICS                            │
+└──────────────────────────────────────────────────────────────────────┘
+
+  ┌────────────────────────────────┐  ┌────────────────────────────────┐
+  │       TOTAL RECORDS: 329       │  │      COMPLETENESS: 86.32%      │
+  │        TOTAL COLUMNS: 5        │  │       DUPLICATE ROWS: 0        │
+  │       FILE SIZE: 5.8 MB        │  │        DUPLICATE IDs: 0        │
+  └────────────────────────────────┘  └────────────────────────────────┘
+
+  ──────────────────────────────────────────────────────────────────────
+  COLUMN HEALTH
+  ──────────────────────────────────────────────────────────────────────
+
+  Column                 Completeness Progress
+  --------------------------------------------------------------------
+  id                          100.0%  ✓ ███████████████
+  title                       100.0%  ✓ ███████████████
+  published_date              100.0%  ✓ ███████████████
+  description                 100.0%  ✓ ███████████████
+  video_url                    31.6%  ✗ ████░░░░░░░░░░░
+
+  ──────────────────────────────────────────────────────────────────────
+  DATA QUALITY GAUGE
+  ──────────────────────────────────────────────────────────────────────
+
+  Quality Score: 85/100
+  [█████████████████████████░░░░░]
+
+  Issues detected: 1
+    → missing values (225)
+
+  ──────────────────────────────────────────────────────────────────────
+  SECTION NAVIGATION
+  ──────────────────────────────────────────────────────────────────────
+
+  Level 1 ─ Dataset Overview ............... rows, columns, file size, date range
+  Level 2 ─ Column Profiling ............... type, nulls, unique, duplicates
+  Level 3 ─ News-Specific Analysis ......... duplicates, writers, dates, content
+  Categorical ── Frequency distributions ... writers, designations
+  Consistency ── Data integrity checks ..... whitespace, format, NULL vs empty
+  Quality ───── Data quality summary ....... totals, nulls, dupes, completeness
+  Cleaning ──── Cleaning actions .......... issues before/after
+  Findings ──── Key findings ............... top 5-10 observations
+  Advice ────── Recommendations ............ cleaning, indexing, constraints
+  Summary ───── Final summary table ........ compact metric overview
+
+┌──────────────────────────────────────────────────────────────────────┐
+           │  Press on a level to dive deeper into the data           │
+└──────────────────────────────────────────────────────────────────────┘
+
+------------------------------------------------------------------------
+LEVEL 1 — DATASET OVERVIEW
+------------------------------------------------------------------------
+  Total Records:       329
+  Total Columns:       5
+  File Size:           6,090,158 bytes
+  Columns:             id, title, published_date, description, video_url
+  Date Range:          2023-06-15 to 2026-08-11
+  Completeness:        86.32%
+
+------------------------------------------------------------------------
+LEVEL 2 — COLUMN PROFILING
+------------------------------------------------------------------------
+
+2a. Dataset Structure
+
+Column               Type                      Description
+------------------------------------------------------------------------
+id                   bigint UNSIGNED NOT NULL  Unique record identifier
+title                varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL Article/post title
+published_date       varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL Publication date
+description          longtext COLLATE utf8mb4_unicode_ci Article description/content
+video_url            varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL Video URL link
+
+2b. Column Statistics Table
+
+Column               Type         Non-null     Null   Unique  Duplicate Example                       
+--------------------------------------------------------------------------------------------------
+id                   Text           100.0%        0      329          0 2                             
+title                Text           100.0%        0      326          6 How to Pick the Best Travel Gu...
+published_date       Text           100.0%        0      263         80 22-10-2022 13:16:00           
+description          Text           100.0%        0      329          0 How to Pick the Best Travel Gu...
+video_url            Text            31.6%      225        9        321 https://w.soundcloud.com/playe...
+
+------------------------------------------------------------------------
+LEVEL 3 — NEWS-SPECIFIC ANALYSIS
+------------------------------------------------------------------------
+
+3a. Duplicate Analysis
+
+  Exact row duplicates:        0
+  Duplicate rows (by full row):  0
+  Duplicate IDs:               0
+  Duplicate titles:            6
+
+  Duplicate Titles Detail:
+    [2x] Bangladesh at the Brink: Rewriting a Nation’s Future
+    [2x] Islam, Identity, and Politics in Post-Uprising Bangladesh
+    [2x] MESSAGE from the EDITOR
+
+3c. News Date Distribution
+
+  Earliest date: 2023-06-15
+  Latest date:   2026-08-11
+
+  Records per year:
+    2023: 1
+    2024: 7
+    2025: 40
+    2026: 40
+
+  Records per month (top 12):
+    2025-02: 10
+    2025-03: 9
+    2025-04: 7
+    2025-08: 1
+    2025-12: 1
+    2026-01: 1
+    2026-02: 2
+    2026-03: 1
+    2026-04: 1
+    2026-06: 12
+    2026-07: 11
+    2026-08: 12
+
+  Missing dates:            0
+  Invalid date format:      0
+  Non-standard format:      241
+
+3d. Content (description) Analysis
+
+  Total records:            329
+  Null post content:        0
+  Empty post content:       0
+  Very short (<50 chars):   0
+  Contains HTML:            327
+  Contains URLs:            23
+
+  Avg length:               18296 chars
+  Min length:               321 chars
+  Max length:               1012001 chars
+  Median length:            11815 chars
+
+3e. Title Analysis
+
+  Avg length:               58.7 chars
+  Min length:               17 chars
+  Max length:               144 chars
+  Empty titles:             0
+  Unique titles:            326
+
+3f. URL Validity
+
+  video_url: 7/104 valid URLs (104 non-null out of 329)
+
+3g. Language Distribution (by post content)
+
+  English/Mixed: 200/200 (100.0%)
+
+------------------------------------------------------------------------
+CATEGORICAL DATA ANALYSIS
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+DATA CONSISTENCY CHECKS
+------------------------------------------------------------------------
+  ⚠ news_date: 241 records with non-standard date format
+    Example: 22-10-2022 13:16:00
+    Example: 23-10-2022 10:43:00
+    Example: 17-12-2022 19:46:00
+  ⚠ video_url: NULL=225
+
+------------------------------------------------------------------------
+DATA QUALITY SUMMARY
+------------------------------------------------------------------------
+  Total rows:               329
+  Duplicate rows:           0
+  Missing/null cells:       225
+  Empty string cells:       0
+  Total cells:              1645
+  Completeness:             86.32%
+
+------------------------------------------------------------------------
+DATA CLEANING SUMMARY
+------------------------------------------------------------------------
+
+Issue                            Before Action                  After
+------------------------------------------------------------------------
+Duplicate rows                        0 Removed                     0
+Invalid dates                       241 Standardized                0
+Empty description content             0 Preserved                   0
+
+------------------------------------------------------------------------
+KEY FINDINGS
+------------------------------------------------------------------------
+  • Dataset contains 329 records and 5 columns.
+  • `description` content is fully present (100.0% complete).
+  • Date values span 2023-06-15 to 2026-08-11.
+  • No exact duplicate rows found.
+  • 326 unique titles out of 329 records.
+  • 88 records have properly formatted dates.
+
+------------------------------------------------------------------------
+RECOMMENDATIONS
+------------------------------------------------------------------------
+• `published_date` should be converted to DATE type; ensure consistent YYYY-MM-DD format.
+• `description` column contains HTML — consider sanitizing or storing as rich text.
+• `id` should have UNIQUE constraint; verify no duplicates exist in source.
+• Add NOT NULL constraint on `title` and `id` columns.
+• Consider indexing `published_date` for query performance.
+• Validate URLs in content for link rot.
+
+------------------------------------------------------------------------
+FINAL DATASET SUMMARY
+------------------------------------------------------------------------
+
+Metric                                   Value
+-----------------------------------------------
+Total Records                              329
+Total Columns                                5
+Duplicate Records                            0
+Missing Cells                              225
+Completeness                   86.32%
+Date Range                     2023–2026
+
+========================================================================
+END OF REPORT
+========================================================================
