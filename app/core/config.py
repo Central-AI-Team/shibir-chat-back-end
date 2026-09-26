@@ -107,9 +107,14 @@ class Settings(BaseSettings):
     gpu_service_url: str = ""
     gpu_api_key: str = ""           # sent as the X-API-Key header
     gpu_timeout_seconds: float = 30
-    # The first call in a process may hit a scaled-to-zero Modal container
-    # that has to boot and load both models, so it gets a longer timeout.
+    # A call may hit a scaled-to-zero Modal container that has to boot and
+    # load both models, so it gets a longer timeout: the first call in a
+    # process, and any call more than gpu_warm_window_seconds after the last
+    # successful one.
     gpu_cold_timeout_seconds: float = 120
+    # Must stay below the service's Modal scaledown_window (300s): past this
+    # much idle time the container may be gone, so assume a cold start.
+    gpu_warm_window_seconds: float = 240
     # Retries after the first attempt, only on connection errors / 5xx / 429.
     gpu_max_retries: int = 2
 

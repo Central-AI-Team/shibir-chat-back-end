@@ -213,19 +213,22 @@ Embedding (`BAAI/bge-m3`) and reranking (`BAAI/bge-reranker-v2-m3`) can run on t
 `.env`:
 
 ```
-GPU_SERVICE_URL=https://<workspace>--shibir-chat-gpu-service.modal.run
+GPU_SERVICE_URL=https://<workspace>--shibir-chat-gpu-service-gpuservice-web.modal.run
 GPU_API_KEY=...
 ```
 
 With `GPU_SERVICE_URL` set, `app/rag/embedder.py` and `app/rag/reranker.py` call the service's
-`/embed` and `/rerank` endpoints (`app/rag/gpu_client.py`) and never import torch. The first
-call per process gets a longer timeout (`GPU_COLD_TIMEOUT_SECONDS`, default 120) to cover a
-Modal cold start; later calls use `GPU_TIMEOUT_SECONDS` (default 30). Connection errors, 5xx
-and 429 are retried with backoff (`GPU_MAX_RETRIES`, default 2); other 4xx fail at once.
+`/embed` and `/rerank` endpoints (`app/rag/gpu_client.py`) and never import torch. A call gets
+a longer timeout (`GPU_COLD_TIMEOUT_SECONDS`, default 120) to cover a Modal cold start when it is
+the first in the process or comes more than `GPU_WARM_WINDOW_SECONDS` (default 240, below
+Modal's 300 s scaledown window) after the last successful one; otherwise `GPU_TIMEOUT_SECONDS`
+(default 30). Connection errors (including a connection dropped mid-request), 5xx and 429 are
+retried with backoff (`GPU_MAX_RETRIES`, default 2); read timeouts and other 4xx fail at once.
 
 The service must serve the same embedding model as the existing Chroma index — every `/embed`
 response's `model` and `dim` (1024) are checked, and a mismatch raises instead of writing
-incompatible vectors. Leave `GPU_SERVICE_URL` empty to use the local models.
+incompatible vectors. `/rerank` responses' `model` is checked against `RERANKER_MODEL_NAME` the
+same way. Leave `GPU_SERVICE_URL` empty to use the local models.
 
 ## LLM tracing with Langfuse (self-hosted)
 

@@ -9,6 +9,7 @@ threads at once.
 
 from __future__ import annotations
 
+import importlib.util
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +17,13 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pytest
 
-from app.core.config import settings
+# Not pytest.importorskip(): that imports sentence_transformers (and torch) at
+# collection time, which makes test_gpu_client's "GPU mode never imports
+# torch" check skip itself for the whole run. find_spec only looks.
+if importlib.util.find_spec("sentence_transformers") is None:
+    pytest.skip("sentence_transformers not installed", allow_module_level=True)
+
+from app.core.config import settings  # noqa: E402
 from app.rag import embedder, reranker
 
 

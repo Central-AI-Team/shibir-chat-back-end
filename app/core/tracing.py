@@ -368,6 +368,29 @@ def record_rewrite(variants) -> None:
 
 
 @_safe
+def start_gpu_span(name: str) -> Optional[Any]:
+    """Open a span around one app/rag/gpu_client.post() call ("gpu:embed" /
+    "gpu:rerank"). Returns the span, or None when there is no active trace
+    (tracing disabled, or outside a request, e.g. app.rag.ingest)."""
+    if _current_ctx.get() is None:
+        return None
+    client = _client()
+    if client is None:
+        return None
+    return client.start_observation(as_type="span", name=name)
+
+
+@_safe
+def end_gpu_span(span: Optional[Any], *, metadata: dict, error: bool = False) -> None:
+    """Close a start_gpu_span() span. ``metadata`` is counts and timings only
+    -- never the texts / documents sent to the service."""
+    if span is None:
+        return
+    span.update(metadata=metadata, level="ERROR" if error else "DEFAULT")
+    span.end()
+
+
+@_safe
 def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve-context") -> None:
     """One ``retriever``-typed observation covering the whole retrieve+rerank
     step.

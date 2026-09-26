@@ -87,6 +87,13 @@ def _rerank_gpu(query: str, docs: list[str], top_n: int) -> list[tuple[int, floa
                 "max_length": _MAX_LENGTH,
             },
         )
+        # Same guard as embedder: min_rerank_score is tuned against this
+        # model's scores, so a different one would silently skew the gate.
+        if data.get("model") != settings.reranker_model_name:
+            raise gpu_client.GPUServiceError(
+                f"GPU service /rerank returned model {data.get('model')!r}, "
+                f"expected {settings.reranker_model_name!r}"
+            )
         try:
             for r in data["results"]:
                 idx = int(r["index"])

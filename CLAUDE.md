@@ -260,8 +260,9 @@ Only `OPENAI_API_KEY` and `DATABASE_URL` are required; everything else has a wor
 | `EMBEDDING_MODEL_NAME` | `BAAI/bge-m3` | Multilingual, 1024-dim, handles Bengali (unlike the old `all-MiniLM-L6-v2`, which tokenized Bengali entirely to `[UNK]`). Changing this requires a full reindex — see below. |
 | `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Cross-encoder used only at query time (not stored in Chroma), so changing it does NOT require a reindex. |
 | `GPU_SERVICE_URL` / `GPU_API_KEY` | *(empty)* / *(empty)* | Set the URL to run embedding + reranking on `shibir-chat-gpu-service` (Modal) instead of locally — see "GPU service" below. Key is sent as `X-API-Key`. |
-| `GPU_TIMEOUT_SECONDS` / `GPU_COLD_TIMEOUT_SECONDS` | `30` / `120` | The cold timeout applies until the first successful call in the process (Modal scale-from-zero); the normal one after. |
-| `GPU_MAX_RETRIES` | `2` | Retries after the first attempt, only on connection errors / 5xx / 429. |
+| `GPU_TIMEOUT_SECONDS` / `GPU_COLD_TIMEOUT_SECONDS` | `30` / `120` | The cold timeout applies to the first call in the process and to any call more than `GPU_WARM_WINDOW_SECONDS` after the last success (Modal scale-from-zero); the normal one otherwise. |
+| `GPU_WARM_WINDOW_SECONDS` | `240` | Idle time after which the next GPU call assumes a cold container. Must stay below the service's Modal `scaledown_window` (300). |
+| `GPU_MAX_RETRIES` | `2` | Retries after the first attempt, only on connection errors / dropped connections / 5xx / 429. |
 | `CHROMA_PERSIST_DIR` | `chroma_db` | Relative to the working directory the process is started from. |
 | `CHROMA_COLLECTION_NAME` | `documents_bge_m3` | Name encodes the embedding model on purpose — changing `EMBEDDING_MODEL_NAME` without also bumping this would silently mix incompatible-dimension vectors into one collection (Chroma would just reject them with a dimension-mismatch error, which is the point). |
 | `TOP_K` | `5` | Chunks sent to the LLM after reranking. |
@@ -366,7 +367,8 @@ this, then optionally offer a general (explicitly non-book) suggestion.
 ## GPU service (`app/rag/gpu_client.py`)
 
 Embedding and reranking can run on a separate repository, `shibir-chat-gpu-service`, deployed
-on Modal. Enabled by setting `GPU_SERVICE_URL`; empty means the local CPU models. API:
+on Modal. Enabled by setting `GPU_SERVICE_URL` (e.g. `https://<workspace>--shibir-chat-gpu-service-gpuservice-web.modal.run` — no trailing path);
+empty means the local CPU models. API:
 
 - `POST /embed` `{texts[1..256], normalize, batch_size}` → `{model, dim, vectors}`
 - `POST /rerank` `{query, documents[1..200], top_k, max_length}` → `{model, results: [{index, score, prob}]}`
@@ -378,12 +380,20 @@ Contract this backend relies on (do not regress):
   `model == settings.embedding_model_name` — a different model would silently poison the
   existing Chroma index.
 - `rerank` sends slices of ≤200 docs with `max_length=1024` (same as the local CrossEncoder)
-  and `top_k=top_n`, maps indices back to the original list, merges, and returns **`prob`**
+  and `top_k=top_n`, raises `GPUServiceError` unless `model == settings.reranker_model_name`,
+  maps indices back to the original list, merges, and returns **`prob`**
   (sigmoid, 0..1) — never `score` (raw logit). `MIN_RERANK_SCORE=0.5` is tuned on sigmoid
   scores and would be meaningless against logits.
-- Only connection errors (`ConnectError`/`ConnectTimeout`/`RemoteProtocolError`), 5xx and 429
-  are retried (exponential backoff 0.5s, 1s, ...). Other 4xx and read timeouts raise
-  immediately. Request bodies and the API key are never logged.
+- Only connection errors (`ConnectError`/`ConnectTimeout`/`RemoteProtocolError`/`ReadError`/
+  `WriteError` — the last two are a connection dropped mid-request; `/embed` and `/rerank` are
+  idempotent), 5xx and 429 are retried (exponential backoff 0.5s, 1s, ...). Other 4xx and read
+  timeouts raise immediately. Request bodies and the API key are never logged.
+- Cold vs. normal timeout is decided per call from `_last_ok` (monotonic time of the last
+  success) and `gpu_warm_window_seconds`, not a once-per-process flag — after >300 s idle Modal
+  has scaled to zero again, and the short timeout would read-time-out the cold start into a 503.
+- Each `post()` is a Langfuse span `gpu:embed` / `gpu:rerank` (via `tracing.start_gpu_span` /
+  `end_gpu_span`; no-op when tracing is off or outside a request) with metadata
+  `{n_items, latency_ms, cold, attempts, status}` — never the texts.
 - GPU mode never imports torch/sentence-transformers (both are imported lazily inside
   `_model()`). torch/sentence-transformers are still in `pyproject.toml` for the local
   fallback; removing them is a separate follow-up.
@@ -487,9 +497,6 @@ every LLM call in the app into a 400.
 
 ## Known gaps / things a future change might need to address
 
-- `tests/test_query_rewriter.py` replaces `sys.modules["app.core.llm"]` with a `MagicMock`
-  and never restores it, so `tests/test_tracing.py::test_get_client_is_the_plain_openai_client_when_disabled`
-  fails in a full `uv run pytest` run (passes alone).
 - torch / sentence-transformers / `nvidia-*` are still hard dependencies even when the GPU
   service is used — dropping them (or moving them to an optional extra) is a planned follow-up.
 - `.github/workflows/deploy.yml` (triggered on push to `main`) is still a placeholder — its
