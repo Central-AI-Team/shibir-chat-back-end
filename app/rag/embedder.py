@@ -65,7 +65,9 @@ def embed_text(text: str) -> list[float]:
     return embed_texts([text])[0]
 
 
-def embed_texts(texts: list[str], batch_size: int = 16) -> list[list[float]]:
+def embed_texts(
+    texts: list[str], batch_size: int = 16, *, bulk: bool = False
+) -> list[list[float]]:
     """Embed a batch. Much faster than looping embed_text() during ingest.
 
     normalize_embeddings=True is REQUIRED -- the Chroma collection is created
@@ -73,11 +75,13 @@ def embed_texts(texts: list[str], batch_size: int = 16) -> list[list[float]]:
 
     In GPU mode `batch_size` is ignored: texts go out in slices of
     _GPU_MAX_TEXTS and the service encodes each in batches of _GPU_BATCH_SIZE.
+    `bulk=True` (ingest) gives each request at least
+    settings.gpu_bulk_timeout_seconds instead of the request-path timeout.
     """
     if not texts:
         return []
     if gpu_client.is_enabled():
-        return _embed_texts_gpu(texts)
+        return _embed_texts_gpu(texts, bulk)
     with _lock:
         return _model().encode(
             texts,
@@ -87,13 +91,15 @@ def embed_texts(texts: list[str], batch_size: int = 16) -> list[list[float]]:
         ).tolist()
 
 
-def _embed_texts_gpu(texts: list[str]) -> list[list[float]]:
+def _embed_texts_gpu(texts: list[str], bulk: bool = False) -> list[list[float]]:
+    min_timeout = settings.gpu_bulk_timeout_seconds if bulk else None
     vectors: list[list[float]] = []
     for i in range(0, len(texts), _GPU_MAX_TEXTS):
         chunk = texts[i : i + _GPU_MAX_TEXTS]
         data = gpu_client.post(
             "/embed",
             {"texts": chunk, "normalize": True, "batch_size": _GPU_BATCH_SIZE},
+            min_timeout=min_timeout,
         )
         if data.get("model") != settings.embedding_model_name:
             raise gpu_client.GPUServiceError(

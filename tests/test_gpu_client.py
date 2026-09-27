@@ -368,3 +368,14 @@ def test_gpu_span_helpers_are_noops_when_tracing_disabled(monkeypatch):
     monkeypatch.setattr(settings, "langfuse_public_key", "")
     assert tracing.start_gpu_span("gpu:embed") is None
     tracing.end_gpu_span(None, metadata={})  # must not raise
+
+
+def test_bulk_embed_gets_bulk_timeout_even_when_warm(gpu, monkeypatch, clock):
+    seen = _record_timeouts(gpu, monkeypatch)
+    monkeypatch.setattr(settings, "gpu_bulk_timeout_seconds", 300)
+
+    embedder.embed_texts(["a"])             # cold, request path
+    embedder.embed_texts(["b"], bulk=True)  # warm, but a 256-chunk ingest slice is slow
+    embedder.embed_texts(["c"])             # request path keeps the short timeout
+
+    assert seen == [120, 300, 30]
