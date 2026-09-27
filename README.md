@@ -222,7 +222,8 @@ On an upstream failure a single `error` event (`{"detail": "..."}`) is sent inst
 ### Ingesting and reindexing
 
 `uv run python -m app.rag.ingest` embeds every published page or article that is new or has
-changed since it was last embedded (tracked by `embedded_at`). Run it after content changes.
+changed since it was last embedded (tracked by `embedded_at`), and first removes the chunks of any
+row that has been unpublished or excluded since. Run it after content changes.
 
 A **full reindex** (for example after changing the embedding model) requires both deleting
 `chroma_db/` **and** resetting `embedded_at` to `NULL` in Postgres. Deleting only the directory
@@ -231,6 +232,27 @@ produces an empty index while the ingest reports success. The exact steps are in
 
 On the current corpus (about 4,100 pages, 12,000 chunks) a CPU reindex can take hours on a
 memory-constrained machine. GPU mode is much faster.
+
+### Adding a data source
+
+New content goes **loader → Postgres → ingest**. Loaders only write Postgres rows; only
+`app.rag.ingest` writes to the vector store.
+
+```bash
+# 1. Load into Postgres (new rows are drafts unless --publish; --dry-run rolls back)
+uv run python -m scripts.load_tafheem --dry-run                     # data/tafheemul_quran.db
+uv run python -m scripts.load_articles --source cs-posts --dry-run   # or --source pp-articles
+uv run python -m scripts.load_articles --source cs-posts --publish
+
+# 2. Embed whatever is new or changed
+HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
+```
+
+Each loader prints what it parsed, skipped (malformed / too short / repetitive / duplicate) and
+wrote, plus sample rows; read it before publishing. Re-running a loader is safe: rows are upserted
+on their source id and only real changes are re-embedded. `--publish` also sets the older import of
+the same source to draft. To write a new loader, follow
+[CLAUDE.md → Adding a data source](CLAUDE.md#adding-a-data-source).
 
 ### Deployment
 
@@ -249,7 +271,12 @@ usage and cost. It is off by default and cannot affect requests when on. See
 ```bash
 uv run pytest                                               # full suite, no network or models needed
 RUN_MODEL_TESTS=1 uv run pytest tests/test_bengali_embedding.py   # loads the real bge-m3 model
+TEST_DATABASE_URL=postgresql+psycopg2://user:pass@localhost:5432/shibir_chat_test uv run pytest
 ```
+
+Tests that write to Postgres (the loader tests) use `TEST_DATABASE_URL`, falling back to
+`DATABASE_URL`, and are skipped unless the database name contains `test`, so they can never touch
+the real corpus. Each runs in a rolled-back transaction.
 
 CI (`.github/workflows/ci.yml`) runs the test suite against a Postgres service on every pull
 request to `main`.
@@ -269,9 +296,10 @@ app/
   services/          qa, suggestion, note, roleplay, intent classifier, session store
   rag/               chunker, embedder, reranker, GPU client, query rewriter,
                      Chroma client, retriever, generator, ingest script
+  loaders/           raw corpus readers and text cleaning for scripts/load_*.py
   db/                SQLAlchemy models and session
   schemas/           Pydantic request/response models
-scripts/             migrations, corpus cleanup, evaluation and debugging tools
+scripts/             data loaders, migrations, corpus cleanup, evaluation and debugging tools
 tests/               pytest suite
 docs/                deployment, evaluation and tracing guides
 chroma_db/           generated vector store (not committed)
