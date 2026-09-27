@@ -11,6 +11,10 @@ CHANGES vs the original:
      when content is edited, so upsert alone leaves orphaned stale chunks
      behind that keep showing up in search results forever.
   4. Bengali header (chunker.build_document) instead of English "Book:/Chapter:".
+  5. Sweep first: rows that were embedded but are no longer eligible (set back
+     to draft, or a page flagged excluded_from_rag) get their chunks deleted
+     and embedded_at cleared. Without this, unpublishing a row -- e.g. a loader
+     superseding a legacy import -- left its chunks in retrieval forever.
 """
 
 from __future__ import annotations
@@ -63,6 +67,51 @@ def _due_articles(session):
     )
 
 
+# Rows per Chroma delete in the sweep (one `$in` filter per batch).
+_SWEEP_BATCH = 500
+
+
+def _sweep(session, collection, model, not_eligible, prefix: str) -> int:
+    """Delete the chunks of `model` rows that have chunks (embedded_at set) but
+    are no longer eligible, then clear their embedded_at.
+
+    Clearing embedded_at records "not in the index", so the next sweep skips
+    them and, if a row is published again, ingest re-embeds it (embedded_at
+    NULL = due). updated_at is written back unchanged so its onupdate doesn't
+    fire: nothing about the content changed. Chroma errors are NOT swallowed
+    (unlike _drop_stale): embedded_at is cleared only after a successful delete,
+    one committed batch at a time, so a failed run is simply resumed next time.
+    """
+    ids = [
+        row_id
+        for (row_id,) in session.query(model.id)
+        .filter(model.embedded_at.isnot(None))
+        .filter(not_eligible)
+        .order_by(model.id)
+    ]
+    for start in range(0, len(ids), _SWEEP_BATCH):
+        batch = ids[start : start + _SWEEP_BATCH]
+        collection.delete(where={"row_key": {"$in": [f"{prefix}_{i}" for i in batch]}})
+        session.query(model).filter(model.id.in_(batch)).update(
+            {model.embedded_at: None, model.updated_at: model.updated_at},
+            synchronize_session=False,
+        )
+        session.commit()
+    if ids:
+        print(f"[{prefix}] swept chunks of {len(ids)} unpublished/excluded row(s).")
+    return len(ids)
+
+
+def sweep_unpublished(session, collection) -> int:
+    """Remove from Chroma every page/article that is embedded but no longer
+    published (pages: also excluded_from_rag). Returns the number of rows swept."""
+    return _sweep(
+        session, collection, Page,
+        or_(Page.status != ContentStatus.published, Page.excluded_from_rag.is_(True)),
+        "page",
+    ) + _sweep(session, collection, Article, Article.status != ContentStatus.published, "article")
+
+
 def _drop_stale(collection, prefix: str, row_id: int) -> None:
     """Remove any existing chunks for this row before writing new ones."""
     try:
@@ -74,7 +123,7 @@ def _drop_stale(collection, prefix: str, row_id: int) -> None:
 def _flush(collection, ids, docs, metas) -> None:
     if not ids:
         return
-    collection.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=embed_texts(docs))
+    collection.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=embed_texts(docs, bulk=True))
 
 
 def _ingest(session, collection, rows, prefix: str, extract) -> int:
@@ -134,6 +183,7 @@ def ingest_all() -> None:
     collection = get_collection()
     session = SessionLocal()
     try:
+        sweep_unpublished(session, collection)
         pages = _due_pages(session)
         articles = _due_articles(session)
         print(f"{len(pages)} page(s), {len(articles)} article(s) need embedding.")
@@ -151,7 +201,9 @@ def ingest_all() -> None:
         )
         total += _ingest(
             session, collection, articles, "article",
-            lambda a: (a.title, "প্রবন্ধ", a.content, "articles", None, None),
+            # source_type ("cs-post", "pp-article", ...) rather than a flat
+            # "articles", so a citation says where the article came from.
+            lambda a: (a.title, "প্রবন্ধ", a.content, a.source_type or "articles", None, None),
         )
         print(f"All sources ingested. Total chunks: {total}")
     finally:
