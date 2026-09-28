@@ -31,13 +31,20 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "9200:9200"
+      # Host 8000 to match CONTRIBUTING.md's documented native run (plain
+      # `uvicorn app.main:app --reload`, no --port -- uvicorn defaults to
+      # 8000) and the frontend's .env.example. The container's own uvicorn
+      # still listens on 9200 (hardcoded in the Dockerfile's CMD).
+      - "8000:9200"
     volumes:
-      - chroma_db:/app/chroma_db
+      # Bind mount, not a named volume: `make ingest` still runs natively on
+      # the host (see Makefile) and writes to this same ./chroma_db -- a
+      # named volume would silently fork into a second, empty vector store
+      # invisible to this container.
+      - ./chroma_db:/app/chroma_db
       - hf_cache:/app/.cache/huggingface
       - ./data:/app/data
 
 volumes:
   pgdata:
-  chroma_db:
   hf_cache:
