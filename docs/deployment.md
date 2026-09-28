@@ -4,8 +4,14 @@ This document describes how to take Shibir Chat Back-End from the current single
 `docker-compose` setup (see repo root `Dockerfile` / `docker-compose.yml`) to a topology that
 scales horizontally. It's written from this codebase's actual architecture and actual
 constraints — not a generic "how Kubernetes works" tutorial. For request/response shapes and
-the retrieval pipeline itself, see [`PROJECT.md`](../PROJECT.md); this file is about *running
+the retrieval pipeline itself, see [`CLAUDE.md`](../CLAUDE.md); this file is about *running
 more than one instance of it reliably*.
+
+> **Status (September 2026).** Embedding and reranking can now run on the separate
+> `shibir-chat-gpu-service` on Modal (set `GPU_SERVICE_URL`; see CLAUDE.md §6). With it enabled,
+> API replicas load no models and the "models externalized" sizing below applies; step 5 of the
+> migration path is done. Sessions (Tier 2) and the vector store (Tier 3) are still the blockers
+> for running more than one replica.
 
 ## Development-stage requirements (before any of the scaling below applies)
 
@@ -35,7 +41,7 @@ replicas behind a load balancer" approach will silently break:
 | Component | Current implementation | Scales horizontally? |
 |---|---|---|
 | Chat/roleplay session state | `app/services/session_store.py` — a plain module-level `dict` | **No.** Its own docstring already says so: a session started on one worker/replica is invisible to another. Multi-worker or multi-replica today means a user's roleplay persona or conversation history randomly "disappears" mid-conversation depending on which process handles the next request. |
-| Embedding + reranker models | `app/rag/embedder.py` / `app/rag/reranker.py` — `sentence-transformers` models loaded in-process via `@lru_cache`, CPU-bound | Scales, but **expensively** — every replica loads its own full copy of `BAAI/bge-m3` (~2.2 GB) and `BAAI/bge-reranker-v2-m3` (~2 GB+), so N replicas cost N× that RAM before serving a single request. |
+| Embedding + reranker models | `app/rag/embedder.py` / `app/rag/reranker.py` — in CPU mode, `sentence-transformers` models loaded in-process via `@lru_cache`; in GPU mode, HTTP calls to the Modal service | GPU mode: **yes**, replicas hold no models. CPU mode: scales, but **expensively** — every replica loads its own full copy of `BAAI/bge-m3` (~2.2 GB) and `BAAI/bge-reranker-v2-m3` (~2 GB+), so N replicas cost N× that RAM before serving a single request. |
 | Vector store (Chroma) | `app/rag/chroma_client.py` — `chromadb.PersistentClient` writing to a local `chroma_db/` directory | **Not safely**, as-is. Chroma's persistent-client mode is not designed for multiple processes concurrently opening the same on-disk index (this has caused real corruption/contention in this project's own ingest workflow). A shared network volume mounted read-write from N replicas is not a fix — it's the same problem with extra latency. |
 | Postgres (content, source of truth) | Standard SQLAlchemy engine, `app/db/session.py` | **Yes**, this is a normal RDBMS — connection pooling and read replicas work the usual way. |
 | LLM calls (OpenAI, optionally Groq) | `app/core/llm.py`, external API calls, no local state | **Yes**, but each provider has its own rate limits that don't scale just because you added replicas — see [LLM provider layer](#tier-5-llm-provider-layer) below. |
@@ -85,8 +91,8 @@ estimated, it's called out as such.
 | Tier | vCPU | RAM | Disk | Example instance class | Notes |
 |---|---|---|---|---|---|
 | **API replica** (models in-process, Tier 1's default) | 4 | 8 GB | 15 GB | AWS `m6i.xlarge` / GCP `n2-standard-4` | RAM floor is ~6 GB just for `bge-m3` + `bge-reranker-v2-m3` + PyTorch/Chroma-client overhead (see Tier 1) — 8 GB leaves working headroom instead of running at the edge. Disk: this project's own `.venv/` with these deps is **7.9 GB measured** on Linux, plus ~2.8 GB for the two cached HF models (per `README.md`) — 15 GB comfortably covers the venv + models + container image + logs. CPU-bound on rerank, not I/O-bound — don't undersize vCPU to save cost here. |
-| **API replica** (models externalized to Tier 5's inference service) | 1–2 | 1–2 GB | 2 GB | AWS `t3.small`/`t3.medium` | Once the embedder/reranker live in a separate service, an API pod is a thin FastAPI/httpx layer — this is the payoff of doing that split. |
-| **Embedding + reranker inference service** (if split out per Tier 5) | 4–8 (CPU) or 1× small GPU | 8–12 GB | 8 GB | CPU: AWS `c6i.2xlarge`; GPU: AWS `g4dn.xlarge` (T4) | A GPU meaningfully speeds up both bi-encoder embedding and cross-encoder reranking under sustained load; CPU-only is fine at the traffic levels a single-digit number of API replicas would generate. Only worth deploying once you've actually made the Tier 5 split — don't provision this ahead of needing it. |
+| **API replica** (GPU mode: models on the Modal GPU service) | 1–2 | 1–2 GB | 2 GB | AWS `t3.small`/`t3.medium` | Once the embedder/reranker live in a separate service, an API pod is a thin FastAPI/httpx layer — this is the payoff of doing that split. |
+| **Embedding + reranker inference service** (self-hosted alternative to the Modal GPU service) | 4–8 (CPU) or 1× small GPU | 8–12 GB | 8 GB | CPU: AWS `c6i.2xlarge`; GPU: AWS `g4dn.xlarge` (T4) | A GPU meaningfully speeds up both bi-encoder embedding and cross-encoder reranking under sustained load; CPU-only is fine at the traffic levels a single-digit number of API replicas would generate. Only relevant if you move off Modal; the current GPU service scales to zero and needs no provisioning here. |
 | **Vector store — Chroma server** (Tier 3, Option A) | 2 | 2–4 GB | 10 GB, scale with corpus | AWS `t3.medium`/`m6i.large` | **Measured on this project's current corpus**: 12,304 chunks (~900 chars each, `bge-m3`'s 1024-dim vectors) occupy **386 MB** on disk — roughly 31 KB/chunk including the HNSW index and stored text. At this scale the vector-store tier is genuinely cheap; re-budget disk as `chunk_count × ~35 KB` (with headroom) if the corpus grows by an order of magnitude, and re-check after any chunk-size change in `app/rag/chunker.py` (chunk size directly changes chunk count for the same corpus). |
 | **Vector store — pgvector** (Tier 3, Option B, same Postgres) | — | — | add ~35 KB/chunk to the Postgres disk estimate below | — | No separate tier — sizing folds into the Postgres row. |
 | **Postgres** (managed) | 2 | 4 GB | 20 GB+, corpus-dependent | AWS RDS `db.t3.medium` / GCP Cloud SQL equivalent | Book/chapter/page content itself is text, not the bottleneck here — size mainly for connection count (pooled via PgBouncer, see Tier 4) and, if chosen, pgvector's addition above. |
@@ -112,7 +118,7 @@ or `nginx`/`traefik` if self-hosting), with:
   `run_in_threadpool` (see `router.py`) — under load this saturates a pod's CPU well before
   memory does.
 - **Size each replica for ~6 GB minimum RAM** while the embedder/reranker still run in-process
-  (see [Tier 5](#tier-5-embeddingreranker-inference) for the alternative). This is not a
+  (or enable GPU mode, which removes the models from the replica entirely). This is not a
   theoretical number — `bge-m3` (~2.2 GB) + `bge-reranker-v2-m3` (~2 GB) + PyTorch/Chroma
   client overhead has been directly observed to cause OOM kills on boxes with less headroom
   than that, even for a single instance.
@@ -247,7 +253,7 @@ Two things that matter operationally, not just architecturally:
   separately from the primary one, and have a fallback (e.g., `model_by_task` defaulting back
   to `settings.openai_model` on repeated failures) rather than letting `/chat` 503 whenever the
   cheap tier is saturated.
-- `router.py` already converts an `openai.APIError` into a clean `503` rather than a bare
+- `router.py` already converts an `openai.APIError` (and a GPU-service `GPUServiceError`) into a clean `503` rather than a bare
   `500` — extend that same treatment to whatever exception a second provider's client raises,
   so a Groq outage/rate-limit doesn't look like an unhandled server bug to callers.
 
@@ -295,10 +301,9 @@ Do these in order — each is independently shippable and leaves the system in a
    from step 2 and is the point at which ingest can safely run without any coordination with
    live API traffic.
 4. **Move Postgres to a managed instance with pooling** (Tier 4) if not already there.
-5. **(Optional, cost-driven) Extract embedding+rerank into a dedicated inference service** —
-   only worth doing once API-replica count is high enough that N-times-model-RAM is a real
-   cost line item; until then, keeping models in-process (Tier 1) is simpler and has one fewer
-   network hop per request.
+5. **Done: embedding and reranking moved to a dedicated inference service.** They run on
+   `shibir-chat-gpu-service` (Modal) when `GPU_SERVICE_URL` is set, so API replicas no longer
+   carry ~4.5 GB of models each. CPU mode remains available as a fallback.
 
-Steps 1–3 are what actually fix horizontal scaling; 4–5 are efficiency/cost refinements on top
-of a topology that already scales.
+Steps 1–3 are what actually fix horizontal scaling; step 4 is an efficiency refinement, and
+step 5 is already in place.

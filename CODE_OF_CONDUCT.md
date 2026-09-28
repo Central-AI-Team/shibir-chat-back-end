@@ -1,44 +1,54 @@
-# Code of Conduct — shibir-chat-back-end
+# Code of Conduct
 
-This is an internal team project. This document sets basic expectations for how we work together, communicate, and handle disagreements.
+This is an internal team project. This document sets out how we work together, communicate and
+resolve disagreements, so that everyone can do their best work.
 
-## Our Standards
+## Our standards
 
-**Expected behavior:**
-- Be respectful and professional in code reviews, comments, and discussions
-- Give constructive feedback — focus on the code/approach, not the person
-- Be open to feedback on your own work without taking it personally
-- Communicate blockers, delays, or mistakes early instead of hiding them
-- Respect each other's time — keep PRs/issues clear and reviews timely
-- Ask questions when something is unclear rather than guessing silently
+We expect everyone involved in the project to:
 
-**Unacceptable behavior:**
-- Personal attacks, insults, or dismissive comments toward a teammate or their work
-- Harassment of any kind (based on gender, religion, background, or otherwise)
-- Deliberately submitting broken, untested, or unreviewed code to `main`
-- Ignoring feedback repeatedly without discussion
-- Taking credit for someone else's work
-- Sharing project code, credentials, or client data outside the team without permission
+- be respectful and professional in code reviews, comments and discussions;
+- give constructive feedback that addresses the code or the approach, not the person;
+- accept feedback on their own work openly;
+- raise blockers, delays and mistakes early rather than hiding them;
+- respect each other's time, with clear pull requests and issues and timely reviews;
+- ask when something is unclear instead of guessing;
+- credit others for their work and ideas.
+
+The following are not acceptable:
+
+- personal attacks, insults, or dismissive remarks about a teammate or their work;
+- harassment of any kind, including on the basis of gender, religion, ethnicity, background or
+  any other personal characteristic;
+- knowingly merging broken, untested or unreviewed code into `main`;
+- repeatedly ignoring review feedback without discussion;
+- taking credit for someone else's work;
+- sharing project code, credentials, user data or content outside the team without permission.
 
 ## Scope
 
-This applies to all project spaces: GitHub (issues, PRs, comments, commits), the team tracksheet, and any project-related communication channel (chat, calls, etc.).
+This code applies in every project space: GitHub (issues, pull requests, reviews, commits), the
+team tracksheet, and any chat, call or meeting about the project.
 
-## Handling Disagreements
+## Resolving disagreements
 
-- Technical disagreements should be resolved with reasoning and evidence (benchmarks, eval results, documentation) — not by seniority alone
-- If two people can't agree on an approach after discussion, escalate to Safaet for a final decision
-- Disagreements should stay focused on the work, not become personal
+- Settle technical disagreements with reasoning and evidence such as evaluation results,
+  benchmarks and documentation, not seniority alone.
+- If the people involved cannot agree after discussion, Safaet makes the final decision.
+- Keep disagreements about the work, never personal.
 
-## Reporting Issues
+## Reporting
 
-If someone's behavior in this project makes you uncomfortable or is disrupting the work, raise it directly with Safaet. It will be handled privately and fairly.
+If someone's behaviour makes you uncomfortable or disrupts the work, raise it privately with
+Safaet. Reports are handled confidentially and fairly. If the concern involves Safaet, raise it
+with the organization's leadership instead.
 
-## Consequences
+## Enforcement
 
-- First instance: a direct, private conversation about the issue
-- Repeated or serious violations: may affect continued involvement in the project, at Safaet's discretion
+Safaet Jaman Arman is responsible for clarifying and enforcing these standards.
 
-## Enforcement Responsibility
+1. **First instance:** a private conversation about the issue and how to avoid it.
+2. **Repeated or serious violations:** further action, which may include removal from the
+   project, at the maintainer's discretion.
 
-Safaet Jaman Arman is responsible for clarifying and enforcing these standards, and will handle any reported concerns fairly and consistently.
+Serious violations such as harassment or leaking credentials or user data may skip step 1.

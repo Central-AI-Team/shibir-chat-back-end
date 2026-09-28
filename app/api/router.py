@@ -37,6 +37,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core import tracing
 from app.core.config import settings
+from app.rag.gpu_client import GPUServiceError
 from app.rag.generator import stream_answer
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import (
@@ -141,11 +142,11 @@ async def chat(body: ChatRequest) -> ChatResponse:
             else:  # QA
                 qa_response = await run_in_threadpool(answer_question, message)
                 answer, sources = qa_response.answer, qa_response.sources
-        except APIError as e:
-            # Retrieval/classification succeeded but the LLM call failed (quota,
-            # bad key, upstream outage, ...). Surface as a clean 503 instead of
-            # a bare 500 -- the client should retry, not treat this like a
-            # malformed request.
+        except (APIError, GPUServiceError) as e:
+            # An upstream dependency failed: the LLM call (quota, bad key,
+            # outage, ...) or the external GPU embed/rerank service. Surface
+            # as a clean 503 instead of a bare 500 -- the client should retry,
+            # not treat this like a malformed request.
             trace_error = True
             raise HTTPException(status_code=503, detail=_LLM_UNAVAILABLE_DETAIL) from e
 
@@ -277,7 +278,7 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
                     # single token event so the client renders them uniformly.
                     yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
                     yield _sse("token", {"text": answer})
-            except APIError:
+            except (APIError, GPUServiceError):
                 trace_error = True
                 yield _sse("error", {"detail": _LLM_UNAVAILABLE_DETAIL})
                 return
