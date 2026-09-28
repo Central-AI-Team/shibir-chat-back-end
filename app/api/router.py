@@ -27,6 +27,7 @@ single-worker deployment; a shared store (Redis / DB) is the upgrade path.
 from __future__ import annotations
 
 import json
+import logging
 import random
 import time
 
@@ -50,7 +51,7 @@ from app.services.intent_classifier import classify_intent
 from app.services.note_service import generate_book_notes_from_text
 from app.services.qa_service import (
     _CONVERSATIONAL_REPLIES,
-    _is_conversational,
+    _conversational_category,
     answer_question,
 )
 from app.services.roleplay_service import handle_roleplay
@@ -64,9 +65,12 @@ from app.services.session_store import (
 )
 from app.services.suggestion_service import give_suggestion
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 _LLM_UNAVAILABLE_DETAIL = "উত্তর তৈরির সার্ভিস সাময়িকভাবে অনুপলব্ধ। কিছুক্ষণ পর আবার চেষ্টা করুন।"
+_UNEXPECTED_ERROR_DETAIL = "একটি অপ্রত্যাশিত সমস্যা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।"
 
 
 def _format_note_result(result: dict) -> str:
@@ -202,8 +206,9 @@ def _qa_stream(
     # Same cheap deterministic small-talk shortcut as answer_question: a
     # greeting has nothing to retrieve against, so answer it directly with
     # no retriever / LLM call.
-    if _is_conversational(message):
-        return [], iter([random.choice(_CONVERSATIONAL_REPLIES)])
+    category = _conversational_category(message)
+    if category is not None:
+        return [], iter([random.choice(_CONVERSATIONAL_REPLIES[category])])
 
     # The `retrieve-context` span is emitted inside retrieve_stages().
     citations = retrieve_relevant_docs(message)
@@ -280,6 +285,17 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
             except APIError:
                 trace_error = True
                 yield _sse("error", {"detail": _LLM_UNAVAILABLE_DETAIL})
+                return
+            except Exception:
+                # Anything else (DB, retriever, reranker, a bug) reaching this
+                # point is after the SSE response has already started (200 OK
+                # headers sent), so raising would just drop the connection --
+                # the client sees an opaque browser-level network error with
+                # no explanation. Emit a real error event instead, and log
+                # the traceback server-side since the client never sees it.
+                trace_error = True
+                logger.exception("chat_stream_unexpected_error query=%r", message)
+                yield _sse("error", {"detail": _UNEXPECTED_ERROR_DETAIL})
                 return
 
             if was_roleplaying and intent != "ROLEPLAY":

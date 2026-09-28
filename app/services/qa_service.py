@@ -63,34 +63,66 @@ _FAREWELL_RE = re.compile(
     r"^(?:বিদায়|আল্লাহ্?\s*হাফেজ|খোদা\s*হাফেজ|ভালো\s+থাকবেন|টাটা|বাই|"
     r"bidae|allah\s*hafez|khoda\s*hafez|tata|bye)\b"
 )
-_CONVERSATIONAL_PATTERNS = (_GREETING_RE, _WELLBEING_RE, _THANKS_RE, _FAREWELL_RE)
-
-_CONVERSATIONAL_REPLIES = (
-    "আসসালামু আলাইকুম! আমি ভালো আছি, আপনাকে ধন্যবাদ। বই সম্পর্কিত কোনো প্রশ্ন থাকলে জিজ্ঞাসা করতে পারেন।",
-    "জি, আলহামদুলিল্লাহ ভালো আছি। আপনার জন্য কী সাহায্য করতে পারি?",
-    "আপনাকেও ধন্যবাদ! বইয়ের কোনো বিষয়ে জানতে চাইলে বলুন।",
-    "আল্লাহ হাফেজ! প্রয়োজন হলে আবার প্রশ্ন নিয়ে আসবেন।",
+# Order doesn't affect matching here (each pattern is disjoint), but keeping
+# it paired with a category name is what lets us pick a reply from the RIGHT
+# bucket below instead of the old flat any-of-four-categories random.choice,
+# which used to let a "hi" draw a farewell reply.
+_CONVERSATIONAL_PATTERNS = (
+    ("GREETING", _GREETING_RE),
+    ("WELLBEING", _WELLBEING_RE),
+    ("THANKS", _THANKS_RE),
+    ("FAREWELL", _FAREWELL_RE),
 )
 
+_CONVERSATIONAL_REPLIES = {
+    "GREETING": (
+        "আসসালামু আলাইকুম! বই সম্পর্কিত কোনো প্রশ্ন থাকলে জিজ্ঞাসা করতে পারেন।",
+        "ওয়ালাইকুম আসসালাম! আপনার জন্য কী সাহায্য করতে পারি?",
+    ),
+    "WELLBEING": (
+        "জি, আলহামদুলিল্লাহ ভালো আছি। আপনার জন্য কী সাহায্য করতে পারি?",
+        "আলহামদুলিল্লাহ, ভালো আছি। বইয়ের কোনো বিষয়ে জানতে চাইলে বলুন।",
+    ),
+    "THANKS": (
+        "আপনাকেও ধন্যবাদ! বইয়ের কোনো বিষয়ে জানতে চাইলে বলুন।",
+        "আপনাকে স্বাগতম। আর কিছু জানতে চাইলে বলুন।",
+    ),
+    "FAREWELL": (
+        "আল্লাহ হাফেজ! প্রয়োজন হলে আবার প্রশ্ন নিয়ে আসবেন।",
+        "খোদা হাফেজ! ভালো থাকবেন।",
+    ),
+}
 
-def _is_conversational(query: str) -> bool:
+
+def _conversational_category(query: str) -> str | None:
     normalized = query.strip().lower().strip(" .!?,।-")
     # A real book question can still open with a greeting word ("হ্যালো,
     # তৃতীয় অধ্যায়ে কী লেখা আছে?"), so only short pleasantries are treated
     # as small talk -- anything longer than a handful of words falls through
     # to normal retrieval instead.
     if len(normalized.split()) > 6:
-        return False
-    return any(p.search(normalized) for p in _CONVERSATIONAL_PATTERNS)
+        return None
+    for category, pattern in _CONVERSATIONAL_PATTERNS:
+        if pattern.search(normalized):
+            return category
+    return None
+
+
+def _is_conversational(query: str) -> bool:
+    return _conversational_category(query) is not None
 
 
 def answer_question(query: str) -> QueryResponse:
     start = time.perf_counter()
 
-    if _is_conversational(query):
-        answer = random.choice(_CONVERSATIONAL_REPLIES)
+    category = _conversational_category(query)
+    if category is not None:
+        answer = random.choice(_CONVERSATIONAL_REPLIES[category])
         response_time_ms = round((time.perf_counter() - start) * 1000, 2)
-        logger.info("conversational_shortcut query=%r in %.2fms", query, response_time_ms)
+        logger.info(
+            "conversational_shortcut query=%r category=%s in %.2fms",
+            query, category, response_time_ms,
+        )
         return QueryResponse(
             query=query, answer=answer, sources=[], response_time_ms=response_time_ms
         )
