@@ -110,8 +110,11 @@ def _is_cold() -> bool:
     return _last_ok is None or _monotonic() - _last_ok > settings.gpu_warm_window_seconds
 
 
-def post(path: str, json: dict) -> dict:
+def post(path: str, json: dict, *, min_timeout: float | None = None) -> dict:
     """POST `json` to the GPU service and return the decoded JSON response.
+
+    `min_timeout` raises the per-attempt timeout for calls known to be slow
+    (bulk ingest embeds); the cold/warm choice still applies when it is higher.
 
     Raises GPUServiceError after the final failed attempt.
     """
@@ -122,7 +125,7 @@ def post(path: str, json: dict) -> dict:
     outcome: dict = {"attempts": 0, "status": None}
     error = True
     try:
-        data = _post(path, json, outcome)
+        data = _post(path, json, outcome, min_timeout)
         error = False
         return data
     finally:
@@ -139,7 +142,7 @@ def post(path: str, json: dict) -> dict:
         )
 
 
-def _post(path: str, json: dict, outcome: dict) -> dict:
+def _post(path: str, json: dict, outcome: dict, min_timeout: float | None = None) -> dict:
     global _last_ok
     client = _get_client()
     headers = {"X-API-Key": settings.gpu_api_key}
@@ -149,6 +152,8 @@ def _post(path: str, json: dict, outcome: dict) -> dict:
     for attempt in range(attempts):
         outcome["attempts"] = attempt + 1
         timeout = settings.gpu_cold_timeout_seconds if _is_cold() else settings.gpu_timeout_seconds
+        if min_timeout is not None:
+            timeout = max(timeout, min_timeout)
         try:
             resp = client.post(path, json=json, headers=headers, timeout=timeout)
         except _RETRYABLE_TRANSPORT_ERRORS as e:

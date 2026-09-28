@@ -88,6 +88,11 @@ app/
                           numbered excerpts (§4).
     ingest.py             `uv run python -m app.rag.ingest`. Embeds published pages/articles
                           from Postgres into Chroma (§9).
+  loaders/                Raw corpus file -> clean text, standard library only; used by
+                          scripts/load_*.py (§9 "Adding a data source"). Ported from
+                          shibir-chat-gpu-service/ingestion/.
+    text.py               html_to_text, drop_repeated_sentences, is_repetitive, _fingerprint.
+    sources.py            iter_mysql_values (MySQL dump rows), read_cs_posts, read_pp_articles.
   db/
     models.py             SQLAlchemy models: Category, Book, Chapter, Page, Article (§3).
     session.py            SessionLocal and engine, bound to settings.database_url.
@@ -108,6 +113,8 @@ scripts/                  Migrations, corpus cleanup, evaluation and debugging t
                                   source_metadata to articles.
   clean_corpus.py                 Soft-excludes flagged pages (§3).
   dedupe_pages.py                 Flags byte-identical duplicate pages.
+  load_tafheem.py                 data/tafheemul_quran.db -> pages, one per ayah (§9).
+  load_articles.py                data/{pp-articles,cs-posts}-*.sql -> articles (§9).
 tests/                    pytest suite; no network or real models by default (§11).
 docs/                     deployment.md, evaluation.md, tracing.md.
 chroma_db/                Generated vector store, git-ignored. Deleting it is only half of
@@ -134,6 +141,8 @@ idempotent. The running app does not read them.
 
 - `row_key` (`f"{prefix}_{row.id}"`) is what `ingest.py` deletes by before re-upserting a row,
   and the unit of relevance in the evaluation sets.
+- `source_db` is `Page.source_db` for pages and `Article.source_type` (e.g. `cs-post`,
+  `pp-article`) for articles; chunks embedded before that change say `articles`.
 - `book_id` and `category` let the retriever tell apart different books with the same display
   name (for example book ids 173 and 210 are both "কর্মপদ্ধতি"); the category is appended to the
   citation.
@@ -227,7 +236,9 @@ Contract this back-end relies on (do not regress):
 - **Timeouts:** chosen per call. A call uses `gpu_cold_timeout_seconds` if it is the first in
   the process or more than `gpu_warm_window_seconds` after the last success; otherwise
   `gpu_timeout_seconds`. It is not a once-per-process flag: Modal scales to zero after 300 s
-  idle, and a short timeout on a cold start would surface as a 503.
+  idle, and a short timeout on a cold start would surface as a 503. Ingest calls
+  `embed_texts(..., bulk=True)`, which raises the floor to `gpu_bulk_timeout_seconds`: a
+  256-chunk `/embed` can exceed the 30 s warm timeout even on a warm container.
 - **Errors:** `router.py` maps `GPUServiceError` to the same Bengali 503 used for LLM failures,
   and to an SSE `error` event on `/chat/stream`.
 - **Tracing:** each `post()` is a Langfuse span `gpu:embed` / `gpu:rerank` with
@@ -314,6 +325,11 @@ books do not cover the topic and then, optionally, offer clearly labelled genera
 
 `uv run python -m app.rag.ingest`:
 
+0. **sweeps** first: every page/article that still has chunks (`embedded_at` set) but is no longer
+   eligible (not published, or a page with `excluded_from_rag`) gets its chunks deleted by
+   `row_key` and `embedded_at` cleared (`updated_at` untouched). Republishing such a row later
+   makes it due again. Chroma errors abort the run rather than being swallowed; `embedded_at` is
+   cleared only per successfully deleted batch, so the next run resumes;
 1. selects published, non-excluded pages and published articles where
    `embedded_at IS NULL OR updated_at > embedded_at`;
 2. chunks each row and prefixes each chunk with a Bengali `বই:` / `অধ্যায়:` header;
@@ -347,6 +363,48 @@ HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
 The current corpus (4,143 published pages, 0 articles) produces about 12,000 chunks. On CPU this
 takes hours on a memory-constrained machine; in GPU mode it is much faster. Never run ingest while
 another process (an evaluation script, a second ingest) has the same `chroma_db/` open.
+
+### Adding a data source
+
+Content always flows **loader → Postgres → `uv run python -m app.rag.ingest`**. Postgres is the
+single source of truth and `ingest.py` is the only code that writes to Chroma; a loader never
+embeds or touches `chroma_db/`.
+
+A loader (`scripts/load_<name>.py`) should:
+
+1. read the raw file with a reader in `app/loaders/` (standard library only);
+2. clean it (`html_to_text`, `drop_repeated_sentences`) and skip junk (`is_repetitive`, too short,
+   exact duplicates of published rows via `_fingerprint`);
+3. upsert on a stable provenance key — `(source_db, source_page_id)` for pages,
+   `(source_type, source_ref)` for articles — assigning a column only when its value changed, so
+   `updated_at` (and so re-embedding) moves only for real edits;
+4. insert as draft unless `--publish`, and support `--dry-run` (roll back);
+5. keep the Postgres work in a function that takes a session, so tests can run it on the test DB.
+
+Existing loaders:
+
+| Loader | Source | Rows |
+|---|---|---|
+| `scripts.load_tafheem [--db] [--publish] [--dry-run]` | `data/tafheemul_quran.db` (reads only `alquran`, `expl`, `vumika_sura`, `surah_name`) | Book "তাফহীমুল কুরআন" in category "কুরআন ও তাফসীর"; one chapter per sura; page `sura*1000` = introduction, page `sura*1000+ayah` = translation + that ayah's footnotes; `source_db="tafheem"` |
+| `scripts.load_articles --source pp-articles\|cs-posts [--sql] [--publish] [--dry-run]` | `data/pp-articles-modified.sql`, `data/cs-posts-modified.sql` | `articles` with `source_type` `pp-article` / `cs-post`, `source_ref` = original id |
+
+Tafheem footnote numbers restart in every sura, so footnotes are joined on `(sura_id, expl_id)`,
+never `expl_id` alone; a negative `expl_id` is a "(ক)" sub-note. Both loaders print what they
+could not match or skipped — read that output before publishing.
+
+**Superseding the legacy imports.** These three sources were first imported outside this repo as
+`pages.source_db = 'tafheemul_quran'` (several ayahs per page) and articles with `source_type`
+`chhatrasangbad_post` / `persxpect_article`. `--publish` sets those legacy rows to draft (only the
+ids present in the file, for articles) instead of deleting them, and legacy rows are never used as
+dedupe targets. The next ingest's sweep removes their chunks from Chroma.
+
+Typical run:
+
+```bash
+uv run python -m scripts.load_articles --source cs-posts --dry-run   # read the report
+uv run python -m scripts.load_articles --source cs-posts --publish
+HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
+```
 
 ## 10. Tracing (`app/core/tracing.py`)
 
@@ -411,6 +469,7 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 |---|---|---|
 | `GPU_SERVICE_URL` / `GPU_API_KEY` | *(empty)* | Setting the URL enables GPU mode. The key is sent as `X-API-Key`. |
 | `GPU_TIMEOUT_SECONDS` / `GPU_COLD_TIMEOUT_SECONDS` | `30` / `120` | Warm and cold-start timeouts. |
+| `GPU_BULK_TIMEOUT_SECONDS` | `300` | Minimum timeout for ingest's bulk `/embed` calls. |
 | `GPU_WARM_WINDOW_SECONDS` | `240` | Idle time after which the next call is treated as cold. Keep it below the service's Modal `scaledown_window` (300). |
 | `GPU_MAX_RETRIES` | `2` | Retries after the first attempt, for retryable failures only. |
 
@@ -441,7 +500,10 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 - **Run tests:** `uv run pytest`. No network or real models are needed.
   `tests/test_bengali_embedding.py` loads the real bge-m3 model and runs only with
   `RUN_MODEL_TESTS=1`. GPU-mode tests use `httpx.MockTransport`. Tests that patch `sys.modules`
-  or module globals must restore them on teardown.
+  or module globals must restore them on teardown. Tests using the `db_session` fixture
+  (`tests/conftest.py`; loader tests) run on `TEST_DATABASE_URL`, else `DATABASE_URL`, and are
+  **skipped unless the database name contains `test`** — locally `DATABASE_URL` is the real
+  corpus. Each test runs in a transaction that is rolled back.
 - **Smoke test** after any retrieval, gate or prompt change, using `POST /chat`:
   1. an on-topic question in Bengali script: expect `mode: "qa"` and populated `sources`;
   2. the same question in Banglish: expect the same sources, not an empty or weak result;

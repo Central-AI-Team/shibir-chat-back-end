@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     # Must stay below the service's Modal scaledown_window (300s): past this
     # much idle time the container may be gone, so assume a cold start.
     gpu_warm_window_seconds: float = 240
+    # Floor for bulk /embed calls (ingest: 256 full ~900-char chunks per
+    # request). The 30s warm timeout is sized for request-path calls of a
+    # handful of short queries; a full ingest slice read-timed-out under it on
+    # 2026-09-27 even though the container was warm.
+    gpu_bulk_timeout_seconds: float = 300
     # Retries after the first attempt, only on connection errors / 5xx / 429.
     gpu_max_retries: int = 2
 
