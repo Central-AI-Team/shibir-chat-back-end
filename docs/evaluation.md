@@ -69,7 +69,6 @@ To extend the labelled set:
 | Script | Purpose |
 |---|---|
 | `debug_pipeline` | Walks one query through every stage (normalize, intent, rewrite, embed, retrieve, rerank, gate, answer) and prints the intermediate results. |
-| `run_rewriter` | Interactive tester for `expand_query()`. |
 
 ## Lessons learned
 

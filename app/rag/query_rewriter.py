@@ -12,7 +12,7 @@ Public API:
     _reset_fallback_count() -> None
 
 `detect_language()` and its helpers are kept as standalone utilities (used by
-scripts/run_rewriter.py for display, and tested directly) -- they are no
+scripts/debug_pipeline.py for display, and tested directly) -- they are no
 longer used inside expand_query() itself.
 """
 
