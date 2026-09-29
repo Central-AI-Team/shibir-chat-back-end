@@ -132,20 +132,38 @@ async def chat(body: ChatRequest) -> ChatResponse:
     trace_error = False
     try:
         try:
-            # classify_intent can fall back to an LLM call, so it goes through
-            # the threadpool the same as the dispatch branches below.
-            intent = await run_in_threadpool(classify_intent, message, was_roleplaying)
+            # Small talk (greetings/thanks/farewells) is checked before the
+            # intent classifier, not after: classify_intent() can fall back to
+            # an LLM call for anything its own regexes miss, and a plain
+            # "thank you" doesn't match any of them. Checking here first means
+            # small talk gets an instant canned reply with no LLM call at all,
+            # instead of only being caught downstream inside answer_question()
+            # after already paying for an intent-classification round trip.
+            # Skipped while an active roleplay is in progress, so an in-session
+            # "thank you" still gets handled by classify_intent()'s
+            # roleplay-continuation / exit-phrase logic instead of breaking
+            # character.
+            category = None if was_roleplaying else _conversational_category(message)
+            if category is not None:
+                intent = "QA"
+                answer = random.choice(_CONVERSATIONAL_REPLIES[category])
+                sources = []
+                tracing.record_intent(intent, method="conversational_shortcut")
+            else:
+                # classify_intent can fall back to an LLM call, so it goes through
+                # the threadpool the same as the dispatch branches below.
+                intent = await run_in_threadpool(classify_intent, message, was_roleplaying)
 
-            if intent == "NOTE":
-                result = await run_in_threadpool(generate_book_notes_from_text, message)
-                answer = _format_note_result(result)
-            elif intent == "ROLEPLAY":
-                answer = await run_in_threadpool(handle_roleplay, message, session)
-            elif intent == "SUGGESTION":
-                answer, sources = await run_in_threadpool(give_suggestion, message)
-            else:  # QA
-                qa_response = await run_in_threadpool(answer_question, message)
-                answer, sources = qa_response.answer, qa_response.sources
+                if intent == "NOTE":
+                    result = await run_in_threadpool(generate_book_notes_from_text, message)
+                    answer = _format_note_result(result)
+                elif intent == "ROLEPLAY":
+                    answer = await run_in_threadpool(handle_roleplay, message, session)
+                elif intent == "SUGGESTION":
+                    answer, sources = await run_in_threadpool(give_suggestion, message)
+                else:  # QA
+                    qa_response = await run_in_threadpool(answer_question, message)
+                    answer, sources = qa_response.answer, qa_response.sources
         except (APIError, GPUServiceError) as e:
             # An upstream dependency failed: the LLM call (quota, bad key,
             # outage, ...) or the external GPU embed/rerank service. Surface
@@ -260,29 +278,40 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
         trace_error = False
         try:
             try:
-                intent = classify_intent(message, was_roleplaying)
-
-                if intent == "QA":
-                    sources, deltas = _qa_stream(
-                        message, trace_id=trace_id, parent_observation_id=parent_observation_id
-                    )
-                    yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
-                    for delta in deltas:
-                        answer += delta
-                        yield _sse("token", {"text": delta})
-                else:
-                    if intent == "NOTE":
-                        answer = _format_note_result(generate_book_notes_from_text(message))
-                        sources = []
-                    elif intent == "ROLEPLAY":
-                        answer = handle_roleplay(message, session)
-                        sources = []
-                    else:  # SUGGESTION
-                        answer, sources = give_suggestion(message)
-                    # These paths produce a whole answer at once -- emit it as a
-                    # single token event so the client renders them uniformly.
-                    yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
+                # See the matching comment in chat() above: checked before
+                # classify_intent() so small talk never pays for an LLM call.
+                category = None if was_roleplaying else _conversational_category(message)
+                if category is not None:
+                    intent = "QA"
+                    answer = random.choice(_CONVERSATIONAL_REPLIES[category])
+                    sources = []
+                    tracing.record_intent(intent, method="conversational_shortcut")
+                    yield _sse("sources", {"sources": []})
                     yield _sse("token", {"text": answer})
+                else:
+                    intent = classify_intent(message, was_roleplaying)
+
+                    if intent == "QA":
+                        sources, deltas = _qa_stream(
+                            message, trace_id=trace_id, parent_observation_id=parent_observation_id
+                        )
+                        yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
+                        for delta in deltas:
+                            answer += delta
+                            yield _sse("token", {"text": delta})
+                    else:
+                        if intent == "NOTE":
+                            answer = _format_note_result(generate_book_notes_from_text(message))
+                            sources = []
+                        elif intent == "ROLEPLAY":
+                            answer = handle_roleplay(message, session)
+                            sources = []
+                        else:  # SUGGESTION
+                            answer, sources = give_suggestion(message)
+                        # These paths produce a whole answer at once -- emit it as a
+                        # single token event so the client renders them uniformly.
+                        yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
+                        yield _sse("token", {"text": answer})
             except (APIError, GPUServiceError):
                 trace_error = True
                 yield _sse("error", {"detail": _LLM_UNAVAILABLE_DETAIL})

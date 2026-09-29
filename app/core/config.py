@@ -5,6 +5,8 @@ CHANGED defaults:
   top_k                 3 -> 5
 NEW:
   reranker_model_name, fetch_k, min_similarity, min_rerank_score
+  use_bm25, bm25_fetch_k, bm25_rebuild_interval_seconds (hybrid retrieval,
+  app/rag/bm25_index.py)
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -156,6 +158,44 @@ class Settings(BaseSettings):
     # TUNE THIS with scripts/tune_threshold.py once you have ~30 real questions
     # -- too high refuses valid questions, too low hallucinates from noise.
     min_rerank_score: float = 0.5
+
+    # In-process cache of full retrieval results (embed + Chroma search +
+    # merge/filter + rerank -- see app/rag/retriever.py), keyed on the
+    # TRANSLATED query (expand_query's output), so "namaz koto rakat" and
+    # "নামায কত রাকাত" -- which both translate to the same canonical Bengali
+    # string -- share one entry instead of two. Repeated questions skip
+    # straight to generation. TTL-bounded, not indefinite: app/rag/ingest.py
+    # runs as a separate process with no signal back to a running server, so
+    # a TTL bounds how long a stale result for an edited/removed page can
+    # survive after a reingest. Set either to 0 to disable the cache.
+    retrieval_cache_maxsize: int = 2048
+    retrieval_cache_ttl_seconds: float = 1800  # 30 min
+
+    # --- Hybrid retrieval: BM25 lexical search (app/rag/bm25_index.py) ----
+    # Dense (bge-m3) search finds passages that MEAN the same thing as the
+    # question, but under-ranks exact names and numbers -- Quran sura names,
+    # verse/ayah numbers, hijri years, rare technical terms. BM25 is the
+    # classic complement: pure keyword/term-frequency matching. See
+    # app/rag/bm25_index.py's module docstring for why, with corpus examples.
+    use_bm25: bool = True
+
+    # How many chunks BM25's own ranking contributes to the pre-rerank
+    # candidate pool -- same budget as fetch_k on the dense side. The two
+    # ranked lists are combined with Reciprocal Rank Fusion
+    # (retriever.py's _rrf_fuse) and the UNION is still truncated to fetch_k
+    # before reranking, so turning BM25 on changes WHICH fetch_k candidates
+    # reach the cross-encoder, never how many -- reranking cost does not
+    # grow. The cross-encoder and min_rerank_score gate are completely
+    # unchanged, so a coincidental keyword match still has to clear the same
+    # relevance bar dense candidates always did before the LLM ever sees it.
+    bm25_fetch_k: int = 25
+
+    # How long a built BM25 index is trusted before the next search rebuilds
+    # it from Chroma. Same trade-off as retrieval_cache_ttl_seconds above:
+    # app/rag/ingest.py runs as a separate process with no signal back to a
+    # running server, so nothing else tells this in-process index that
+    # content changed underneath it.
+    bm25_rebuild_interval_seconds: float = 1800  # 30 min
 
     tarun_db_path: str = "data/Tarun_Associate.db"
     nobin_db_path: str = "data/Nobin_Associate.db"

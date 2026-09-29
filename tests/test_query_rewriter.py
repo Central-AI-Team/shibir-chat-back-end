@@ -29,6 +29,10 @@ def qr():
     """
     query_rewriter module import করে return করে।
     app.core.llm stub করা হয়েছে।
+
+    stub করা modules request শেষে আগের অবস্থায় ফিরিয়ে দেওয়া হয় — নাহলে
+    sys.modules-এ রয়ে যাওয়া MagicMock পরে চলা test file গুলোতে (যেমন
+    test_tracing.py) leak করে, কারণ pytest এক প্রসেসেই সব test file চালায়।
     """
     import importlib
     import sys
@@ -39,6 +43,7 @@ def qr():
     with pytest.MonkeyPatch.context() as mp:
         mp.setitem(sys.modules, "app.core.llm", mock.MagicMock())
         mp.setitem(sys.modules, "app.rag.chunker", mock.MagicMock(normalize=lambda x: x.strip()))
+        mp.delitem(sys.modules, "app.rag.query_rewriter", raising=False)
 
         # এখন নিরাপদে import করা যাবে
         yield importlib.import_module("app.rag.query_rewriter")

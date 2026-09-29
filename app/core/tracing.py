@@ -391,7 +391,9 @@ def end_gpu_span(span: Optional[Any], *, metadata: dict, error: bool = False) ->
 
 
 @_safe
-def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve-context") -> None:
+def record_retrieval(
+    chunks, *, top_k: int | None = None, name: str = "retrieve-context", cached: bool = False
+) -> None:
     """One ``retriever``-typed observation covering the whole retrieve+rerank
     step.
 
@@ -405,6 +407,9 @@ def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve-
     ``similarity 0.61, rerank_score 0.42`` pins the loss on the reranker, not
     on retrieval or the gate. Logging only the survivors (the old behaviour)
     hid exactly the row you needed to see.
+
+    ``cached=True`` means app/rag/retriever.py's retrieval cache served this
+    result -- embed, Chroma search and rerank were all skipped.
     """
     if _current_ctx.get() is None:
         return
@@ -418,6 +423,7 @@ def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve-
         output={
             "n": len(chunks),
             "top_k": top_k,
+            "cached": cached,
             "candidates": [
                 {
                     "rank": i,

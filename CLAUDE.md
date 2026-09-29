@@ -78,11 +78,22 @@ app/
     chroma_client.py      get_collection(): the ONLY place a Chroma PersistentClient is
                           created. The collection uses hnsw:space="cosine" (Chroma's default
                           is L2, which would break similarity thresholds).
+    bm25_index.py          BM25 keyword search over the same chunks Chroma holds (built
+                          directly from Chroma's own stored documents, not Postgres, so it
+                          can never drift out of sync). search(query, top_n) -> [(key, doc,
+                          meta, score)]. The dense complement: catches exact sura names,
+                          verse numbers and rare technical terms a bi-encoder under-ranks
+                          (§4, "Hybrid retrieval").
     retriever.py          retrieve_relevant_docs(query) -> list[Citation]:
                           expand_query → embed all variants → Chroma FETCH_K neighbours per
-                          variant → merge + dedupe → drop below MIN_SIMILARITY → rerank →
-                          TOP_K. Citations carry `similarity` (cosine pre-filter) and
-                          `rerank_score` (the real relevance signal).
+                          variant → merge + dedupe → drop below MIN_SIMILARITY, ALSO
+                          bm25_index.search() the same variants → fuse the two ranked lists
+                          with Reciprocal Rank Fusion, truncated back to FETCH_K → rerank →
+                          TOP_K (§4, "Hybrid retrieval"). Citations carry `similarity`
+                          (cosine pre-filter, 0.0 for a BM25-only find) and `rerank_score`
+                          (the real relevance signal). Everything from embed through rerank
+                          is behind a TTL cache keyed on the TRANSLATED query (§4, "Retrieval
+                          cache") -- a repeat question skips straight to generation.
     generator.py          generate_answer(query, citations) -> str (task "qa") and
                           stream_answer() for /chat/stream. Bengali system prompt with
                           numbered excerpts (§4).
@@ -177,6 +188,53 @@ spellings ("hello", "kemon achen", "dhonnobad") **before** retrieval. A match re
 reply from a small fixed set with no retrieval, no LLM call and `sources: []`. Messages longer
 than six words always go through normal retrieval, so a real question that starts with "হ্যালো" is
 still answered.
+
+**Hybrid retrieval.** Dense search (bge-m3 + Chroma) finds passages that MEAN the same thing as
+the question, but this corpus is full of exact names and numbers that carry little "meaning" on
+their own -- Quran sura names (সূরা আল মুমিনুন vs the similarly-spelled but different সূরা আল
+মু'মিন), verse/ayah numbers, hijri years, and rare technical terms (e.g. "শায়খাইন", a specific dual
+title for two named hadith scholars). A bi-encoder compresses a whole chunk into one vector and
+tends to under-rank exact wording like this. `app/rag/bm25_index.py` adds a BM25 keyword search
+over the same chunks (built directly from Chroma's own stored documents, so it can never drift out
+of sync -- no separate Postgres read). `retriever.retrieve_stages()` runs both: dense search's own
+`fetch_k` candidates (post `min_similarity`) and BM25's own `bm25_fetch_k` candidates are combined
+with **Reciprocal Rank Fusion** (`_rrf_fuse()`, RRF constant 60 -- the standard literature value,
+not tuned per corpus) and the union is truncated back down to `fetch_k` **before** reranking. This
+is deliberate: enabling BM25 changes *which* candidates reach the cross-encoder, never *how many*
+-- reranking cost does not grow. The cross-encoder and `min_rerank_score` gate are themselves
+completely unchanged, so a candidate BM25 adds still has to clear the same relevance bar dense
+candidates always did; a coincidental keyword match cannot by itself make the model answer from an
+irrelevant excerpt. A chunk BM25 finds that dense search did not carries `similarity=0.0` in its
+Citation (no cosine score exists for it) -- diagnostic only, since `rerank_score` decides
+relevance, never `similarity`. `settings.use_bm25` (default `true`) disables it instantly if an
+eval run ever shows it hurts; `use_bm25=` on `retrieve_stages()` isolates it per call the same way
+`use_rewrite=False` isolates the rewriter (`scripts/eval_retrieval.py --no-bm25`). BM25 does not
+stem: Bengali attaches suffixes directly onto words ("নামাজের" = "নামাজ" + "-এর"), so it only
+matches the exact token typed, not the root -- a real limitation, not a bug (§14). Indexed per
+`collection_name` like the retrieval cache, and rebuilt lazily from Chroma every
+`bm25_rebuild_interval_seconds` (default 1800s, same staleness trade-off as the retrieval cache
+below) -- observed live on this corpus (~8,400 chunks): ~3-4s to rebuild, ~10ms per search once
+built. `scripts/eval_chunking.py` calls `bm25_index.reset_index(collection_name)` right alongside
+`clear_retrieval_cache()` so a reused `chunk_eval_*` name never scores against a stale index.
+
+**Retrieval cache.** `query_rewriter.expand_query()` is `lru_cache`d, so a repeat question skips
+the rewrite LLM call, but used to still re-run embed + Chroma search + rerank from scratch every
+time. `retriever.retrieve_stages()` now also caches everything from the embed call through rerank
+(a `cachetools.TTLCache`), keyed on **the translated query tuple** (`expand_query()`'s own output),
+plus `fetch_k`, `collection_name` and `use_bm25`. Keying on the translation, not the raw text, is
+deliberate: "namaz koto rakat" (Banglish) and "নামায কত রাকাত" (Bengali script) both translate to
+the same canonical Bengali string and so share one cache entry, instead of missing each other the
+way a raw-text key would. `rerank_top_n` is not part of the key -- the cache stores the full,
+unsliced reranked list, and each caller just slices it, so two callers asking for a different
+`top_k` out of the same translated query still share one entry. Generation (`generate_answer()`)
+still runs on every request; only retrieval is skipped, so the answer text stays fresh even when
+the sources are cached. TTL-bounded (`RETRIEVAL_CACHE_TTL_SECONDS`, default 1800s), not indefinite
+like `expand_query`'s cache: `app/rag/ingest.py` runs as a separate process with no signal back to a
+running server (§9), so nothing invalidates a stale entry after a reingest except time. Either
+`RETRIEVAL_CACHE_MAXSIZE` or `RETRIEVAL_CACHE_TTL_SECONDS` set to `0` disables it.
+`scripts/eval_chunking.py` calls `retriever.clear_retrieval_cache()` right after it rebuilds a
+`chunk_eval_*` collection, so a config name reused within one script run can never serve a result
+scored against that collection's previous content.
 
 ## 5. LLM provider (`app/core/llm.py`)
 
@@ -462,6 +520,10 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 | `MAX_VARIANTS` | `4` | Extra rewrite variants beyond the canonical Bengali form. Each costs one embed and one search; tune with `eval_query_expansion`. |
 | `MIN_SIMILARITY` | `0.25` | Loose cosine pre-filter before the reranker. |
 | `MIN_RERANK_SCORE` | `0.5` | The relevance gate (§4). Sigmoid scores in [0, 1]: on-topic questions scored 0.94–0.99, an off-topic one peaked at 0.011. The ">2 is relevant" logit heuristic quoted for this model does **not** apply. Re-tune with `tune_threshold` on at least 30 questions. |
+| `RETRIEVAL_CACHE_MAXSIZE` / `RETRIEVAL_CACHE_TTL_SECONDS` | `2048` / `1800` | Retrieval cache (§4, "Retrieval cache"), keyed on the translated query. Either set to `0` disables it. |
+| `USE_BM25` | `true` | Hybrid retrieval (§4, "Hybrid retrieval"). `false` reverts to dense-only, exactly the pre-BM25 pipeline. |
+| `BM25_FETCH_K` | `25` | BM25 candidates before fusion with dense results -- same budget as `FETCH_K` on the dense side, so reranking cost does not grow. |
+| `BM25_REBUILD_INTERVAL_SECONDS` | `1800` | How long a built BM25 index (`app/rag/bm25_index.py`) is trusted before the next search rebuilds it from Chroma. Same staleness trade-off as the retrieval cache. |
 
 **GPU service** (§6)
 
@@ -546,6 +608,12 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 - **Rewrite fallback:** `expand_query()` costs one LLM call per unique query (cached only for the
   process lifetime). If it fails, retrieval silently uses the raw query, which is fine for Bengali
   script but degrades Banglish recall.
+- **BM25 has no stemming:** `app/rag/bm25_index.py` matches whole tokens only. Bengali attaches
+  suffixes directly onto a word ("নামাজের" = "নামাজ" + "-এর"), so a query for the bare root does not
+  match a chunk that only has the inflected form, and vice versa. Dense search still covers this
+  case (it is exactly the kind of near-synonym match embeddings are good at) -- BM25 is additive,
+  not a replacement, so this only matters when dense search *also* misses the same chunk. A
+  stemmer/lemmatizer for Bengali would close this gap; none is wired in.
 - **Partial corpus cleanup:**
   - Applied: the 106 duplicate pages in `book203_cross_contamination.csv` are excluded (reason
     `book203_cross_contamination.csv:loser`).

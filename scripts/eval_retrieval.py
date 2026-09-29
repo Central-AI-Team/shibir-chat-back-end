@@ -14,10 +14,13 @@ hand-labelled gold set, and reports standard IR metrics.
 It scores TWO stages separately, because they fail for different reasons and
 have different fixes:
 
-  STAGE A -- candidates: the fetch_k pool from Chroma, after the min_similarity
-    filter, exactly as handed to the cross-encoder. This is the bi-encoder's
-    ceiling: a gold page missing here can never be recovered downstream.
-    Fix by looking at the embedder, the chunking, or the query rewriter.
+  STAGE A -- candidates: the fetch_k pool exactly as handed to the cross-
+    encoder -- the dense (Chroma) pool after the min_similarity filter, fused
+    with the BM25 keyword-search pool via Reciprocal Rank Fusion (see
+    app/rag/retriever.py's module docstring, point 10, and app/rag/
+    bm25_index.py). This is retrieval's ceiling: a gold page missing here can
+    never be recovered downstream. Fix by looking at the embedder, the
+    chunking, the query rewriter, or (--no-bm25 isolates it) BM25 itself.
 
   STAGE B -- final: the reranked top_k the user really gets.
     A gold page present in A but absent from B is the reranker throwing away
@@ -159,7 +162,9 @@ def _aggregate(records: list[dict], stage: str, ks: list[int]) -> dict[int, dict
 # running
 # --------------------------------------------------------------------------
 
-def _run(questions: list[dict], ks: list[int], use_rewrite: bool) -> list[dict]:
+def _run(
+    questions: list[dict], ks: list[int], use_rewrite: bool, use_bm25: bool | None = None
+) -> list[dict]:
     """Retrieve once per query and score every stage/k off that one call."""
     top_k = settings.top_k
     max_k = max(ks)
@@ -174,6 +179,7 @@ def _run(questions: list[dict], ks: list[int], use_rewrite: bool) -> list[dict]:
             q["query"],
             rerank_top_n=max(max_k, top_k),
             use_rewrite=use_rewrite,
+            use_bm25=use_bm25,
         )
         stage_a = _row_keys(stage_a_chunks)
         stage_b = _row_keys(stage_b_chunks)
@@ -437,6 +443,9 @@ def _parse_args() -> argparse.Namespace:
                         help="comma-separated cutoffs, default 1,3,5,10")
     parser.add_argument("--no-rewrite", action="store_true",
                         help="search the raw query; skip the Banglish->Bengali rewrite")
+    parser.add_argument("--no-bm25", action="store_true",
+                        help="dense-only retrieval; skip the BM25 keyword search "
+                             "(overrides settings.use_bm25)")
     parser.add_argument("--ablation", action="store_true",
                         help="run with rewrite ON and OFF and print the delta")
     parser.add_argument("--report", metavar="OUT.JSON",
@@ -448,11 +457,14 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _evaluate(questions: list[dict], ks: list[int], use_rewrite: bool) -> dict:
+def _evaluate(
+    questions: list[dict], ks: list[int], use_rewrite: bool, use_bm25: bool | None = None
+) -> dict:
+    bm25_label = "default" if use_bm25 is None else ("ON" if use_bm25 else "OFF")
     print("\n" + "=" * 78)
-    print(f"RUN: query rewrite {'ON' if use_rewrite else 'OFF'}")
+    print(f"RUN: query rewrite {'ON' if use_rewrite else 'OFF'}, BM25 {bm25_label}")
     print("=" * 78)
-    records = _run(questions, ks, use_rewrite)
+    records = _run(questions, ks, use_rewrite, use_bm25)
     agg = {stage: _aggregate(records, stage, ks) for stage in ("candidates", "final")}
     n_scored = sum(1 for r in records if r["scorable"])
 
@@ -496,6 +508,7 @@ def main() -> None:
     path = Path(args.questions)
     questions = _load_questions(path)
     use_rewrite = not args.no_rewrite
+    use_bm25 = False if args.no_bm25 else None  # None = settings.use_bm25
 
     if args.label:
         _label(questions, use_rewrite)
@@ -508,11 +521,11 @@ def main() -> None:
     if args.ablation:
         # --ablation always compares ON against OFF, so --no-rewrite alongside
         # it would otherwise silently run OFF twice.
-        runs = [_evaluate(questions, args.k, use_rewrite=True),
-                _evaluate(questions, args.k, use_rewrite=False)]
+        runs = [_evaluate(questions, args.k, use_rewrite=True, use_bm25=use_bm25),
+                _evaluate(questions, args.k, use_rewrite=False, use_bm25=use_bm25)]
         _print_delta(runs[0]["metrics"], runs[1]["metrics"], args.k)
     else:
-        runs = [_evaluate(questions, args.k, use_rewrite)]
+        runs = [_evaluate(questions, args.k, use_rewrite, use_bm25=use_bm25)]
 
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -523,6 +536,8 @@ def main() -> None:
             "fetch_k": settings.fetch_k,
             "min_similarity": settings.min_similarity,
             "min_rerank_score": settings.min_rerank_score,
+            "use_bm25": settings.use_bm25 if use_bm25 is None else use_bm25,
+            "bm25_fetch_k": settings.bm25_fetch_k,
             "embedding_model": settings.embedding_model_name,
             "reranker_model": settings.reranker_model_name,
             "collection": settings.chroma_collection_name,

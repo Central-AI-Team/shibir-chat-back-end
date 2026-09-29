@@ -74,10 +74,11 @@ from sqlalchemy.orm import joinedload
 from app.core.config import settings
 from app.db.models import Article, ContentStatus, Page
 from app.db.session import SessionLocal
+from app.rag import bm25_index
 from app.rag.chroma_client import delete_collection, get_named_collection
 from app.rag.chunker import build_document, chunk_text
 from app.rag.embedder import embed_texts
-from app.rag.retriever import retrieve_stages
+from app.rag.retriever import clear_retrieval_cache, retrieve_stages
 from scripts.eval_retrieval import _aggregate, _load_questions, _row_keys, _score_one
 
 DEFAULT_FILE = Path(__file__).parent / "retrieval_eval_questions.json"
@@ -294,6 +295,15 @@ def _build_index(rows: list[CorpusRow], chunk_size: int, overlap: int, collectio
     + embed_texts + upsert every row, exactly like app/rag/ingest.py's
     _ingest(), just against a temp collection instead of production."""
     delete_collection(collection_name)   # idempotent: clean slate every run
+    # retrieve_stages() now caches search+rerank results per (query,
+    # collection_name) for the life of the process (app/rag/retriever.py) --
+    # if this collection_name was ever queried before in this run, drop
+    # those entries so scoring below can't reuse a result computed against
+    # the collection's PREVIOUS content. Same reason for the BM25 index
+    # (app/rag/bm25_index.py), which is also built per collection_name and
+    # would otherwise keep scoring against this name's previous chunks.
+    clear_retrieval_cache()
+    bm25_index.reset_index(collection_name)
     collection = get_named_collection(collection_name)
 
     t0 = time.perf_counter()

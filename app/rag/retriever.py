@@ -31,24 +31,53 @@ CHANGES vs the original:
      is the one place that still holds the FULL pre-truncation candidate pool
      and every candidate's rerank score, so the `retrieve` span can show the
      candidates the reranker dropped, not just the five the user gets.
+  9. NEW: a TTL cache in front of embed + Chroma search + merge/filter +
+     rerank (everything between the rewrite and the LLM call), keyed on the
+     TRANSLATED query -- expand_query()'s own cache already saved the LLM
+     call for a repeat question; this saves the embed, the Chroma round
+     trip and the cross-encoder pass too. See _retrieval_cache below.
+  10. NEW: hybrid retrieval. Alongside the dense (bge-m3 + Chroma) search,
+     app.rag.bm25_index.search() runs a BM25 keyword search over the same
+     chunks. BM25 catches exact names and numbers -- Quran sura names, verse
+     numbers, rare technical terms -- that a bi-encoder routinely under-ranks
+     (see bm25_index.py's module docstring for corpus examples). The two
+     ranked lists are combined with Reciprocal Rank Fusion (_rrf_fuse below)
+     and the union is truncated back to fetch_k *before* reranking, so this
+     changes WHICH candidates reach the cross-encoder, never how many --
+     reranking cost is unchanged. The cross-encoder and min_rerank_score gate
+     are themselves untouched: a candidate BM25 adds still has to clear the
+     same relevance bar as anything dense search finds, so a coincidental
+     keyword match cannot by itself make the model answer from an irrelevant
+     excerpt. settings.use_bm25 (default True) and the use_bm25= parameter
+     below disable it instantly if an eval run ever shows it hurts.
 """
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
+from cachetools import TTLCache
 from sqlalchemy import func
 
 from app.core import tracing
 from app.core.config import settings
 from app.db.models import Book
 from app.db.session import SessionLocal
+from app.rag import bm25_index
 from app.rag.chroma_client import get_collection, get_named_collection
 from app.rag.chunker import normalize
 from app.rag.embedder import embed_texts
 from app.rag.query_rewriter import expand_query
 from app.rag.reranker import rerank
 from app.schemas.query import Citation
+
+# Reciprocal Rank Fusion constant. 60 is the standard value from the RRF
+# literature (Cormack et al.) and is not tuned per corpus -- it only controls
+# how quickly a source's contribution decays with rank, not which items
+# qualify at all (that is min_similarity on the dense side and BM25's own
+# zero-score cutoff on the lexical side).
+_RRF_K = 60
 
 
 @dataclass(frozen=True)
@@ -72,6 +101,113 @@ class RetrievedChunk:
     book_id: int | None = None
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Retrieval cache -- skips embed + Chroma search + merge/filter + rerank for
+# a repeated question.
+#
+# Keyed on the TRANSLATED query tuple (expand_query()'s own output, already
+# lru_cached in query_rewriter.py), not the raw query: "namaz koto rakat" and
+# "নামায কত রাকাত" both translate to the same canonical Bengali string, so
+# they land on the same entry here even though their raw text differs. This
+# is why the key is built AFTER expand_query() runs, not before.
+#
+# What is cached is the full, UNSLICED post-rerank list (every candidate the
+# cross-encoder scored) plus the pre-rerank candidate pool -- the same pair
+# retrieve_stages() itself returns for rerank_top_n = len(candidates). A
+# caller-specific rerank_top_n (only eval scripts pass a non-default one) is
+# then just a slice of that cached list, so two callers asking for different
+# top_n out of the same translated query still share one cache entry instead
+# of one each. fetch_k changes the candidate pool itself, so it is part of
+# the key; collection_name is part of the key so eval scripts pointing at a
+# temporary chunk_eval_* collection (see scripts/eval_chunking.py) never
+# share an entry with production or with each other.
+#
+# TTL-bounded rather than indefinite (unlike expand_query's process-lifetime
+# lru_cache): app/rag/ingest.py runs as a separate process/cron job with no
+# signal back to a running server (CLAUDE.md §9), so nothing tells this
+# in-memory cache when a page's content changed underneath it. The TTL is
+# the same trade-off session_store.py already makes for session state --
+# bounded staleness instead of perfect invalidation. Either maxsize=0 or
+# ttl=0 makes cachetools raise, so a 0 in settings disables caching by
+# routing around TTLCache entirely -- see _cache() below.
+_retrieval_cache: TTLCache | None = None
+_retrieval_cache_lock = threading.Lock()
+
+
+def _cache() -> TTLCache | None:
+    """Build (once) or return the process-wide retrieval cache, honoring
+    live settings so tests can monkeypatch maxsize/ttl. None means disabled."""
+    global _retrieval_cache
+    if settings.retrieval_cache_maxsize <= 0 or settings.retrieval_cache_ttl_seconds <= 0:
+        return None
+    if _retrieval_cache is None:
+        with _retrieval_cache_lock:
+            if _retrieval_cache is None:
+                _retrieval_cache = TTLCache(
+                    maxsize=settings.retrieval_cache_maxsize,
+                    ttl=settings.retrieval_cache_ttl_seconds,
+                )
+    return _retrieval_cache
+
+
+def clear_retrieval_cache() -> None:
+    """Drop every cached entry.
+
+    Used by scripts/eval_chunking.py right after it rebuilds a chunk_eval_*
+    collection from scratch, so a config name reused within one script run
+    can never serve a cached result scored against the PREVIOUS content of
+    that same collection name. Also handy in tests.
+    """
+    cache = _cache()
+    if cache is not None:
+        with _retrieval_cache_lock:
+            cache.clear()
+
+
+def _cache_key(
+    queries: tuple[str, ...],
+    fetch_k: int,
+    collection_name: str | None,
+    use_bm25: bool,
+) -> tuple:
+    return (queries, fetch_k, collection_name, use_bm25)
+
+
+def _rrf_fuse(
+    dense_sorted: list[tuple[str, str, dict, float]],
+    bm25_sorted: list[tuple[str, str, dict, float]],
+    fetch_k: int,
+) -> list[tuple[str, dict, float]]:
+    """Merge two independently-ranked lists into one, by RANK not by raw
+    score -- dense similarity (cosine, [0, 1]-ish) and BM25 score (unbounded
+    term-frequency) live on different, incomparable scales, so summing the
+    raw numbers would let whichever score happens to be larger dominate for
+    no principled reason. Reciprocal Rank Fusion sidesteps that: each source
+    contributes 1/(_RRF_K + rank) for a chunk it returned, 0 if it didn't,
+    and the two contributions are summed. A chunk both sources agree on
+    outranks one only a single source found, without ever comparing a
+    cosine number to a BM25 number directly.
+
+    Returns (doc, meta, similarity) tuples -- the exact shape the rest of
+    retrieve_stages() already expects from the old dense-only `candidates`
+    list, so nothing downstream (rerank, _chunk, tracing) needs to change.
+    A chunk BM25 found but dense search did not carries similarity=0.0: it
+    has no cosine score to report, and similarity is diagnostic only here --
+    the reranker's own score, not this one, decides relevance.
+    """
+    rrf_scores: dict[str, float] = {}
+    payload: dict[str, tuple[str, dict, float]] = {}
+    for rank, (key, doc, meta, sim) in enumerate(dense_sorted, start=1):
+        rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (_RRF_K + rank)
+        payload[key] = (doc, meta, sim)
+    for rank, (key, doc, meta, _bm25_score) in enumerate(bm25_sorted, start=1):
+        rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (_RRF_K + rank)
+        payload.setdefault(key, (doc, meta, 0.0))
+
+    ordered = sorted(rrf_scores, key=lambda k: rrf_scores[k], reverse=True)[:fetch_k]
+    return [payload[key] for key in ordered]
+
+
 def retrieve_stages(
     query: str,
     top_k: int | None = None,
@@ -80,13 +216,15 @@ def retrieve_stages(
     use_rewrite: bool = True,
     collection_name: str | None = None,
     max_variants: int | None = None,
+    use_bm25: bool | None = None,
 ) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
     """Run retrieval and return (candidates, final).
 
     candidates -- the pool that is actually handed to the cross-encoder:
-        post vector-search, post min_similarity filter, truncated to fetch_k,
-        sorted by similarity. Anything not in here was never seen by the
-        reranker.
+        dense vector-search results (post min_similarity filter) fused with
+        BM25 keyword-search results (§"hybrid retrieval" in the module
+        docstring), truncated to fetch_k. Anything not in here was never
+        seen by the reranker.
     final -- the reranked list, best first, truncated to rerank_top_n
         (default top_k, i.e. exactly what the user gets).
 
@@ -101,16 +239,37 @@ def retrieve_stages(
     (settings.max_variants) alone -- no existing caller needs to pass this.
     It exists so scripts/eval_query_expansion.py can sweep variant counts
     against the real pipeline without a second retrieval code path.
+
+    use_bm25=None (default) follows settings.use_bm25. Pass False to isolate
+    the dense-only pipeline -- e.g. scripts/eval_retrieval.py --no-bm25 --
+    the same way use_rewrite=False isolates the rewriter's contribution.
     """
     top_k = top_k or settings.top_k
     fetch_k = fetch_k or settings.fetch_k
     rerank_top_n = rerank_top_n or top_k
+    use_bm25 = settings.use_bm25 if use_bm25 is None else use_bm25
 
     if use_rewrite:
         queries = expand_query(query, max_variants=max_variants) or (query,)
     else:
         queries = (normalize(query),) if normalize(query) else (query,)
     tracing.record_rewrite(queries)
+
+    cache = _cache()
+    cache_key = _cache_key(queries, fetch_k, collection_name, use_bm25)
+    if cache is not None:
+        with _retrieval_cache_lock:
+            cached = cache.get(cache_key)
+        if cached is not None:
+            stage_a, reranked = cached
+            tracing.record_retrieval(reranked, top_k=rerank_top_n, cached=True)
+            return stage_a, reranked[:rerank_top_n]
+
+    def _store(stage_a: list[RetrievedChunk], reranked: list[RetrievedChunk]) -> None:
+        if cache is not None:
+            with _retrieval_cache_lock:
+                cache[cache_key] = (stage_a, reranked)
+
     embeddings = embed_texts(list(queries))
 
     collection = get_collection() if collection_name is None else get_named_collection(collection_name)
@@ -136,18 +295,40 @@ def retrieve_stages(
             if key not in pool or score > pool[key][2]:
                 pool[key] = (doc, meta, score)
 
-    candidates = sorted(pool.values(), key=lambda x: x[2], reverse=True)
-    if not candidates:
-        tracing.record_retrieval([], top_k=rerank_top_n)
-        return [], []
-
-    # Drop obvious noise before paying for the cross-encoder.
-    candidates = [c for c in candidates if c[2] >= settings.min_similarity][:fetch_k]
-    if not candidates:
-        tracing.record_retrieval([], top_k=rerank_top_n)
-        return [], []
+    # Drop obvious noise before paying for the cross-encoder. This is the
+    # dense side's own ranking, independent of BM25 -- fed into _rrf_fuse
+    # below keyed by rank, not by this raw similarity number.
+    dense_sorted = [
+        (key, doc, meta, sim)
+        for key, (doc, meta, sim) in pool.items()
+        if sim >= settings.min_similarity
+    ]
+    dense_sorted.sort(key=lambda c: c[3], reverse=True)
 
     search_query = queries[0]
+
+    bm25_sorted: list[tuple[str, str, dict, float]] = []
+    if use_bm25:
+        # Same merge-keep-best-per-key pattern as the dense pool above, in
+        # case a future caller passes multiple query variants -- today
+        # expand_query() always returns exactly one, so this is normally a
+        # single bm25_index.search() call.
+        bm25_pool: dict[str, tuple[str, dict, float]] = {}
+        for q in queries:
+            for key, doc, meta, score in bm25_index.search(
+                q, settings.bm25_fetch_k, collection_name=collection_name
+            ):
+                if key not in bm25_pool or score > bm25_pool[key][2]:
+                    bm25_pool[key] = (doc, meta, score)
+        bm25_sorted = [(key, doc, meta, score) for key, (doc, meta, score) in bm25_pool.items()]
+        bm25_sorted.sort(key=lambda c: c[3], reverse=True)
+
+    if not dense_sorted and not bm25_sorted:
+        tracing.record_retrieval([], top_k=rerank_top_n)
+        _store([], [])
+        return [], []
+
+    candidates = _rrf_fuse(dense_sorted, bm25_sorted, fetch_k)
     # Rerank the WHOLE candidate pool, not just the survivors. CrossEncoder
     # .predict() already scores every (query, doc) pair -- top_n is only a
     # slice -- so asking for all of them costs nothing extra and lets the
@@ -164,8 +345,11 @@ def retrieve_stages(
     tracing.record_retrieval(reranked, top_k=rerank_top_n)
 
     stage_a = [_chunk(doc, meta, sim) for doc, meta, sim in candidates]
-    stage_b = reranked[:rerank_top_n]
-    return stage_a, stage_b
+    # Cache the FULL reranked list (unsliced) so a caller-specific
+    # rerank_top_n is just a slice of one shared entry (see the cache's
+    # module comment above).
+    _store(stage_a, reranked)
+    return stage_a, reranked[:rerank_top_n]
 
 
 def retrieve_relevant_docs(
