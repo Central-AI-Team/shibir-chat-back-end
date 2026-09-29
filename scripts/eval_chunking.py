@@ -303,7 +303,7 @@ def _build_index(rows: list[CorpusRow], chunk_size: int, overlap: int, collectio
     def flush():
         if ids:
             collection.upsert(ids=list(ids), documents=list(docs),
-                               metadatas=list(metas), embeddings=embed_texts(docs))
+                               metadatas=list(metas), embeddings=embed_texts(docs, bulk=True))
             ids.clear(); docs.clear(); metas.clear()
 
     for row in rows:
