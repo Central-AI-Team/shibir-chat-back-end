@@ -35,20 +35,20 @@ single process is the right setup until you're actually adding replicas.
 ## Before anything else: read the statefulness audit
 
 The single most important fact for scaling this service is that **the FastAPI process is not
-fully stateless today**. Three things live inside the process that a naive "just run more
+fully stateless today**. Two remaining concerns live inside the process that a naive "just run more
 replicas behind a load balancer" approach will silently break:
 
 | Component | Current implementation | Scales horizontally? |
 |---|---|---|
-| Chat/roleplay session state | `app/services/session_store.py` — a plain module-level `dict` | **No.** Its own docstring already says so: a session started on one worker/replica is invisible to another. Multi-worker or multi-replica today means a user's roleplay persona or conversation history randomly "disappears" mid-conversation depending on which process handles the next request. |
+| Chat/roleplay session state | Owned PostgreSQL chat tables, request leases and full transcripts | **Yes**, shared by workers; Redis is unnecessary for correctness. |
 | Embedding + reranker models | `app/rag/embedder.py` / `app/rag/reranker.py` — in CPU mode, `sentence-transformers` models loaded in-process via `@lru_cache`; in GPU mode, HTTP calls to the Modal service | GPU mode: **yes**, replicas hold no models. CPU mode: scales, but **expensively** — every replica loads its own full copy of `BAAI/bge-m3` (~2.2 GB) and `BAAI/bge-reranker-v2-m3` (~2 GB+), so N replicas cost N× that RAM before serving a single request. |
 | Vector store (Chroma) | `app/rag/chroma_client.py` — `chromadb.PersistentClient` writing to a local `chroma_db/` directory | **Not safely**, as-is. Chroma's persistent-client mode is not designed for multiple processes concurrently opening the same on-disk index (this has caused real corruption/contention in this project's own ingest workflow). A shared network volume mounted read-write from N replicas is not a fix — it's the same problem with extra latency. |
 | Postgres (content, source of truth) | Standard SQLAlchemy engine, `app/db/session.py` | **Yes**, this is a normal RDBMS — connection pooling and read replicas work the usual way. |
 | LLM calls (OpenAI, optionally Groq) | `app/core/llm.py`, external API calls, no local state | **Yes**, but each provider has its own rate limits that don't scale just because you added replicas — see [LLM provider layer](#tier-5-llm-provider-layer) below. |
 | Corpus ingest (`uv run python -m app.rag.ingest`) | Offline batch script, not in the request path | Not a live-traffic concern, but it competes for the same CPU/RAM as the embedder/reranker if run on the same host — schedule it separately (see [Ingest as its own job](#ingest-as-its-own-job)). |
 
-Everything below is organized around fixing these three (session store, model duplication,
-vector store) without a rewrite — each is an incremental, independently-shippable change.
+The session-store gap is now fixed in PostgreSQL. Remaining work concerns model duplication,
+and the vector store without a rewrite — each is an incremental, independently-shippable change.
 
 ## Recommended topology
 
@@ -68,7 +68,7 @@ vector store) without a rewrite — each is an incremental, independently-shippa
         ▼        ▼               ▼               ▼        ▼
    ┌─────────┐ ┌───────────────────────┐ ┌───────────────┐ ┌──────────────┐
    │  Redis   │ │   Vector store tier    │ │   Postgres     │ │ LLM providers │
-   │(sessions)│ │ (Chroma server OR a    │ │ (managed,      │ │ (OpenAI, Groq)│
+   │(optional)│ │ (Chroma server OR a    │ │ (managed,      │ │ (OpenAI, Groq)│
    │          │ │  managed vector DB)    │ │  pooled)       │ │  external     │
    └─────────┘ └───────────────────────┘ └───────────────┘ └──────────────┘
 
@@ -96,7 +96,7 @@ estimated, it's called out as such.
 | **Vector store — Chroma server** (Tier 3, Option A) | 2 | 2–4 GB | 10 GB, scale with corpus | AWS `t3.medium`/`m6i.large` | **Measured on this project's current corpus**: 12,304 chunks (~900 chars each, `bge-m3`'s 1024-dim vectors) occupy **386 MB** on disk — roughly 31 KB/chunk including the HNSW index and stored text. At this scale the vector-store tier is genuinely cheap; re-budget disk as `chunk_count × ~35 KB` (with headroom) if the corpus grows by an order of magnitude, and re-check after any chunk-size change in `app/rag/chunker.py` (chunk size directly changes chunk count for the same corpus). |
 | **Vector store — pgvector** (Tier 3, Option B, same Postgres) | — | — | add ~35 KB/chunk to the Postgres disk estimate below | — | No separate tier — sizing folds into the Postgres row. |
 | **Postgres** (managed) | 2 | 4 GB | 20 GB+, corpus-dependent | AWS RDS `db.t3.medium` / GCP Cloud SQL equivalent | Book/chapter/page content itself is text, not the bottleneck here — size mainly for connection count (pooled via PgBouncer, see Tier 4) and, if chosen, pgvector's addition above. |
-| **Redis** (session store) | 1 | 512 MB–1 GB | 1 GB | AWS ElastiCache `cache.t3.micro` | Session payloads are small (a persona string + up to `MAX_HISTORY=20` chat turns per session) — this tier is sized for connection count and availability, not data volume. Set an eviction policy (`allkeys-lru` or similar) and rely on the TTL in the Tier 2 sketch rather than persistence. |
+| **Redis** (optional cache) | 1 | 512 MB–1 GB | 1 GB | Managed Redis | Optional future shared retrieval cache; conversations and memories are durable PostgreSQL data, not TTL cache. |
 | **Ingest job** (batch, `uv run python -m app.rag.ingest`) | 2–4 | 8 GB | 15 GB | Same class as an API replica, or a spot/preemptible instance | Needs the embedder resident (~2.2 GB) for the run's duration only — fine on a cheaper/spot instance since it's not latency-sensitive and can be retried. GPU optional (`pyproject.toml` already carries CUDA extras behind platform markers) — only worth it for a large corpus's first full ingest, not incremental updates. |
 
 The two numbers worth re-deriving for your own deployment rather than trusting verbatim are
@@ -133,52 +133,27 @@ or `nginx`/`traefik` if self-hosting), with:
   replicas without the deployment-level flexibility (independent scheduling, rolling restarts)
   of actual pods/containers.
 
-## Tier 2: shared session store (Redis)
+## Tier 2: durable conversation memory (implemented in PostgreSQL)
 
-This is the first thing to fix, and the lowest-risk change on this list — `session_store.py`
-already exposes a narrow, three-function interface
-(`get_or_create_session` / `update_session` / `append_history`), so swapping its backing store
-doesn't touch any caller in `roleplay_service.py` or `router.py`.
+Chat state now lives in `chat_identities`, `chat_conversations`, `chat_messages`
+and `chat_user_memories` in PostgreSQL. Full transcripts survive restarts and are
+shared by API workers. Redis is not required for chat correctness. Existing corpus
+tables are unchanged. Startup serializes additive table initialization with a
+PostgreSQL advisory lock; deployments with restricted app roles should run
+`uv run python -m scripts.create_chat_tables` through their migration role first.
 
-Replace the module-level `_sessions: dict` with Redis, keeping the exact same function
-signatures:
+A hashed opaque browser credential scopes all chat reads/writes. Requests use
+short database transactions and leases, not a database transaction held open during
+LLM generation. One writer per conversation is allowed; a killed worker's lease
+expires after 15 minutes. Retries with the same UUID request ID reuse or replay the
+turn. Summaries/facts are best-effort background work with optimistic cursors;
+full transcripts provide recall even when compaction fails. Back up these tables
+with the corpus database. Memory data must not be treated as expendable cache.
 
-```python
-# app/services/session_store.py (Redis-backed sketch)
-import json
-import uuid
-import redis
-
-MAX_HISTORY = 20
-SESSION_TTL_SECONDS = 60 * 60 * 6  # expire idle sessions; a roleplay chat isn't forever
-
-_r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-
-def _key(session_id: str) -> str:
-    return f"session:{session_id}"
-
-def get_or_create_session(session_id: str | None) -> tuple[str, dict]:
-    if session_id is None:
-        session_id = str(uuid.uuid4())
-    raw = _r.get(_key(session_id))
-    session = json.loads(raw) if raw else {"mode": None, "persona": None, "history": []}
-    return session_id, session
-
-def update_session(session_id: str, **fields) -> dict:
-    _, session = get_or_create_session(session_id)
-    history = fields.pop("history", None)
-    session.update(fields)
-    if history is not None:
-        session["history"] = history[-MAX_HISTORY:]
-    _r.set(_key(session_id), json.dumps(session), ex=SESSION_TTL_SECONDS)
-    return session
-```
-
-Add `redis_url: str = "redis://localhost:6379/0"` to `app/core/config.py`'s `Settings`
-(same pattern as every other setting there), and a `redis` service to `docker-compose.yml`
-(a managed Redis/ElastiCache/Memorystore instance in production — don't self-host Redis
-persistence for session data that's expendable). This alone unblocks running more than one
-API replica without roleplay sessions randomly resetting.
+The frontend retains a private browser identity and restores its active chat.
+Real cross-device account authentication is still a separate integration. Archive
+recall currently uses keyword overlap and recency, not semantic embeddings.
+Local Chroma and CPU model copies remain the separate scaling limitations below.
 
 ## Tier 3: vector store — pick one, don't run both
 
@@ -307,3 +282,14 @@ Do these in order — each is independently shippable and leaves the system in a
 
 Steps 1–3 are what actually fix horizontal scaling; step 4 is an efficiency refinement, and
 step 5 is already in place.
+
+### Upgrading message resource storage
+
+Deploy the backend and frontend together. Chat schema initialization adds JSON
+`resources` and `options` columns to existing `chat_messages`, backfills stored
+citations, and preserves all existing transcripts. With a restricted app role, run
+`uv run python -m scripts.create_chat_tables` using the migration role before
+startup. PostgreSQL workers serialize upgrades under the existing advisory lock.
+No corpus migration or reindex is required. Unsaved browser-only resource cards
+from older versions cannot be reconstructed. Resource checkpoints are stored
+before streaming events, so interrupted responses retain their cards on reload.

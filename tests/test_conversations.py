@@ -1,6 +1,5 @@
 """Tests for the /conversations endpoints (sidebar list, message history,
-delete). These read app.services.session_store's in-process dict -- see that
-module's docstring for the single-worker limitation.
+delete). These read the owned database-backed conversation store.
 
 The session store is process-global and shared with the other test modules,
 so every assertion here filters to the session id it created rather than
@@ -73,40 +72,28 @@ def test_delete_unknown_session_is_404():
     assert client.delete("/conversations/does-not-exist").status_code == 404
 
 
-def test_list_sessions_is_safe_under_concurrent_mutation():
-    """list_sessions() must not raise "dictionary changed size during
-    iteration" while other threads insert/pop sessions. Reverting the
-    _sessions.copy() snapshot in list_sessions makes this fail intermittently.
-    """
-    import threading
+def test_store_persists_full_history_across_reopening(isolated_chat_store):
     import uuid
-
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
     from app.services import session_store
 
-    stop = threading.Event()
-    errors: list[Exception] = []
-
-    def churn():
-        while not stop.is_set():
-            sid = str(uuid.uuid4())
-            session_store.get_or_create_session(sid)
-            session_store.delete_session(sid)
-
-    def lister():
-        try:
-            for _ in range(3000):
-                session_store.list_sessions()
-        except Exception as e:  # noqa: BLE001 -- the point is to catch RuntimeError
-            errors.append(e)
-        finally:
-            stop.set()
-
-    t_churn = threading.Thread(target=churn, daemon=True)
-    t_list = threading.Thread(target=lister, daemon=True)
-    t_churn.start()
-    t_list.start()
-    t_list.join(timeout=15)
-    stop.set()
-    t_churn.join(timeout=5)
-
-    assert not errors, errors
+    owner = isolated_chat_store['user_id']
+    sid, _ = session_store.get_or_create_session(None, owner)
+    for i in range(15):
+        rid = str(uuid.uuid4())
+        lease = session_store.begin_turn(sid, owner, rid, f'question {i}')
+        session_store.finish_turn(sid, owner, rid, f'answer {i}', [], 'QA', lease=lease)
+    assert len(session_store.get_history(sid, owner)) == 30
+    fresh_engine = create_engine(isolated_chat_store['engine'].url).execution_options(
+        **isolated_chat_store['engine'].get_execution_options())
+    original = session_store.SessionLocal
+    try:
+        session_store.SessionLocal = sessionmaker(bind=fresh_engine)
+        history = session_store.get_history(sid, owner)
+        assert len(history) == 30
+        assert history[0]['content'] == 'question 0'
+        assert session_store.get_or_create_session(sid, owner)[1]['history'][-1]['content'] == 'answer 14'
+    finally:
+        session_store.SessionLocal = original
+        fresh_engine.dispose()

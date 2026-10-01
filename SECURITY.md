@@ -36,9 +36,15 @@ If an API key, database password or other secret is committed, pasted or shared 
 
 Be aware of these limitations when deploying:
 
-- The API has **no authentication or rate limiting**. It relies on network placement and on CORS
-  (`CORS_ALLOW_ORIGINS`) for browser callers. CORS does not stop non-browser clients.
-- Chat sessions are held in process memory and are listed by `GET /conversations` without any
-  per-user separation. Anyone who can reach the API can read and delete every session in that
-  process.
+- Chat, conversation and memory endpoints require a private opaque `X-Chat-Identity`
+  credential, whose SHA-256 hash is stored in PostgreSQL. Every operation checks ownership;
+  caller-supplied `user_id` values do not grant access. Treat the browser-held credential
+  as a bearer secret and use HTTPS outside local development.
+- Account authentication, credential recovery and rate limiting are not implemented.
+  `POST /identity` issues guest credentials. Browser storage loss means guest access is lost;
+  the UI's existing account/demo-login token is not verified by this backend.
+- Full transcripts and derived memories now persist in PostgreSQL. Protect and back up
+  that database as user data; forgetting a memory excludes its source chat from cross-chat
+  recall, while deleting a conversation removes its messages and sourced memories.
+- CORS (`CORS_ALLOW_ORIGINS`) restricts browser origins but does not authenticate clients.
 - The GPU service is protected by a single shared API key (`X-API-Key`).

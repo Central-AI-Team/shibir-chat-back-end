@@ -56,9 +56,9 @@ def _format_context(citations: list[Citation]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def give_suggestion(query: str) -> tuple[str, list[Citation]]:
+def give_suggestion(query: str, *, context=None, retrieval_query=None) -> tuple[str, list[Citation]]:
     # The `retrieve` trace span is emitted inside retrieve_stages().
-    citations = retrieve_relevant_docs(query)
+    citations = retrieve_relevant_docs(retrieval_query or query)
     relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
     tracing.record_gate(
         grounded=relevant,
@@ -74,8 +74,12 @@ def give_suggestion(query: str) -> tuple[str, list[Citation]]:
     else:
         system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=query)
 
+    from app.services.context import _CONTEXT_RULES
+    if context and context.messages():
+        system += "\n" + _CONTEXT_RULES
     response = complete("suggest", [
         {"role": "system", "content": system},
+        *(context.messages() if context else []),
         {"role": "user", "content": user},
     ])
     # content is None on a safety-filtered/empty completion -- ChatResponse.answer

@@ -9,6 +9,7 @@ NEW:
   app/rag/bm25_index.py)
 """
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -242,6 +243,10 @@ class Settings(BaseSettings):
         # own domain; this is the site calling it).
         "https://shibirgpt.potropollob.com",
     ]
+
+    # Conservative UTF-8 byte bound for stored context (upper bound on tokens).
+    chat_context_token_budget: int = Field(default=6000, ge=1024, le=32000)
+    chat_memory_results: int = Field(default=4, ge=0, le=20)
 
     host: str = "0.0.0.0"
     port: int = 9200

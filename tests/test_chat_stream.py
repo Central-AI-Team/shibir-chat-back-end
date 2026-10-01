@@ -70,7 +70,7 @@ def test_stream_qa_emits_sources_then_tokens_then_done():
     assert r.status_code == 200
     evs = _events(r.text)
     kinds = [e for e, _ in evs]
-    assert kinds[0] == "sources"
+    assert kinds[:2] == ["session", "sources"]
     assert kinds.count("token") == 3
     assert kinds[-1] == "done"
     assert json.loads(evs[-1][1])["mode"] == "qa"
@@ -90,7 +90,7 @@ def test_stream_note_emits_single_token_and_done():
 
     assert r.status_code == 200
     kinds = [e for e, _ in _events(r.text)]
-    assert kinds == ["sources", "token", "done"]
+    assert kinds == ["session", "sources", "token", "done"]
 
 
 def test_stream_rejects_empty_message():
@@ -144,6 +144,7 @@ class _FakeClient:
 
 
 def test_stream_trace_is_finalized_with_the_answer(monkeypatch):
+    monkeypatch.setattr(tracing.settings, "langfuse_enabled", True)
     fake_client = _FakeClient()
 
     monkeypatch.setattr(tracing, "is_enabled", lambda: True)
@@ -167,6 +168,7 @@ def test_stream_trace_is_finalized_with_the_answer(monkeypatch):
 
 
 def test_stream_qa_generation_receives_the_trace_id(monkeypatch):
+    monkeypatch.setattr(tracing.settings, "langfuse_enabled", True)
     fake_client = _FakeClient()
     monkeypatch.setattr(tracing, "is_enabled", lambda: True)
     monkeypatch.setattr(tracing, "_client", lambda: fake_client)
@@ -231,5 +233,5 @@ def test_stream_gpu_service_failure_emits_error_event():
         response = client.post("/chat/stream", json={"message": "প্রশ্ন?"})
 
     events = _events(response.text)
-    assert [e for e, _ in events] == ["error"]
-    assert json.loads(events[0][1])["detail"] == _LLM_UNAVAILABLE_DETAIL
+    assert [e for e, _ in events] == ["session", "error"]
+    assert json.loads(events[-1][1])["detail"] == _LLM_UNAVAILABLE_DETAIL

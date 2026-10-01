@@ -3,7 +3,7 @@
 Fixes the exact bug you described -- "direct bole je database e nai, but niche
 source diye dey". The old code was:
 
-    citations = retrieve_relevant_docs(query)
+    citations = retrieve_relevant_docs(retrieval_query or query)
     answer = generate_answer(query, citations)
     return QueryResponse(query=query, answer=answer, sources=citations)
 
@@ -112,7 +112,7 @@ def _is_conversational(query: str) -> bool:
     return _conversational_category(query) is not None
 
 
-def answer_question(query: str) -> QueryResponse:
+def answer_question(query: str, *, context=None, retrieval_query=None) -> QueryResponse:
     start = time.perf_counter()
 
     category = _conversational_category(query)
@@ -129,7 +129,7 @@ def answer_question(query: str) -> QueryResponse:
 
     # The `retrieve` trace span (full candidate pool + rerank scores) is
     # emitted inside retrieve_stages(); nothing to record here.
-    citations = retrieve_relevant_docs(query)
+    citations = retrieve_relevant_docs(retrieval_query or query)
 
     # The reranker score is the honest relevance signal. If even the best
     # candidate is below the bar, the corpus does not cover this question --
@@ -144,7 +144,7 @@ def answer_question(query: str) -> QueryResponse:
     )
     grounding = citations if relevant else []
 
-    answer = generate_answer(query, grounding)
+    answer = generate_answer(query, grounding, context=context) if context else generate_answer(query, grounding)
 
     response_time_ms = round((time.perf_counter() - start) * 1000, 2)
     if relevant:

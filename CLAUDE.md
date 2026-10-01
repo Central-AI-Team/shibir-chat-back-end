@@ -54,9 +54,11 @@ app/
                           names (no LLM call).
     roleplay_service.py   handle_roleplay(message, session) -> str. Persona extraction on the
                           first turn (task "persona"), then multi-turn chat. No retrieval (§8).
-    session_store.py      In-process dict of sessions (mode, persona, history capped at
-                          MAX_HISTORY = 20). Backs session continuity and /conversations.
-                          Single worker only.
+    session_store.py      Owned PostgreSQL conversations, full transcripts, request leases
+                          and idempotent retries. MAX_HISTORY limits prompt loading only.
+    context.py            Bounded shared context; follow-up resolution, cross-chat recall,
+                          background summaries and explicit preferences/goals.
+    identity.py           Private opaque browser credentials; only their hashes are stored.
   rag/
     chunker.py            normalize(text): NFC + whitespace cleanup; apply at ingest AND
                           query time. chunk_text(text): paragraph → danda (।) → period →
@@ -327,7 +329,7 @@ called from `/chat`.
 ```
 
 `session_id` is optional; the response returns the id to reuse on the next turn. `user_id` is
-optional and only groups Langfuse traces; no request logic reads it. Unknown fields are ignored.
+accepted for compatibility but ignored. Trace identity comes from the verified credential. Unknown fields are ignored.
 An empty message returns 400.
 
 **`POST /chat` response**
@@ -348,23 +350,58 @@ An empty message returns 400.
 }
 ```
 
-- `mode` is `qa`, `note`, `roleplay` or `suggestion`.
+- `mode` is `qa`, `note`, `roleplay`, `suggestion` or `memory` (personal recall, no book citations).
 - `sources` is `[]` for `note` and `roleplay`, and for `qa`/`suggestion` whenever retrieval did
   not pass the gate. It is never populated alongside a "not found" answer.
 - An upstream failure (OpenAI `APIError` or `GPUServiceError`) returns **503** with a Bengali
   "temporarily unavailable" detail, never a bare 500.
 
-**`POST /chat/stream`**: the same request and dispatch, returned as events `sources`, then one or
+**`POST /chat/stream`**: the same request and dispatch, returned as events `session`, `sources`, then one or
 more `token`, then `done` (`mode`, `session_id`, `response_time_ms`). QA streams token by token
 through `generator.stream_answer()`; the other modes send their whole answer as one `token`. An
 upstream failure emits a single `error` event instead.
 
-The front-end (`shibir-chat-front-end`) depends on these shapes. Keep changes backward-compatible.
+The front-end (`shibir-chat-front-end`) now sends the required chat credential and handles the early session event. Other API clients must adopt the credential header.
 
-**Sessions are single-worker.** `/conversations` and session continuity read
-`app.services.session_store`, a module-level dict. Sessions are lost on restart and invisible to
-other workers or pods. A shared store (Redis or a table) is required before running more than one
-worker.
+**Sessions are durable and owned.** `session_store.py` uses PostgreSQL chat tables,
+separate from corpus metadata. Startup initializes only those tables under an
+advisory lock. Full transcripts survive restarts/workers; the prompt window is
+bounded independently. `context.py` supplies recent messages, summaries and
+relevant older discussions to every mode. Follow-up resolution runs before
+classification/retrieval; memory never replaces book evidence. Reference detection
+must match Latin word boundaries and recognize elliptical `dao`/`দাও` replies to
+assistant offers; preserve the offered action and ask when a target is ambiguous.
+Do not infer a fresh chat's bare acceptance from unrelated cross-chat memory.
+Keep deterministic endpoint coverage in `tests/test_coreference.py`, with mocked
+model boundaries clearly distinguished from live language-quality evaluation. Summary/fact
+updates run after the response, use an optimistic cursor and source-message
+provenance, and retry on a later turn after failure. Raw transcripts remain a
+fallback. Roleplay messages are excluded from cross-chat memory.
+
+**Ownership contract:** first call `POST /identity`, retain the returned opaque
+token, and send it as `X-Chat-Identity` on every chat/conversation/memory request.
+A supplied `user_id` is not trusted. Unknown/deleted chat IDs return 404, other
+owners' IDs also return 404. `POST /conversations` explicitly creates a UUID chosen
+by the caller, idempotently. UUID `request_id` supports retries/replay. Concurrent
+turns return 409; expired workers cannot overwrite a newer lease. Streaming emits
+a `session` event before generation and stores interrupted responses separately.
+
+`GET /memories`, `DELETE /memories/{id}` and `PATCH /conversations/{id}` expose
+inspection, forgetting/exclusion and titles. Identity is currently browser/login-token
+scoped, not cross-device account authentication. See README's Conversation memory
+section for limits and the additive migration command.
+
+**Message resource contract:** `app/schemas/resources.py` defines canonical v1
+snapshots with ordered citations, web results and verification reports. Preserve
+JSON provider metadata; never fabricate citations in the browser on network
+failure. Normal chat, SSE completion, replay and history expose matching snapshots
+and compatible aliases. Checkpoint resources under the request lease BEFORE SSE
+resource events; interrupted cleanup must retain checkpoints. Startup upgrades
+existing chat message tables with `resources`/`options`, backfills legacy sources,
+and serializes PostgreSQL migrations under the same advisory lock. Keep upgrades
+idempotent and test both SQLite and PostgreSQL. See `tests/test_message_resources.py`
+and `scripts/message_resources_demo.py`. Web/verification providers and actual
+file uploads remain unimplemented; persistence support must not imply those exist.
 
 ## 8. Roleplay and suggestion
 
@@ -502,8 +539,9 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 | `OPENAI_API_KEY` | *(required)* | Used only through `app/core/llm.py`. |
 | `OPENAI_MODEL` | `gpt-5-mini` | Reasoning model; see the token-budget note in §5. |
 | `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `90` / `1` | Per LLM call. For streaming, the timeout bounds the gap between chunks. |
-| `MODEL_BY_TASK` | `{}` | JSON map from task (`intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`, `roleplay`) to model. Change only after an evaluation (§5). |
+| `MODEL_BY_TASK` | `{}` | JSON map from task (`intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`, `roleplay`, `context`, `memory`, `memory_answer`) to model. Change only after an evaluation (§5). |
 | `DATABASE_URL` | `postgresql+psycopg2://…` | SQLAlchemy DSN, **not** usable with `psql`. Use `app.db.session.SessionLocal` for one-off queries. |
+| `CHAT_CONTEXT_TOKEN_BUDGET` / `CHAT_MEMORY_RESULTS` | `6000` / `4` | Conservative context-token bound / relevant archive hits. |
 | `CORS_ALLOW_ORIGINS` | local Vite (`:5173`) + `https://shibirgpt.potropollob.com` | JSON list. An explicit allow-list, not `*`. |
 | `HOST` / `PORT` | `0.0.0.0` / `9200` | Not read by `run.sh` or the Dockerfile, which hard-code them (§14). |
 
@@ -597,9 +635,10 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
   on merge.
 - **Hard-coded host and port:** `run.sh` and the Dockerfile start uvicorn on `0.0.0.0:9200`
   regardless of `HOST`/`PORT`.
-- **Single-worker sessions:** `session_store.py` is an in-process dict (§7).
-- **No API authentication or rate limiting**, and `/conversations` exposes every session in the
-  process to any caller. See [SECURITY.md](SECURITY.md).
+- **No account authentication or rate limiting:** private guest credentials protect chat ownership,
+  but account login, credential recovery and cross-device account memory are not implemented.
+- **Archive recall:** keyword/suffix overlap and recency, not semantic memory embeddings; summary
+  quality depends on the configured LLM. Failed summary jobs retry on a later turn.
 - **Vector store:** still local Chroma. A move to pgvector or Qdrant is planned for a corpus of
   several million chunks, but not started.
 - **No lint/format tooling:** the dev dependency group contains only `pytest`.

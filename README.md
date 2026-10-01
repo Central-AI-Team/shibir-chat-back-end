@@ -86,7 +86,9 @@ Check it:
 
 ```bash
 curl -s http://127.0.0.1:9200/health
+CHAT_IDENTITY=$(curl -s -X POST http://127.0.0.1:9200/identity | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
 curl -s http://127.0.0.1:9200/chat -H "Content-Type: application/json" \
+  -H "X-Chat-Identity: $CHAT_IDENTITY" \
   -d '{"message": "যাকাতের অর্থ কোন কোন খাতে ব্যয় করা যায়?"}'
 ```
 
@@ -161,9 +163,14 @@ Leave `GPU_SERVICE_URL` empty to use the local models.
 | `GET` | `/health` | Liveness check. Returns `{"status": "ok"}`. |
 | `POST` | `/chat` | Main entry point. Classifies the message and returns an answer. |
 | `POST` | `/chat/stream` | Same as `/chat`, as Server-Sent Events. |
-| `GET` | `/conversations` | Sessions handled by this process, most recent first. |
+| `GET` | `/conversations` | Only your durable conversations, most recent first. |
 | `GET` | `/conversations/{id}/messages` | Messages in one session (`404` if unknown). |
 | `DELETE` | `/conversations/{id}` | Delete a session (`204`, or `404` if unknown). |
+
+All chat, conversation and memory endpoints require `X-Chat-Identity`. Obtain a
+private credential from `POST /identity` once and retain it securely. Identity is
+verified by its hashed opaque token; the request's `user_id` field never grants
+ownership. The frontend creates and retains this credential automatically.
 
 ### `POST /chat`
 
@@ -174,7 +181,7 @@ Request:
 ```
 
 - `session_id`: omit to start a new session. Send back the returned value to continue it.
-- `user_id`: optional; used only to group traces in Langfuse.
+- `user_id`: deprecated compatibility field, ignored. Traces use the verified identity.
 
 Response:
 
@@ -207,15 +214,95 @@ the LLM or the GPU service fails.
 
 Same request body. The response is `text/event-stream` with these events, in order:
 
-1. `sources`: `{"sources": [...]}`
-2. `token` (one or more): `{"text": "..."}`. `qa` streams token by token; other modes send
+1. `session`: `{"session_id", "request_id"}`, before generation starts.
+2. `sources`: `{"sources": [...]}`.
+3. Optional `web_results`: `{"results": [...]}` and `verification`: `{"verification": {...}}`,
+   when provided by the server.
+4. `token` (one or more): `{"text": "..."}`. QA streams tokens; other modes send
    the whole answer in one event.
-3. `done`: `{"mode", "session_id", "response_time_ms"}`
+5. `done`: the complete chat response, including `resources`, compatible top-level
+   resource fields, `mode`, `session_id`, `answer`, and `response_time_ms`.
 
-On an upstream failure a single `error` event (`{"detail": "..."}`) is sent instead.
+Failures emit an `error` event (`{"detail": "..."}`); partial resource snapshots
+remain durable. Conversations are shared across workers and survive restarts.
 
-> **Note:** Sessions are held in process memory. They are lost on restart and are not shared
-> between workers, so run a single uvicorn worker until a shared session store is added.
+## Conversation memory
+
+Conversations, full message history, summaries and user preferences are stored in
+four PostgreSQL tables. Startup creates missing chat tables and upgrades existing
+chat message tables under an advisory lock; corpus tables are untouched. For a deployment role without DDL
+permission, run `uv run python -m scripts.create_chat_tables` with a migration role
+before starting the app.
+
+All modes use bounded context (recent messages, a summary and relevant older
+messages). Follow-up references are resolved before classification and retrieval.
+English `it`/`that`, Bengali references, and short Banglish/Bengali acceptances such
+as `dao`, `daw`, `দাও`, and `নোট দাও` use the latest topic or assistant offer.
+Ambiguous targets ask for clarification. Bare acceptance in a fresh conversation
+requires a local antecedent; it does not silently select an archived conversation.
+Latin matching uses word boundaries so `habit`/`credit` do not trigger `it`.
+Standalone requests naming their target continue normally.
+Memory is context, never authoritative book evidence. `/chat` and `/chat/stream`
+share the same preparation. A separate `memory` mode recalls your prior discussions
+with no book citations. Roleplay personas remain local to their conversation.
+
+Summaries and explicit preferences/goals are refreshed after responses. If the
+model is unavailable, full transcripts remain searchable; the summary cursor is
+not advanced and a later turn retries. `POST /conversations` accepts a client-chosen
+UUID for idempotent creation; `/chat` never recreates an unknown/deleted ID. Use a
+UUID `request_id` to replay a completed request or retry an interrupted one without
+duplicating messages. Concurrent turns in one chat return 409. A worker claim
+expires after 15 minutes if its process dies.
+
+`GET /memories` lists saved facts. `DELETE /memories/{id}` forgets facts from that
+source chat and excludes the source chat from cross-chat recall. A transcript
+remains visible to its owner. `PATCH /conversations/{id}` supports `title` and
+`memory_enabled`; disabling memory also removes facts sourced from that chat.
+Deleting a conversation removes its messages and sourced memories. The frontend's
+Memory panel exposes forgetting and excluding the current chat, and its active
+conversation survives a page refresh.
+
+Identity currently belongs to this browser/login-token scope, not a verified
+account across devices. This backend does not implement the UI's account-login
+endpoints. Clearing browser storage loses the guest credential. Existing ephemeral
+sessions cannot be recovered after restart or assigned to an owner safely.
+
+`CHAT_CONTEXT_TOKEN_BUDGET` defaults to 6000; UTF-8 byte accounting provides a
+conservative upper bound on context tokens, reserving framing space.
+`CHAT_MEMORY_RESULTS` defaults to 4. Archive retrieval uses keyword/suffix overlap
+and recency over transcripts and summaries; it is not semantic vector retrieval.
+New model-routing tasks are `context`, `memory`, and `memory_answer`, configurable
+through `MODEL_BY_TASK` like existing tasks.
+
+Run `uv run python -m scripts.context_memory_demo` for an isolated, mocked
+before/after prompt inspection. Chat tests use temporary SQLite; set
+`CHAT_TEST_DATABASE_URL` to an isolated PostgreSQL database to run them in temporary
+schemas that are dropped after each test.
+
+### Durable message resources
+
+Each message has a versioned `resources` snapshot: `version: 1`, ordered `sources`,
+`web_results`, and `verification`. Citations retain JSON metadata such as page,
+section, URL and provider provenance. Normal responses, streaming completion,
+request replay and conversation history return the same snapshot; top-level
+`sources`, `web_results` and `verification` remain compatibility aliases. The
+frontend uses the same normalization for live responses and restored history.
+
+Resources are committed before their SSE events are sent. Stopping a response,
+a lost connection, or a worker crash keeps its checkpoint; the conversation lease
+prevents an older worker overwriting a newer response. Request options are saved
+for regeneration, and reusing a request ID with different text/options returns 409.
+
+Startup adds `chat_messages.resources` and `chat_messages.options` to an existing
+chat database and backfills resources from stored citations. Repeated upgrades
+preserve newer snapshots. Previously unsaved browser-only cards cannot be recovered.
+The synthetic offline response was removed: connectivity failures now surface as
+retryable errors instead of displaying unsaved citations or verification results.
+
+This stores server-supplied web/verification resources; this backend does not yet
+implement live web-search or claim-verification providers. File-upload persistence
+is outside this resource contract. Run `uv run python -m scripts.message_resources_demo`
+for a local reload/replay/interruption demonstration with explicit fixture cards.
 
 ## Operations
 

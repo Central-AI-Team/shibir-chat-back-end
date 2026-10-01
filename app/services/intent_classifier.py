@@ -69,9 +69,10 @@ QA - ব্যবহারকারী সরাসরি কোনো তথ্
 অন্য কিছু লিখো না।"""
 
 
-def _classify_with_llm(message: str) -> str:
+def _classify_with_llm(message: str, context=None) -> str:
     response = complete("intent", [
         {"role": "system", "content": _CLASSIFIER_SYSTEM},
+        *(context.messages() if context else []),
         {"role": "user", "content": message},
     ])
     raw = (response.choices[0].message.content or "").strip().upper()
@@ -82,7 +83,7 @@ def _classify_with_llm(message: str) -> str:
     return "QA"
 
 
-def classify_intent(message: str, has_active_roleplay_session: bool) -> str:
+def classify_intent(message: str, has_active_roleplay_session: bool, *, context=None) -> str:
     normalized = message.strip()
 
     if has_active_roleplay_session and not _ROLEPLAY_EXIT_RE.search(normalized):
@@ -96,6 +97,6 @@ def classify_intent(message: str, has_active_roleplay_session: bool) -> str:
             tracing.record_intent(intent, method="regex")
             return intent
 
-    result = _classify_with_llm(normalized)
+    result = _classify_with_llm(normalized, context)
     tracing.record_intent(result, method="llm")
     return result

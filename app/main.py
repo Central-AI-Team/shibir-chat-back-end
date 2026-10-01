@@ -12,6 +12,9 @@ from app.core.config import settings
 async def lifespan(app: FastAPI):
     # Pay the langfuse SDK import + client-init cost now, not on the first
     # /chat request. No-op when tracing is disabled; never raises.
+    from app.db.chat_models import initialize_chat_schema
+    from app.db.session import engine
+    initialize_chat_schema(engine)  # additive chat tables only; never touches corpus
     tracing.init()
     yield
     # Flush any buffered Langfuse events on graceful shutdown. No-op when
@@ -27,7 +30,7 @@ app = FastAPI(title="Shibir Chat Backend", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allow_origins,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
 

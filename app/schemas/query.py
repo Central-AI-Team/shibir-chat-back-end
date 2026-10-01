@@ -1,28 +1,19 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+from app.schemas.resources import Citation, ResourceFields
 
 
 class QueryRequest(BaseModel):
     query: str
 
 
-class Citation(BaseModel):
-    book: str
-    chapter: str
-    source_db: str
-    content: str
-    # NEW -- so you can see WHY something was retrieved. Essential for tuning
-    # min_rerank_score, and for spotting bad retrieval from the API response
-    # alone instead of guessing.
-    similarity: float | None = None
-    rerank_score: float | None = None
-
-
-class QueryResponse(BaseModel):
+class QueryResponse(ResourceFields):
     query: str
     answer: str
-    sources: list[Citation]
     response_time_ms: float
 
 
@@ -46,18 +37,19 @@ class NoteByTextResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str
-    session_id: str | None = None
-    # Optional caller-supplied user / anonymous id. Not used by any request
-    # logic -- it is only forwarded to Langfuse (when tracing is enabled) so
-    # traces can be grouped per end user. Safe to omit.
+    message: str = Field(min_length=1, max_length=12000)
+    session_id: UUID | None = None
+    request_id: UUID | None = None
+    # Deprecated compatibility field. Ownership and trace user IDs come only
+    # from the verified X-Chat-Identity credential; this value is ignored.
     user_id: str | None = None
+    search_web: bool = False
+    verify_claim: bool = False
 
 
-class ChatResponse(BaseModel):
-    mode: str  # "note" | "roleplay" | "suggestion" | "qa"
+class ChatResponse(ResourceFields):
+    mode: str  # "note" | "roleplay" | "suggestion" | "qa" | "memory"
     answer: str
-    sources: list[Citation] = []
     session_id: str
     response_time_ms: float
 
@@ -68,10 +60,17 @@ class ConversationSummary(BaseModel):
     id: str
     title: str
     message_count: int
+    memory_enabled: bool = True
     created_at: datetime
     updated_at: datetime
 
 
-class ConversationMessage(BaseModel):
+class ConversationMessage(ResourceFields):
+    id: str
+    sequence: int
+    status: str
+    request_id: str
+    mode: str | None = None
+    options: dict[str, bool] = Field(default_factory=dict)
     role: str  # "user" | "assistant"
     content: str

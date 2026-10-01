@@ -52,10 +52,23 @@ def _format_context(citations: list[Citation]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def _messages(query, citations, context=None):
+    from app.services.context import _CONTEXT_RULES
+    system = _SYSTEM
+    if context and context.messages():
+        system += "\n" + _CONTEXT_RULES
+    return [
+        {"role": "system", "content": system},
+        *(context.messages() if context else []),
+        {"role": "user", "content": _USER.format(context=_format_context(citations), query=query)},
+    ]
+
+
 def generate_answer(
     query: str,
     citations: list[Citation],
     *,
+    context=None,
     model: str | None = None,
     client=None,
     extra_params: dict | None = None,
@@ -69,12 +82,7 @@ def generate_answer(
     eval script does, to run this exact prompt through an arbitrary model)
     bypasses that routing entirely and calls exactly what was asked for.
     """
-    messages = [
-        {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": _USER.format(
-            context=_format_context(citations), query=query
-        )},
-    ]
+    messages = _messages(query, citations, context)
     if model is None and client is None:
         response = complete("qa", messages, **(extra_params or {}))
     else:
@@ -98,6 +106,7 @@ def stream_answer(
     query: str,
     citations: list[Citation],
     *,
+    context=None,
     trace_id: str | None = None,
     parent_observation_id: str | None = None,
 ):
@@ -117,12 +126,7 @@ def stream_answer(
     context app/core/llm.py would otherwise read is not visible by this point
     (see app/core/tracing.py's module docstring). None -> unchanged.
     """
-    messages = [
-        {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": _USER.format(
-            context=_format_context(citations), query=query
-        )},
-    ]
+    messages = _messages(query, citations, context)
     extra = {}
     if trace_id:
         extra["trace_id"] = trace_id

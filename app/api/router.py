@@ -1,39 +1,16 @@
-"""HTTP layer.
-
-Routes:
-  GET    /health
-  POST   /chat                            classify intent -> NOTE / ROLEPLAY /
-                                          SUGGESTION / QA and dispatch
-  POST   /chat/stream                     same dispatch, Server-Sent Events;
-                                          the QA answer streams token-by-token
-  GET    /conversations                   sidebar list (this worker's sessions)
-  GET    /conversations/{id}/messages     the [{role, content}] turns
-  DELETE /conversations/{id}              forget a session
-
-/chat is the single entry point for every user-facing interaction -- it
-classifies the free-text message into NOTE / ROLEPLAY / SUGGESTION / QA (see
-app.services.intent_classifier) and dispatches internally to the matching
-service. The previous /ask, /note, /note-by-text endpoints have been removed;
-their underlying service functions (answer_question, generate_chapter_note,
-generate_book_notes_from_text) are unchanged and are still called from here,
-just not exposed as separate routes.
-
-The /conversations endpoints read app.services.session_store, which is an
-in-process dict -- see that module's docstring: they only see sessions this
-worker handled and lose everything on restart. Good enough for the current
-single-worker deployment; a shared store (Redis / DB) is the upgrade path.
-"""
-
+"""Owned, durable conversations. Streaming and normal chat share context preparation."""
 from __future__ import annotations
 
 import json
 import logging
 import random
 import time
+import uuid
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from openai import APIError
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.core import tracing
@@ -41,351 +18,292 @@ from app.core.config import settings
 from app.rag.gpu_client import GPUServiceError
 from app.rag.generator import stream_answer
 from app.rag.retriever import retrieve_relevant_docs
-from app.schemas.query import (
-    ChatRequest,
-    ChatResponse,
-    Citation,
-    ConversationMessage,
-    ConversationSummary,
-)
+from app.schemas.query import ChatRequest, ChatResponse, ConversationMessage, ConversationSummary
+from app.schemas.resources import MessageResources, resource_snapshot
+from app.services.context import build_context, resolve_followup, is_memory_question, answer_from_memory, refresh_memory
+from app.services.identity import create_identity, require_identity
 from app.services.intent_classifier import classify_intent
 from app.services.note_service import generate_book_notes_from_text
-from app.services.qa_service import (
-    _CONVERSATIONAL_REPLIES,
-    _conversational_category,
-    answer_question,
-)
+from app.services.qa_service import _CONVERSATIONAL_REPLIES, _conversational_category, answer_question
 from app.services.roleplay_service import handle_roleplay
-from app.services.session_store import (
-    append_history,
-    delete_session,
-    get_history,
-    get_or_create_session,
-    list_sessions,
-    update_session,
-)
+from app.services.session_store import (begin_turn, finish_turn, checkpoint_resources, delete_session, get_history,
+    get_or_create_session, list_sessions, list_memories, delete_memory, edit_session, create_conversation)
 from app.services.suggestion_service import give_suggestion
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
-_LLM_UNAVAILABLE_DETAIL = "উত্তর তৈরির সার্ভিস সাময়িকভাবে অনুপলব্ধ। কিছুক্ষণ পর আবার চেষ্টা করুন।"
-_UNEXPECTED_ERROR_DETAIL = "একটি অপ্রত্যাশিত সমস্যা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।"
+
+class DurableStreamingResponse(StreamingResponse):
+    def __init__(self, iterator, *, cleanup, **kwargs):
+        self.iterator = iterator
+        self.cleanup = cleanup
+        super().__init__(iterator, **kwargs)
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Starlette wraps synchronous generators; explicitly close on disconnect.
+            await run_in_threadpool(self.iterator.close)
+            await run_in_threadpool(self.cleanup)
+
+_LLM_UNAVAILABLE_DETAIL = 'উত্তর তৈরির সার্ভিস সাময়িকভাবে অনুপলব্ধ। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+_UNEXPECTED_ERROR_DETAIL = 'একটি অপ্রত্যাশিত সমস্যা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।'
 
 
-def _format_note_result(result: dict) -> str:
-    if "error" in result:
-        return result["error"]
+def _format_note_result(result):
+    if 'error' in result:
+        return result['error']
     parts = [f"বই: {result['book']}"]
-    for chapter in result["chapters"]:
+    for chapter in result['chapters']:
         parts.append(f"\n{chapter['chapter']}\n{chapter['note']}")
-    return "\n".join(parts)
+    return '\n'.join(parts)
 
 
-def _record_turn(session_id: str, intent: str, message: str, answer: str) -> None:
-    """Persist one user+assistant turn to the session history.
-
-    Skipped for ROLEPLAY: roleplay_service already appends both turns to
-    session["history"] itself, so recording again here would double them.
-    """
-    if intent != "ROLEPLAY":
-        append_history(session_id, "user", message)
-        append_history(session_id, "assistant", answer)
+def _sse(event, data):
+    return f'event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n'
 
 
-# ---------------------------------------------------------------------------
-# health
-# ---------------------------------------------------------------------------
+def _prepare(message, session, context):
+    roleplaying = session.get('mode') == 'ROLEPLAY'
+    category = None if roleplaying else _conversational_category(message)
+    if category:
+        tracing.record_intent('QA', method='conversational_shortcut')
+        return 'QA', message, random.choice(_CONVERSATIONAL_REPLIES[category])
+    if not roleplaying and is_memory_question(message):
+        return 'MEMORY', message, answer_from_memory(message, context)
+    query, clarification = (message, None) if roleplaying else resolve_followup(message, context)
+    if clarification:
+        return 'QA', query, clarification
+    intent = classify_intent(query, roleplaying, context=context) if context.messages() else classify_intent(query, roleplaying)
+    return intent, query, None
 
 
-@router.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+def _dispatch(intent, message, query, session, context):
+    has_context = bool(context.messages())
+    if intent == 'NOTE':
+        return _format_note_result(generate_book_notes_from_text(query)), MessageResources()
+    if intent == 'ROLEPLAY':
+        answer = handle_roleplay(message, session, context=context) if has_context else handle_roleplay(message, session)
+        return answer, MessageResources()
+    if intent == 'SUGGESTION':
+        answer, sources = give_suggestion(message, context=context, retrieval_query=query) if has_context else give_suggestion(message)
+        return answer, _bundle(sources)
+    qa = answer_question(message, context=context, retrieval_query=query) if has_context else answer_question(message)
+    return qa.answer, qa.resources
 
 
-# ---------------------------------------------------------------------------
-# chat (non-streaming)
-# ---------------------------------------------------------------------------
+def _bundle(value):
+    return resource_snapshot(sources=value) if isinstance(value, list) else resource_snapshot(value)
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(body: ChatRequest) -> ChatResponse:
+def _resource_events(resources):
+    data = resources.model_dump(mode='json')
+    yield _sse('sources', {'sources': data['sources']})
+    if data['web_results']:
+        yield _sse('web_results', {'results': data['web_results']})
+    if data['verification'] is not None:
+        yield _sse('verification', {'verification': data['verification']})
+
+
+def _qa_stream(message, *, query=None, context=None, trace_id=None, parent_observation_id=None):
+    citations = retrieve_relevant_docs(query or message)
+    relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
+    tracing.record_gate(grounded=relevant, top_score=citations[0].rerank_score if citations else None,
+                        threshold=settings.min_rerank_score)
+    grounding = citations if relevant else []
+    extra = {'trace_id': trace_id, 'parent_observation_id': parent_observation_id}
+    if context and context.messages():
+        extra['context'] = context
+    return grounding, stream_answer(message, grounding, **extra)
+
+
+@router.get('/health')
+def health():
+    return {'status': 'ok'}
+
+
+@router.post('/identity', status_code=201)
+def identity():
+    return create_identity()
+
+
+@router.get('/identity')
+def current_identity(owner_id: str = Depends(require_identity)):
+    return {'user_id': owner_id}
+
+
+def _start(body, owner_id):
     message = body.message.strip()
     if not message:
-        raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
+        raise HTTPException(400, 'message খালি রাখা যাবে না।')
+    sid, session = get_or_create_session(str(body.session_id) if body.session_id else None, owner_id)
+    rid = str(body.request_id or uuid.uuid4())
+    claim = begin_turn(sid, owner_id, rid, message, options={
+        key: True for key in ('search_web', 'verify_claim') if getattr(body, key)
+    })
+    replay = claim if isinstance(claim, dict) else None
+    lease = claim if isinstance(claim, str) else None
+    if lease:
+        _, session = get_or_create_session(sid, owner_id)
+        session['history'] = [m for m in session['history'] if m['request_id'] != rid]
+    return message, sid, rid, session, replay, lease
 
-    session_id, session = get_or_create_session(body.session_id)
-    was_roleplaying = session.get("mode") == "ROLEPLAY"
 
-    # One Langfuse trace per request -- every nested LLM call (via
-    # app/core/llm.py) and every pipeline-stage span groups under it. No-op
-    # when tracing is disabled. Everything tracing-related below is inside the
-    # try/finally so a tracing failure can never affect the response.
-    tracing.start_request_trace(
-        name="chat", query=message, session_id=session_id, user_id=body.user_id
-    )
+@router.post('/chat', response_model=ChatResponse)
+async def chat(body: ChatRequest, background_tasks: BackgroundTasks, owner_id: str = Depends(require_identity)):
+    message, sid, rid, session, replay, lease = await run_in_threadpool(_start, body, owner_id)
+    if replay:
+        return ChatResponse(**replay)
     start = time.perf_counter()
-    intent = "QA"
-    answer = ""
-    sources: list[Citation] = []
-    trace_error = False
+    intent, answer, sources, success = 'QA', '', [], False
+    resources = MessageResources()
+    tracing.start_request_trace(name='chat', query=message, session_id=sid, user_id=owner_id)
     try:
-        try:
-            # Small talk (greetings/thanks/farewells) is checked before the
-            # intent classifier, not after: classify_intent() can fall back to
-            # an LLM call for anything its own regexes miss, and a plain
-            # "thank you" doesn't match any of them. Checking here first means
-            # small talk gets an instant canned reply with no LLM call at all,
-            # instead of only being caught downstream inside answer_question()
-            # after already paying for an intent-classification round trip.
-            # Skipped while an active roleplay is in progress, so an in-session
-            # "thank you" still gets handled by classify_intent()'s
-            # roleplay-continuation / exit-phrase logic instead of breaking
-            # character.
-            category = None if was_roleplaying else _conversational_category(message)
-            if category is not None:
-                intent = "QA"
-                answer = random.choice(_CONVERSATIONAL_REPLIES[category])
-                sources = []
-                tracing.record_intent(intent, method="conversational_shortcut")
-            else:
-                # classify_intent can fall back to an LLM call, so it goes through
-                # the threadpool the same as the dispatch branches below.
-                intent = await run_in_threadpool(classify_intent, message, was_roleplaying)
-
-                if intent == "NOTE":
-                    result = await run_in_threadpool(generate_book_notes_from_text, message)
-                    answer = _format_note_result(result)
-                elif intent == "ROLEPLAY":
-                    answer = await run_in_threadpool(handle_roleplay, message, session)
-                elif intent == "SUGGESTION":
-                    answer, sources = await run_in_threadpool(give_suggestion, message)
-                else:  # QA
-                    qa_response = await run_in_threadpool(answer_question, message)
-                    answer, sources = qa_response.answer, qa_response.sources
-        except (APIError, GPUServiceError) as e:
-            # An upstream dependency failed: the LLM call (quota, bad key,
-            # outage, ...) or the external GPU embed/rerank service. Surface
-            # as a clean 503 instead of a bare 500 -- the client should retry,
-            # not treat this like a malformed request.
-            trace_error = True
-            raise HTTPException(status_code=503, detail=_LLM_UNAVAILABLE_DETAIL) from e
-
-        if was_roleplaying and intent != "ROLEPLAY":
-            # Explicit exit phrase was detected -- drop out of roleplay mode and
-            # clear the persona so a future roleplay starts fresh instead of
-            # picking the old character back up.
-            update_session(session_id, mode=intent, persona=None)
+        context = await run_in_threadpool(build_context, message, sid, owner_id, rid)
+        intent, query, shortcut = await run_in_threadpool(_prepare, message, session, context)
+        if shortcut is not None:
+            answer = shortcut
         else:
-            update_session(session_id, mode=intent)
-
-        _record_turn(session_id, intent, message, answer)
-
-        response_time_ms = round((time.perf_counter() - start) * 1000, 2)
-        return ChatResponse(
-            mode=intent.lower(),
-            answer=answer,
-            sources=sources,
-            session_id=session_id,
-            response_time_ms=response_time_ms,
-        )
+            answer, resources = await run_in_threadpool(_dispatch, intent, message, query, session, context)
+            resources = _bundle(resources)
+            sources = resources.sources
+        persona = session.get('persona') if intent == 'ROLEPLAY' else None
+        saved = await run_in_threadpool(finish_turn, sid, owner_id, rid, answer,
+            [c.model_dump() for c in sources], intent, persona, lease=lease, resources=resources)
+        if not saved:
+            raise HTTPException(409, 'Conversation request lease expired.')
+        success = True
+        background_tasks.add_task(refresh_memory, sid, owner_id)
+        return ChatResponse(mode=intent.lower(), answer=answer, resources=resources, session_id=sid,
+            response_time_ms=round((time.perf_counter() - start) * 1000, 2))
+    except (APIError, GPUServiceError) as e:
+        raise HTTPException(503, _LLM_UNAVAILABLE_DETAIL) from e
     finally:
-        tracing.finalize_request_trace(
-            answer=answer,
-            sources=sources,
-            mode=intent.lower(),
-            response_time_ms=round((time.perf_counter() - start) * 1000, 2),
-            error=trace_error,
-        )
+        if not success:
+            await run_in_threadpool(finish_turn, sid, owner_id, rid, answer, [], session.get('mode'), session.get('persona'), False, lease=lease)
+        tracing.finalize_request_trace(answer=answer, sources=sources, mode=intent.lower(),
+            response_time_ms=round((time.perf_counter() - start) * 1000, 2), error=not success)
         tracing.clear_request_trace()
 
 
-# ---------------------------------------------------------------------------
-# chat (streaming, Server-Sent Events)
-# ---------------------------------------------------------------------------
+@router.post('/chat/stream')
+def chat_stream(body: ChatRequest, background_tasks: BackgroundTasks, owner_id: str = Depends(require_identity)):
+    message, sid, rid, session, replay, lease = _start(body, owner_id)
 
+    state = {'complete': bool(replay), 'answer': '', 'resources': None}
 
-def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    def cleanup():
+        if not state['complete']:
+            finish_turn(sid, owner_id, rid, state['answer'], [], session.get('mode'),
+                        session.get('persona'), False, lease=lease, resources=state['resources'])
 
+    def publish(resources):
+        # Commit before displaying cards: disconnects and worker crashes cannot lose them.
+        if not checkpoint_resources(sid, owner_id, rid, resources, lease=lease):
+            raise RuntimeError('Conversation request lease expired.')
+        state['resources'] = resources
+        yield from _resource_events(resources)
 
-def _qa_stream(
-    message: str, *, trace_id: str | None = None, parent_observation_id: str | None = None
-):
-    """Return (sources, answer_delta_iterator) for a QA message, mirroring
-    the relevance gate in qa_service.answer_question -- that function stays
-    the source of truth for the non-streaming path; keep this in sync.
-
-    trace_id/parent_observation_id are threaded through to stream_answer() so
-    the streamed QA generation nests under the request's root span -- the
-    streaming path can't rely on ambient trace context for this (see
-    app/core/tracing.py's module docstring).
-    """
-    # Same cheap deterministic small-talk shortcut as answer_question: a
-    # greeting has nothing to retrieve against, so answer it directly with
-    # no retriever / LLM call.
-    category = _conversational_category(message)
-    if category is not None:
-        return [], iter([random.choice(_CONVERSATIONAL_REPLIES[category])])
-
-    # The `retrieve-context` span is emitted inside retrieve_stages().
-    citations = retrieve_relevant_docs(message)
-    relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
-    tracing.record_gate(
-        grounded=relevant,
-        top_score=citations[0].rerank_score if citations else None,
-        threshold=settings.min_rerank_score,
-    )
-    grounding = citations if relevant else []
-    return grounding, stream_answer(
-        message, grounding, trace_id=trace_id, parent_observation_id=parent_observation_id
-    )
-
-
-@router.post("/chat/stream")
-def chat_stream(body: ChatRequest) -> StreamingResponse:
-    message = body.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
-
-    session_id, session = get_or_create_session(body.session_id)
-    was_roleplaying = session.get("mode") == "ROLEPLAY"
-
-    # A plain (sync) generator: Starlette iterates it in a threadpool, so the
-    # blocking retriever / LLM-stream calls below don't stall the event loop.
     def gen():
-        # One trace per streamed request. Starlette pulls this generator one
-        # next() at a time via anyio.to_thread.run_sync, each call in its own
-        # copied context, so the ambient trace context set inside
-        # start_request_trace() is only visible during the FIRST iteration
-        # (which is enough for the intent/rewrite/retrieve/gate spans -- they
-        # all run before the first yield). Anything that needs the trace
-        # after that -- the streamed QA generation, and
-        # finalize_request_trace() in the finally -- gets it from `trace` /
-        # `trace_id` / `parent_observation_id` captured here instead. No-op
-        # when disabled. See app/core/tracing.py's module docstring.
-        trace = tracing.start_request_trace(
-            name="chat_stream", query=message, session_id=session_id,
-            user_id=body.user_id,
-        )
-        trace_id = tracing.trace_id_of(trace)
-        parent_observation_id = tracing.parent_observation_id_of(trace)
+        yield _sse('session', {'session_id': sid, 'request_id': rid})
+        if replay:
+            yield from _resource_events(resource_snapshot(replay['resources']))
+            yield _sse('token', {'text': replay['answer']})
+            yield _sse('done', replay)
+            return
+        trace = tracing.start_request_trace(name='chat_stream', query=message, session_id=sid, user_id=owner_id)
         start = time.perf_counter()
-        intent = "QA"
-        answer = ""
-        sources = []
-        trace_error = False
+        intent, answer, success = 'QA', '', False
+        resources = MessageResources()
         try:
-            try:
-                # See the matching comment in chat() above: checked before
-                # classify_intent() so small talk never pays for an LLM call.
-                category = None if was_roleplaying else _conversational_category(message)
-                if category is not None:
-                    intent = "QA"
-                    answer = random.choice(_CONVERSATIONAL_REPLIES[category])
-                    sources = []
-                    tracing.record_intent(intent, method="conversational_shortcut")
-                    yield _sse("sources", {"sources": []})
-                    yield _sse("token", {"text": answer})
-                else:
-                    intent = classify_intent(message, was_roleplaying)
-
-                    if intent == "QA":
-                        sources, deltas = _qa_stream(
-                            message, trace_id=trace_id, parent_observation_id=parent_observation_id
-                        )
-                        yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
-                        for delta in deltas:
-                            answer += delta
-                            yield _sse("token", {"text": delta})
-                    else:
-                        if intent == "NOTE":
-                            answer = _format_note_result(generate_book_notes_from_text(message))
-                            sources = []
-                        elif intent == "ROLEPLAY":
-                            answer = handle_roleplay(message, session)
-                            sources = []
-                        else:  # SUGGESTION
-                            answer, sources = give_suggestion(message)
-                        # These paths produce a whole answer at once -- emit it as a
-                        # single token event so the client renders them uniformly.
-                        yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
-                        yield _sse("token", {"text": answer})
-            except (APIError, GPUServiceError):
-                trace_error = True
-                yield _sse("error", {"detail": _LLM_UNAVAILABLE_DETAIL})
-                return
-            except Exception:
-                # Anything else (DB, retriever, reranker, a bug) reaching this
-                # point is after the SSE response has already started (200 OK
-                # headers sent), so raising would just drop the connection --
-                # the client sees an opaque browser-level network error with
-                # no explanation. Emit a real error event instead, and log
-                # the traceback server-side since the client never sees it.
-                trace_error = True
-                logger.exception("chat_stream_unexpected_error query=%r", message)
-                yield _sse("error", {"detail": _UNEXPECTED_ERROR_DETAIL})
-                return
-
-            if was_roleplaying and intent != "ROLEPLAY":
-                update_session(session_id, mode=intent, persona=None)
+            context = build_context(message, sid, owner_id, rid)
+            intent, query, shortcut = _prepare(message, session, context)
+            if shortcut is not None:
+                deltas = iter([shortcut])
+            elif intent == 'QA':
+                value, deltas = _qa_stream(message, query=query, context=context,
+                    trace_id=tracing.trace_id_of(trace), parent_observation_id=tracing.parent_observation_id_of(trace))
+                resources = _bundle(value)
             else:
-                update_session(session_id, mode=intent)
-            _record_turn(session_id, intent, message, answer)
-
-            response_time_ms = round((time.perf_counter() - start) * 1000, 2)
-            yield _sse(
-                "done",
-                {
-                    "mode": intent.lower(),
-                    "session_id": session_id,
-                    "response_time_ms": response_time_ms,
-                },
-            )
+                answer, value = _dispatch(intent, message, query, session, context)
+                resources = _bundle(value)
+                deltas = iter([answer])
+                answer = ''
+            yield from publish(resources)
+            for delta in deltas:
+                answer += delta
+                state['answer'] = answer
+                yield _sse('token', {'text': delta})
+            saved = finish_turn(sid, owner_id, rid, answer, [], intent,
+                        session.get('persona') if intent == 'ROLEPLAY' else None,
+                        lease=lease, resources=resources)
+            if not saved:
+                raise RuntimeError('Conversation request lease expired.')
+            success = True
+            state['complete'] = True
+            background_tasks.add_task(refresh_memory, sid, owner_id)
+            yield _sse('done', ChatResponse(mode=intent.lower(), answer=answer, resources=resources,
+                session_id=sid, response_time_ms=round((time.perf_counter() - start) * 1000, 2)).model_dump(mode='json'))
+        except (APIError, GPUServiceError):
+            yield _sse('error', {'detail': _LLM_UNAVAILABLE_DETAIL})
+        except Exception:
+            logger.exception('chat_stream_unexpected_error')
+            yield _sse('error', {'detail': _UNEXPECTED_ERROR_DETAIL})
         finally:
-            # Pass `trace` explicitly: the ContextVar is gone by this
-            # iteration (see the comment at the top of gen()).
-            tracing.finalize_request_trace(
-                trace=trace,
-                answer=answer,
-                sources=sources,
-                mode=intent.lower(),
-                response_time_ms=round((time.perf_counter() - start) * 1000, 2),
-                error=trace_error,
-            )
+            if not success:
+                cleanup()
+            tracing.finalize_request_trace(trace=trace, answer=answer, sources=resources.sources,
+                mode=intent.lower(), response_time_ms=round((time.perf_counter() - start) * 1000, 2), error=not success)
             tracing.clear_request_trace()
 
-    return StreamingResponse(
-        gen(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return DurableStreamingResponse(gen(), cleanup=cleanup, media_type='text/event-stream', background=background_tasks,
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
-# ---------------------------------------------------------------------------
-# conversations
-# ---------------------------------------------------------------------------
+@router.get('/conversations', response_model=list[ConversationSummary])
+def list_conversations(owner_id: str = Depends(require_identity)):
+    return list_sessions(owner_id)
 
 
-@router.get("/conversations", response_model=list[ConversationSummary])
-def list_conversations() -> list[ConversationSummary]:
-    return [ConversationSummary(**row) for row in list_sessions()]
+@router.get('/conversations/{session_id}/messages', response_model=list[ConversationMessage])
+def conversation_messages(session_id: str, owner_id: str = Depends(require_identity)):
+    return get_history(session_id, owner_id)
 
 
-@router.get(
-    "/conversations/{session_id}/messages",
-    response_model=list[ConversationMessage],
-)
-def conversation_messages(session_id: str) -> list[ConversationMessage]:
-    history = get_history(session_id)
-    if history is None:
-        raise HTTPException(status_code=404, detail="conversation পাওয়া যায়নি।")
-    return [ConversationMessage(**turn) for turn in history]
-
-
-@router.delete("/conversations/{session_id}", status_code=204)
-def delete_conversation(session_id: str) -> Response:
-    if not delete_session(session_id):
-        raise HTTPException(status_code=404, detail="conversation পাওয়া যায়নি।")
+@router.delete('/conversations/{session_id}', status_code=204)
+def delete_conversation(session_id: str, owner_id: str = Depends(require_identity)):
+    delete_session(session_id, owner_id)
     return Response(status_code=204)
+
+
+class ConversationEdit(BaseModel):
+    title: str | None = Field(default=None, max_length=80)
+    memory_enabled: bool | None = None
+
+
+@router.patch('/conversations/{session_id}', status_code=204)
+def patch_conversation(session_id: str, body: ConversationEdit, owner_id: str = Depends(require_identity)):
+    edit_session(session_id, owner_id, body.title, body.memory_enabled)
+    return Response(status_code=204)
+
+
+@router.get('/memories')
+def memories(owner_id: str = Depends(require_identity)):
+    return list_memories(owner_id)
+
+
+@router.delete('/memories/{memory_id}', status_code=204)
+def forget_memory(memory_id: str, owner_id: str = Depends(require_identity)):
+    delete_memory(memory_id, owner_id)
+    return Response(status_code=204)
+
+
+class ConversationCreate(BaseModel):
+    session_id: uuid.UUID
+
+
+@router.post('/conversations', status_code=201)
+def new_conversation(body: ConversationCreate, owner_id: str = Depends(require_identity)):
+    return create_conversation(owner_id, str(body.session_id))
