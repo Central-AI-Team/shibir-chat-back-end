@@ -391,6 +391,18 @@ inspection, forgetting/exclusion and titles. Identity is currently browser/login
 scoped, not cross-device account authentication. See README's Conversation memory
 section for limits and the additive migration command.
 
+**Follow-up grounding:** keep bounded context in user/assistant pairs; do not let
+long assistant text evict the question that names its topic. The resolver supplies
+`query` (standalone action) and `retrieval_query` (direct Bengali search); preserve
+both and pass the explicit subject to generation. `grounding.py` is shared by QA,
+streaming and suggestions. If fresh retrieval fails for a resolved follow-up, only
+actual book excerpts from a completed QA/suggestion turn in this owned conversation
+may be re-ranked against the NEW query. Apply the unchanged relevance threshold;
+never inherit old scores, assistant claims, roleplay/interrupted evidence or another
+conversation's citations. Save selected evidence in the new message. Do not blame
+users for internal empty-excerpt prompts. Test the full mixed-language chain in
+`tests/test_followup_grounding.py`, and distinguish fixtures from live verification.
+
 **Message resource contract:** `app/schemas/resources.py` defines canonical v1
 snapshots with ordered citations, web results and verification reports. Preserve
 JSON provider metadata; never fabricate citations in the browser on network

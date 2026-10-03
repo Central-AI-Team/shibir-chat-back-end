@@ -52,15 +52,24 @@ def _format_context(citations: list[Citation]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def _messages(query, citations, context=None):
+def _messages(query, citations, context=None, resolved_query=None):
     from app.services.context import _CONTEXT_RULES
     system = _SYSTEM
     if context and context.messages():
         system += "\n" + _CONTEXT_RULES
+    system += "\nআগের উত্তরের উদ্ধৃতি নম্বর কপি করবে না; বর্তমান বইয়ের অংশগুলোর নম্বর দিয়ে নতুন করে সূত্র দেবে।"
+    system += ("\nপ্রাসঙ্গিক বইয়ের অংশ না থাকলে সহজ ভাষায় বলবে যে বইয়ে যথেষ্ট তথ্য পাওয়া যায়নি। "
+               "ব্যবহারকারীকে খালি উদ্ধৃতি পাঠানোর জন্য দোষ দেবে না, উদ্ধৃতি পেস্ট করতে বলবে না, "
+               "এবং সিস্টেমের উদ্ধৃত অংশসমূহ বা অভ্যন্তরীণ প্রম্পটের কথা বলবে না।")
+    request = query
+    if resolved_query:
+        request += "\n\nপ্রসঙ্গসহ বর্তমান অনুরোধ: " + resolved_query
+        request += "\nএই প্রসঙ্গসহ অনুরোধটি অনুসরণ করো; উপরের প্রশ্নের সর্বনামের বিষয় এখানে স্পষ্ট করা হয়েছে।"
+    user = _USER.format(context=_format_context(citations), query=request)
     return [
         {"role": "system", "content": system},
         *(context.messages() if context else []),
-        {"role": "user", "content": _USER.format(context=_format_context(citations), query=query)},
+        {"role": "user", "content": user},
     ]
 
 
@@ -69,6 +78,7 @@ def generate_answer(
     citations: list[Citation],
     *,
     context=None,
+    resolved_query=None,
     model: str | None = None,
     client=None,
     extra_params: dict | None = None,
@@ -82,7 +92,7 @@ def generate_answer(
     eval script does, to run this exact prompt through an arbitrary model)
     bypasses that routing entirely and calls exactly what was asked for.
     """
-    messages = _messages(query, citations, context)
+    messages = _messages(query, citations, context, resolved_query)
     if model is None and client is None:
         response = complete("qa", messages, **(extra_params or {}))
     else:
@@ -107,6 +117,7 @@ def stream_answer(
     citations: list[Citation],
     *,
     context=None,
+    resolved_query=None,
     trace_id: str | None = None,
     parent_observation_id: str | None = None,
 ):
@@ -126,7 +137,7 @@ def stream_answer(
     context app/core/llm.py would otherwise read is not visible by this point
     (see app/core/tracing.py's module docstring). None -> unchanged.
     """
-    messages = _messages(query, citations, context)
+    messages = _messages(query, citations, context, resolved_query)
     extra = {}
     if trace_id:
         extra["trace_id"] = trace_id

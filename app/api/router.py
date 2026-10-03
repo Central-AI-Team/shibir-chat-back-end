@@ -14,13 +14,13 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.core import tracing
-from app.core.config import settings
 from app.rag.gpu_client import GPUServiceError
 from app.rag.generator import stream_answer
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import ChatRequest, ChatResponse, ConversationMessage, ConversationSummary
 from app.schemas.resources import MessageResources, resource_snapshot
 from app.services.context import build_context, resolve_followup, is_memory_question, answer_from_memory, refresh_memory
+from app.services.grounding import select_grounding
 from app.services.identity import create_identity, require_identity
 from app.services.intent_classifier import classify_intent
 from app.services.note_service import generate_book_notes_from_text
@@ -82,15 +82,16 @@ def _prepare(message, session, context):
 
 def _dispatch(intent, message, query, session, context):
     has_context = bool(context.messages())
+    search_query = context.retrieval_query or query
     if intent == 'NOTE':
         return _format_note_result(generate_book_notes_from_text(query)), MessageResources()
     if intent == 'ROLEPLAY':
         answer = handle_roleplay(message, session, context=context) if has_context else handle_roleplay(message, session)
         return answer, MessageResources()
     if intent == 'SUGGESTION':
-        answer, sources = give_suggestion(message, context=context, retrieval_query=query) if has_context else give_suggestion(message)
+        answer, sources = give_suggestion(message, context=context, retrieval_query=search_query) if has_context else give_suggestion(message)
         return answer, _bundle(sources)
-    qa = answer_question(message, context=context, retrieval_query=query) if has_context else answer_question(message)
+    qa = answer_question(message, context=context, retrieval_query=search_query) if has_context else answer_question(message)
     return qa.answer, qa.resources
 
 
@@ -108,14 +109,14 @@ def _resource_events(resources):
 
 
 def _qa_stream(message, *, query=None, context=None, trace_id=None, parent_observation_id=None):
-    citations = retrieve_relevant_docs(query or message)
-    relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
-    tracing.record_gate(grounded=relevant, top_score=citations[0].rerank_score if citations else None,
-                        threshold=settings.min_rerank_score)
-    grounding = citations if relevant else []
+    search_query = (context.retrieval_query if context else None) or query or message
+    citations = retrieve_relevant_docs(search_query)
+    grounding = select_grounding(citations, search_query, context)
     extra = {'trace_id': trace_id, 'parent_observation_id': parent_observation_id}
     if context and context.messages():
         extra['context'] = context
+        if context.resolved_query:
+            extra['resolved_query'] = context.resolved_query
     return grounding, stream_answer(message, grounding, **extra)
 
 

@@ -279,6 +279,27 @@ before/after prompt inspection. Chat tests use temporary SQLite; set
 `CHAT_TEST_DATABASE_URL` to an isolated PostgreSQL database to run them in temporary
 schemas that are dropped after each test.
 
+### Mixed-language follow-ups and book evidence
+
+The context window keeps user/assistant pairs together so a long answer cannot
+evict its own question. Reference resolution returns two forms: the standalone
+request (including actions such as simplify) and a direct Bengali retrieval query.
+Generation receives the resolved request as well as the original user wording.
+
+Both QA endpoints and suggestions share `app/services/grounding.py`. If fresh
+retrieval misses the relevance gate for a resolved follow-up, it can recheck the
+latest completed same-conversation book excerpts against the new retrieval query.
+Only excerpts that pass the current gate are attached; old scores and assistant
+answers never establish grounding. Roleplay/interrupted sources and other
+conversations/owners are excluded. Reused excerpts are saved in the new message's
+resource snapshot and therefore survive its reload. This avoids source-less
+simplification replies copying citation numbers from previous answers.
+
+`tests/test_followup_grounding.py` covers the Bengali question -> simplify ->
+English follow-up sequence, both endpoints, fresh retrieval misses, ownership,
+reload and rejection of irrelevant prior evidence. These tests mock model and
+reranker output; they are not measurements of live language accuracy.
+
 ### Durable message resources
 
 Each message has a versioned `resources` snapshot: `version: 1`, ordered `sources`,

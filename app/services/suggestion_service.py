@@ -8,11 +8,10 @@ allowed to phrase a recommendation/opinion based on the retrieved context.
 
 from __future__ import annotations
 
-from app.core import tracing
-from app.core.config import settings
 from app.core.llm import complete
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import Citation
+from app.services.grounding import select_grounding
 
 _SYSTEM_GROUNDED = """তুমি একজন বন্ধুত্বপূর্ণ বাংলা পরামর্শদাতা সহকারী। ব্যবহারকারীকে
 নিচে দেওয়া বইয়ের অংশের ভিত্তিতে একটি পরামর্শ/সুপারিশ দেওয়াই তোমার কাজ।
@@ -58,21 +57,18 @@ def _format_context(citations: list[Citation]) -> str:
 
 def give_suggestion(query: str, *, context=None, retrieval_query=None) -> tuple[str, list[Citation]]:
     # The `retrieve` trace span is emitted inside retrieve_stages().
-    citations = retrieve_relevant_docs(retrieval_query or query)
-    relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
-    tracing.record_gate(
-        grounded=relevant,
-        top_score=citations[0].rerank_score if citations else None,
-        threshold=settings.min_rerank_score,
-    )
-    grounding = citations if relevant else []
+    search_query = retrieval_query or query
+    citations = retrieve_relevant_docs(search_query)
+    grounding = select_grounding(citations, search_query, context)
+    relevant = bool(grounding)
+    request = context.resolved_query if context and context.resolved_query else query
 
     if relevant:
         system, user = _SYSTEM_GROUNDED, _USER_GROUNDED.format(
-            context=_format_context(grounding), query=query
+            context=_format_context(grounding), query=request
         )
     else:
-        system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=query)
+        system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=request)
 
     from app.services.context import _CONTEXT_RULES
     if context and context.messages():

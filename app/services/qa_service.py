@@ -35,11 +35,10 @@ import random
 import re
 import time
 
-from app.core import tracing
-from app.core.config import settings
 from app.rag.generator import generate_answer
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import QueryResponse
+from app.services.grounding import select_grounding
 
 logger = logging.getLogger(__name__)
 
@@ -129,29 +128,21 @@ def answer_question(query: str, *, context=None, retrieval_query=None) -> QueryR
 
     # The `retrieve` trace span (full candidate pool + rerank scores) is
     # emitted inside retrieve_stages(); nothing to record here.
-    citations = retrieve_relevant_docs(retrieval_query or query)
-
-    # The reranker score is the honest relevance signal. If even the best
-    # candidate is below the bar, the corpus does not cover this question --
-    # so do not hand Gemini a pile of noise as "sources". It still generates
-    # an answer (generator.py's prompt has it say plainly that the books
-    # don't cover this), just with no citations to attach.
-    relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
-    tracing.record_gate(
-        grounded=relevant,
-        top_score=citations[0].rerank_score if citations else None,
-        threshold=settings.min_rerank_score,
-    )
-    grounding = citations if relevant else []
-
-    answer = generate_answer(query, grounding, context=context) if context else generate_answer(query, grounding)
+    search_query = retrieval_query or query
+    citations = retrieve_relevant_docs(search_query)
+    grounding = select_grounding(citations, search_query, context)
+    relevant = bool(grounding)
+    kwargs = {'context': context} if context else {}
+    if context and context.resolved_query:
+        kwargs['resolved_query'] = context.resolved_query
+    answer = generate_answer(query, grounding, **kwargs)
 
     response_time_ms = round((time.perf_counter() - start) * 1000, 2)
     if relevant:
         logger.info(
             "answered query=%r n_sources=%d top_rerank=%.3f books=%s in %.2fms",
-            query, len(citations), citations[0].rerank_score,
-            [c.book for c in citations], response_time_ms,
+            query, len(grounding), grounding[0].rerank_score,
+            [c.book for c in grounding], response_time_ms,
         )
     else:
         best = citations[0].rerank_score if citations else None
