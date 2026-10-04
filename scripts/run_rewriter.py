@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import sys
 import os
-import json
 import time
 
 # ── project root টা sys.path এ add করো ──────────────────────────────────────

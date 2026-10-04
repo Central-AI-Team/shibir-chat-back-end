@@ -95,7 +95,7 @@ def step_intent(query):
     ms=(time.perf_counter()-t0)*1000
     desc={"QA":"Normal Q&A → retrieval","NOTE":"Note → note service","SUGGESTION":"Suggestion service","ROLEPLAY":"Roleplay service"}
     _label("INTENT",intent); _sub(desc.get(intent,""))
-    if intent!="QA": _warn(f"Routes AWAY from RAG")
+    if intent!="QA": _warn("Routes AWAY from RAG")
     else: _ok("QA → continues")
     _label("TIME",_ms(ms),DIM); return intent
 
