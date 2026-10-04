@@ -17,6 +17,7 @@ chroma_db/
 
 # Raw corpus dumps (SQLite DBs, MySQL .sql) read by scripts/load_*.py
 data/
+notebooks/
 
 # Environment variables
 .env
