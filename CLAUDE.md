@@ -100,10 +100,7 @@ app/
   schemas/query.py        Pydantic models. ChatRequest / ChatResponse (/chat, /chat/stream),
                           Citation (shared source shape), ConversationSummary /
                           ConversationMessage (/conversations). QueryResponse is
-                          answer_question()'s internal return type. QueryRequest,
-                          NoteRequest, NoteByTextRequest, NoteByTextResponse and ChapterNote
-                          are unused leftovers from the removed /ask, /note, /note-by-text
-                          routes.
+                          answer_question()'s internal return type.
 
 scripts/                  Migrations, corpus cleanup, evaluation and debugging tools.
                           Run as `uv run python -m scripts.<name>`. See docs/evaluation.md.

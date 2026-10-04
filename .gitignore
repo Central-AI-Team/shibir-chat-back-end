@@ -17,6 +17,7 @@ chroma_db/
 
 # Raw corpus dumps (SQLite DBs, MySQL .sql) read by scripts/load_*.py
 data/
+notebooks/
 
 # Environment variables
 .env
@@ -41,3 +42,7 @@ eval_reports/
 
 # Intermediate corpus sample for hand-labelling (scripts/sample_corpus_pages.py)
 scripts/_corpus_sample.json
+
+# Local data-exploration notebooks and their exports (copies of corpus text)
+notebooks/
+.ipynb_checkpoints/
