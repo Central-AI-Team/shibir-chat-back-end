@@ -46,3 +46,9 @@ scripts/_corpus_sample.json
 # Local data-exploration notebooks and their exports (copies of corpus text)
 notebooks/
 .ipynb_checkpoints/
+
+# Local-only latency measurement (app/core/timing.py is the tracked no-op shim)
+app/core/timing_local.py
+scripts/summarize_timing.py
+logs/
+*.timing.jsonl

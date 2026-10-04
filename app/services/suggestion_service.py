@@ -8,7 +8,7 @@ allowed to phrase a recommendation/opinion based on the retrieved context.
 
 from __future__ import annotations
 
-from app.core import tracing
+from app.core import timing, tracing
 from app.core.config import settings
 from app.core.llm import complete
 from app.rag.generator import format_context
@@ -61,12 +61,13 @@ def give_suggestion(query: str) -> tuple[str, list[Citation]]:
     )
     grounding = citations if relevant else []
 
-    if relevant:
-        system, user = _SYSTEM_GROUNDED, _USER_GROUNDED.format(
-            context=format_context(grounding), query=query
-        )
-    else:
-        system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=query)
+    with timing.timed("prompt_build"):
+        if relevant:
+            system, user = _SYSTEM_GROUNDED, _USER_GROUNDED.format(
+                context=format_context(grounding), query=query
+            )
+        else:
+            system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=query)
 
     response = complete("suggest", [
         {"role": "system", "content": system},

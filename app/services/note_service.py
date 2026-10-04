@@ -13,8 +13,12 @@ structure needed: pull the WHOLE chapter in reading order, then map-reduce.
 
 from __future__ import annotations
 
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
+
 from sqlalchemy.orm import joinedload
 
+from app.core.config import settings
 from app.core.llm import complete
 from app.db.models import Book, Chapter, ContentStatus, Page
 from app.db.session import SessionLocal
@@ -67,7 +71,10 @@ def _llm(prompt: str, max_tokens: int = 2000) -> str:
     # Routed via complete("note", ...) -- app/core/llm.py -- token_budget
     # becomes whichever token-cap kwarg (max_completion_tokens vs max_tokens)
     # the model settings.model_by_task["note"] resolves to actually needs.
-    resp = complete("note", [{"role": "user", "content": prompt}], token_budget=max_tokens)
+    resp = complete(
+        "note", [{"role": "user", "content": prompt}],
+        token_budget=min(max_tokens, settings.max_tokens_note),
+    )
     # content is None on a safety-filtered/empty completion -- bare .strip()
     # would raise AttributeError, uncaught anywhere between here and the
     # router, turning one bad map/reduce call into an unhandled 500 for the
@@ -123,7 +130,17 @@ def generate_chapter_note(chapter_id: int) -> dict:
     # getting fully consumed by reasoning on anything but the shortest
     # chunks, so the call would return "" with finish_reason="length" and
     # the map/reduce step silently produced nothing.
-    summaries = [_llm(_MAP_PROMPT.format(chunk=g), max_tokens=4000) for g in groups]
+    # Map calls are independent: run them concurrently (bounded), keeping order.
+    # Each task gets a copy of THIS thread's context (copied here, not inside
+    # the worker -- that would copy the worker's empty one) so the timing
+    # recorder / trace context follow the work into the pool threads.
+    def _map(group: str) -> str:
+        return _llm(_MAP_PROMPT.format(chunk=group), max_tokens=4000)
+
+    workers = max(1, min(settings.note_map_concurrency, len(groups)))
+    contexts = [contextvars.copy_context() for _ in groups]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        summaries = list(pool.map(lambda cg: cg[0].run(_map, cg[1]), zip(contexts, groups)))
 
     note = _llm(
         _REDUCE_PROMPT.format(

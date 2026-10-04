@@ -19,7 +19,7 @@ from functools import lru_cache
 
 from openai import OpenAI
 
-from app.core import tracing
+from app.core import timing, tracing
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -156,6 +156,14 @@ MODEL_ADAPTERS: dict[str, ModelAdapter] = {
 _DEFAULT_ADAPTER = ModelAdapter(provider="openai", token_param="max_completion_tokens")
 
 
+# task -> Settings attribute holding its default completion-token cap.
+_TASK_TOKEN_CAPS = {
+    "qa": "max_tokens_qa",
+    "suggest": "max_tokens_suggestion",
+    "roleplay": "max_tokens_roleplay",
+}
+
+
 def _client_for_provider(provider: str) -> OpenAI:
     if provider == "openai":
         return get_client()
@@ -187,6 +195,15 @@ def complete(task: str, messages: list[dict], *, token_budget: int | None = None
     params = dict(overrides)
     if token_budget is not None:
         params.setdefault(adapter.token_param, token_budget)
+    else:
+        cap = getattr(settings, _TASK_TOKEN_CAPS.get(task, ""), 0)
+        if cap > 0:  # 0 = no cap
+            params.setdefault(adapter.token_param, cap)
+    # Only OpenAI gpt-5* models take reasoning_effort; Groq's gpt-oss and
+    # non-reasoning models reject "minimal" with a 400.
+    effort = settings.openai_reasoning_effort_by_task.get(task, settings.openai_reasoning_effort)
+    if effort and adapter.provider == "openai" and model.startswith("gpt-5"):
+        params.setdefault("reasoning_effort", effort)
 
     # langfuse.openai's global patch consumes these and strips them before the
     # real OpenAI call (so per-task cost/latency is filterable and the
@@ -220,4 +237,9 @@ def complete(task: str, messages: list[dict], *, token_budget: int | None = None
     else:
         for key in _LANGFUSE_ONLY:
             params.pop(key, None)
-    return client.chat.completions.create(model=model, messages=messages, **params)
+    if params.get("stream"):
+        # create() returns immediately; the caller (stream_answer) times the stream itself.
+        return client.chat.completions.create(model=model, messages=messages, **params)
+    step = "llm_generation" if task in ("qa", "suggest") else f"llm_{task}"
+    with timing.timed(step):
+        return client.chat.completions.create(model=model, messages=messages, **params)

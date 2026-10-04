@@ -19,8 +19,12 @@ longer used inside expand_query() itself.
 from __future__ import annotations
 
 import re
+import threading
+from collections import OrderedDict
 from functools import lru_cache
 
+from app.core import timing
+from app.core.config import settings
 from app.core.llm import complete
 from app.rag.chunker import normalize
 
@@ -37,6 +41,16 @@ def _looks_bengali(text: str) -> bool:
         return False
     bengali = sum(1 for c in letters if "ঀ" <= c <= "৿")
     return bengali / len(letters) > 0.50
+
+
+def mostly_bengali(text: str, ratio: float | None = None) -> bool:
+    """True when >= `ratio` (default settings.rewrite_skip_bengali_ratio) of the
+    alphabetic chars are Bengali script -- such a query needs no translation."""
+    ratio = settings.rewrite_skip_bengali_ratio if ratio is None else ratio
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    return sum(1 for c in letters if "ঀ" <= c <= "৿") / len(letters) >= ratio
 
 
 def _looks_arabic(text: str) -> bool:
@@ -134,6 +148,27 @@ def get_fallback_count() -> int:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Rewrites produced elsewhere (the combined intent+rewrite call in
+# intent_classifier.py), consumed once by expand_query() below. Bounded so a
+# primed-but-never-retrieved query (e.g. a NOTE request) cannot leak memory.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_primed: OrderedDict[str, str] = OrderedDict()
+_primed_lock = threading.Lock()
+_PRIMED_MAX = 256
+
+
+def prime_rewrite(query: str, bengali: str) -> None:
+    query, bengali = normalize(query), normalize(bengali)
+    if not query or not bengali:
+        return
+    with _primed_lock:
+        _primed[query] = bengali
+        while len(_primed) > _PRIMED_MAX:
+            _primed.popitem(last=False)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Main entry point (signature unchanged for retriever.py / eval scripts)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -150,6 +185,16 @@ def expand_query(query: str, max_variants: int | None = None) -> tuple[str, ...]
     query = normalize(query)
     if not query:
         return ()
+
+    if mostly_bengali(query):
+        # Already Bengali: the LLM rewrite only re-spelled it (3-4 s per call).
+        timing.mark("query_rewrite", "skipped: already Bengali")
+        return (query,)
+    with _primed_lock:
+        primed = _primed.pop(query, None)
+    if primed:
+        timing.mark("query_rewrite", "skipped: rewritten in intent call")
+        return (primed,)
 
     prompt = _PROMPT_TRANSLATE.format(q=query)
     try:

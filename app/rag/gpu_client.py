@@ -148,6 +148,7 @@ def _post(path: str, json: dict, outcome: dict, min_timeout: float | None = None
     headers = {"X-API-Key": settings.gpu_api_key}
     attempts = 1 + max(0, settings.gpu_max_retries)
     last_error: GPUServiceError | None = None
+    last_cause: Exception | None = None
 
     for attempt in range(attempts):
         outcome["attempts"] = attempt + 1
@@ -159,6 +160,7 @@ def _post(path: str, json: dict, outcome: dict, min_timeout: float | None = None
         except _RETRYABLE_TRANSPORT_ERRORS as e:
             outcome["status"] = type(e).__name__
             last_error = GPUServiceError(f"GPU service {path}: {type(e).__name__}")
+            last_cause = e
         except httpx.HTTPError as e:
             outcome["status"] = type(e).__name__
             raise GPUServiceError(f"GPU service {path}: {type(e).__name__}") from e
@@ -184,6 +186,7 @@ def _post(path: str, json: dict, outcome: dict, min_timeout: float | None = None
             last_error = GPUServiceError(
                 f"GPU service {path}: HTTP {resp.status_code}", resp.status_code
             )
+            last_cause = None
 
         if attempt < attempts - 1:
             delay = _BACKOFF_BASE_SECONDS * (2 ** attempt)
@@ -195,4 +198,4 @@ def _post(path: str, json: dict, outcome: dict, min_timeout: float | None = None
 
     assert last_error is not None
     logger.error("%s -- giving up after %d attempt(s)", last_error, attempts)
-    raise last_error
+    raise last_error from last_cause
