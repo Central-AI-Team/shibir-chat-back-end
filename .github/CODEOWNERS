@@ -1,0 +1,17 @@
+# Code owners are requested automatically on PRs that touch their paths.
+# Enforced only when the branch ruleset has "Require review from Code Owners".
+# Later lines win, so the default comes first.
+
+# Default owner for everything.
+*                       @safaet
+
+# Risky paths, listed explicitly so ownership stays here if the default above
+# is ever widened to a team.
+/app/core/llm.py        @safaet
+/app/rag/               @safaet
+/app/api/router.py      @safaet
+/.github/               @safaet
+/Dockerfile             @safaet
+/docker-compose.yml     @safaet
+/pyproject.toml         @safaet
+/uv.lock                @safaet
