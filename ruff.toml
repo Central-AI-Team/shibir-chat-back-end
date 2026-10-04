@@ -1,0 +1,13 @@
+# Ruff runs in CI (lint job) and pre-commit; both pin the same version.
+# Not a pyproject.toml dependency, so uv.lock stays untouched: run it with
+# `uvx ruff@<version> check .`.
+
+extend-exclude = ["chroma_db", "eval_reports", "venv-ragas"]
+
+[lint]
+# Bug-class rules only: E9 (syntax/IO errors) and Pyflakes (undefined names,
+# unused imports, redefinitions, ...). Style rules such as E701/E702 (multiple
+# statements per line) and E402 (import not at top) are deliberately NOT
+# enforced: the repo had 94 of them when this was added, almost all in
+# scripts/, and they would drown the real signal.
+select = ["E9", "F"]
