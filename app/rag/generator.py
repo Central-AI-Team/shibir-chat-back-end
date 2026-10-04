@@ -45,10 +45,20 @@ _USER = """উদ্ধৃত অংশসমূহ:
 উপরের নিয়ম মেনে বাংলায় উত্তর দাও।"""
 
 
-def _format_context(citations: list[Citation]) -> str:
+_BN_DIGITS = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
+
+
+def format_context(citations: list[Citation]) -> str:
+    """Numbered excerpt blocks for the prompt; shared with suggestion_service.
+
+    Labels use Bengali digits ([১], [২], ...) because the model cites with
+    whatever labels it sees: with ASCII labels it answered "[1][2]" despite the
+    prompt asking for [১] (CLAUDE.md §4, rule 3).
+    """
     blocks = []
     for i, c in enumerate(citations, start=1):
-        blocks.append(f"[{i}] বই: {c.book} | অধ্যায়: {c.chapter}\n{c.content}")
+        label = str(i).translate(_BN_DIGITS)
+        blocks.append(f"[{label}] বই: {c.book} | অধ্যায়: {c.chapter}\n{c.content}")
     return "\n\n---\n\n".join(blocks)
 
 
@@ -72,7 +82,7 @@ def generate_answer(
     messages = [
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": _USER.format(
-            context=_format_context(citations), query=query
+            context=format_context(citations), query=query
         )},
     ]
     if model is None and client is None:
@@ -120,7 +130,7 @@ def stream_answer(
     messages = [
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": _USER.format(
-            context=_format_context(citations), query=query
+            context=format_context(citations), query=query
         )},
     ]
     extra = {}
