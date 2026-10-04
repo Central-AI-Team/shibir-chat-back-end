@@ -35,7 +35,8 @@ from fastapi.responses import StreamingResponse
 from openai import APIError
 from starlette.concurrency import run_in_threadpool
 
-from app.core import tracing
+from app.core import timing, tracing
+from app.core.network_errors import NETWORK_ERRORS, NETWORK_UNAVAILABLE_DETAIL, is_network_error
 from app.core.config import settings
 from app.rag.gpu_client import GPUServiceError
 from app.rag.generator import stream_answer
@@ -107,6 +108,17 @@ def health() -> dict:
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest) -> ChatResponse:
+    timing.start_request(body.message)
+    try:
+        return await _chat(body)
+    except Exception as e:
+        timing.record_error("request_total", e)
+        raise
+    finally:
+        timing.finish_request()
+
+
+async def _chat(body: ChatRequest) -> ChatResponse:
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
@@ -130,7 +142,9 @@ async def chat(body: ChatRequest) -> ChatResponse:
         try:
             # classify_intent can fall back to an LLM call, so it goes through
             # the threadpool the same as the dispatch branches below.
-            intent = await run_in_threadpool(classify_intent, message, was_roleplaying)
+            with timing.timed("intent_classification"):
+                intent = await run_in_threadpool(classify_intent, message, was_roleplaying)
+            timing.set_mode(intent)
 
             if intent == "NOTE":
                 result = await run_in_threadpool(generate_book_notes_from_text, message)
@@ -142,13 +156,14 @@ async def chat(body: ChatRequest) -> ChatResponse:
             else:  # QA
                 qa_response = await run_in_threadpool(answer_question, message)
                 answer, sources = qa_response.answer, qa_response.sources
-        except (APIError, GPUServiceError) as e:
+        except (APIError, GPUServiceError, *NETWORK_ERRORS) as e:
             # An upstream dependency failed: the LLM call (quota, bad key,
             # outage, ...) or the external GPU embed/rerank service. Surface
             # as a clean 503 instead of a bare 500 -- the client should retry,
             # not treat this like a malformed request.
             trace_error = True
-            raise HTTPException(status_code=503, detail=_LLM_UNAVAILABLE_DETAIL) from e
+            detail = NETWORK_UNAVAILABLE_DETAIL if is_network_error(e) else _LLM_UNAVAILABLE_DETAIL
+            raise HTTPException(status_code=503, detail=detail) from e
 
         if was_roleplaying and intent != "ROLEPLAY":
             # Explicit exit phrase was detected -- drop out of roleplay mode and
@@ -191,6 +206,7 @@ def _sse(event: str, data: dict) -> str:
 def _qa_stream(
     message: str, *, trace_id: str | None = None, parent_observation_id: str | None = None
 ):
+    rec = timing.current()
     """Return (sources, answer_delta_iterator) for a QA message, mirroring
     the relevance gate in qa_service.answer_question -- that function stays
     the source of truth for the non-streaming path; keep this in sync.
@@ -216,7 +232,8 @@ def _qa_stream(
     )
     grounding = citations if relevant else []
     return grounding, stream_answer(
-        message, grounding, trace_id=trace_id, parent_observation_id=parent_observation_id
+        message, grounding, trace_id=trace_id, parent_observation_id=parent_observation_id,
+        **({"timing_rec": rec} if rec else {}),
     )
 
 
@@ -246,6 +263,7 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
             name="chat_stream", query=message, session_id=session_id,
             user_id=body.user_id,
         )
+        rec = timing.start_request(message, route="POST /chat/stream")
         trace_id = tracing.trace_id_of(trace)
         parent_observation_id = tracing.parent_observation_id_of(trace)
         start = time.perf_counter()
@@ -255,7 +273,9 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
         trace_error = False
         try:
             try:
-                intent = classify_intent(message, was_roleplaying)
+                with timing.timed("intent_classification"):
+                    intent = classify_intent(message, was_roleplaying)
+                timing.set_mode(intent)
 
                 if intent == "QA":
                     sources, deltas = _qa_stream(
@@ -278,9 +298,11 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
                     # single token event so the client renders them uniformly.
                     yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
                     yield _sse("token", {"text": answer})
-            except (APIError, GPUServiceError):
+            except (APIError, GPUServiceError, *NETWORK_ERRORS) as e:
                 trace_error = True
-                yield _sse("error", {"detail": _LLM_UNAVAILABLE_DETAIL})
+                timing.record_error("request_total", e, rec=rec)
+                detail = NETWORK_UNAVAILABLE_DETAIL if is_network_error(e) else _LLM_UNAVAILABLE_DETAIL
+                yield _sse("error", {"detail": detail})
                 return
 
             if was_roleplaying and intent != "ROLEPLAY":
@@ -310,6 +332,7 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
                 error=trace_error,
             )
             tracing.clear_request_trace()
+            timing.finish_request(rec)
 
     return StreamingResponse(
         gen(),

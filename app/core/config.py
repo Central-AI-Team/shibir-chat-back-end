@@ -173,6 +173,9 @@ class Settings(BaseSettings):
     # Master switch: even with keys set, LANGFUSE_ENABLED=false keeps tracing
     # off. Tracing is active only when this is true AND both keys are set.
     langfuse_enabled: bool = True
+    # Local latency table + logs/timing.jsonl. Only does anything when the
+    # git-ignored app/core/timing_local.py exists (see app/core/timing.py).
+    enable_timing: bool = False
     # Privacy lever. A trace otherwise stores the raw user query, the
     # retrieved book excerpts and the final answer (all on YOUR infra when
     # self-hosted). Set false to keep the trace/span structure, token usage,

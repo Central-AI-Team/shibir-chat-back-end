@@ -39,7 +39,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import func
 
-from app.core import tracing
+from app.core import timing, tracing
 from app.core.config import settings
 from app.db.models import Book
 from app.db.session import SessionLocal
@@ -107,18 +107,22 @@ def retrieve_stages(
     rerank_top_n = rerank_top_n or top_k
 
     if use_rewrite:
-        queries = expand_query(query, max_variants=max_variants) or (query,)
+        with timing.timed("query_rewrite"):
+            queries = expand_query(query, max_variants=max_variants) or (query,)
     else:
+        timing.mark("query_rewrite", "disabled")
         queries = (normalize(query),) if normalize(query) else (query,)
     tracing.record_rewrite(queries)
-    embeddings = embed_texts(list(queries))
+    with timing.timed("query_embedding"):
+        embeddings = embed_texts(list(queries))
 
     collection = get_collection() if collection_name is None else get_named_collection(collection_name)
-    result = collection.query(
-        query_embeddings=embeddings,
-        n_results=fetch_k,
-        include=["documents", "metadatas", "distances"],
-    )
+    with timing.timed("vector_search"):
+        result = collection.query(
+            query_embeddings=embeddings,
+            n_results=fetch_k,
+            include=["documents", "metadatas", "distances"],
+        )
 
     # Merge results from all query variants, keeping the best score per chunk.
     pool: dict[str, tuple[str, dict, float]] = {}
@@ -155,7 +159,8 @@ def retrieve_stages(
     # dropped ("retrieved at similarity 0.61 but reranked to 0.42"), which is
     # the row a missed-answer investigation actually needs. The user-facing
     # list (stage_b) is still cut to rerank_top_n right below.
-    ranked = rerank(search_query, [c[0] for c in candidates], top_n=len(candidates))
+    with timing.timed("rerank"):
+        ranked = rerank(search_query, [c[0] for c in candidates], top_n=len(candidates))
 
     reranked = [
         _chunk(*candidates[idx], rerank_score=rerank_score)

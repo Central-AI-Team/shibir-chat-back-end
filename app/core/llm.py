@@ -19,7 +19,7 @@ from functools import lru_cache
 
 from openai import OpenAI
 
-from app.core import tracing
+from app.core import timing, tracing
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -220,4 +220,9 @@ def complete(task: str, messages: list[dict], *, token_budget: int | None = None
     else:
         for key in _LANGFUSE_ONLY:
             params.pop(key, None)
-    return client.chat.completions.create(model=model, messages=messages, **params)
+    if params.get("stream"):
+        # create() returns immediately; the caller (stream_answer) times the stream itself.
+        return client.chat.completions.create(model=model, messages=messages, **params)
+    step = "llm_generation" if task in ("qa", "suggest") else f"llm_{task}"
+    with timing.timed(step):
+        return client.chat.completions.create(model=model, messages=messages, **params)

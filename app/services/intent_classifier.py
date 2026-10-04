@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 
-from app.core import tracing
+from app.core import timing, tracing
 from app.core.llm import complete
 
 logger = logging.getLogger(__name__)
@@ -88,14 +88,17 @@ def classify_intent(message: str, has_active_roleplay_session: bool) -> str:
     if has_active_roleplay_session and not _ROLEPLAY_EXIT_RE.search(normalized):
         # An ongoing roleplay conversation shouldn't get reclassified as QA
         # (or anything else) on every follow-up turn.
+        timing.mark("intent_classification", "session")
         tracing.record_intent("ROLEPLAY", method="session")
         return "ROLEPLAY"
 
     for intent, pattern in _INTENT_PATTERNS:
         if pattern.search(normalized):
+            timing.mark("intent_classification", "regex")
             tracing.record_intent(intent, method="regex")
             return intent
 
+    timing.mark("intent_classification", "llm fallback")
     result = _classify_with_llm(normalized)
     tracing.record_intent(result, method="llm")
     return result
