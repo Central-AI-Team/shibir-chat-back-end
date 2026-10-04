@@ -36,6 +36,10 @@ models locally.
 | `dev` | Integration branch. All feature work merges here first. |
 | `feature/<short-description>` | One branch per change, for example `feature/reranker-threshold-fix`. Use `fix/...` for bug fixes if you prefer. |
 
+Every merge to `main` deploys automatically to the production VPS, which health-checks the new
+build and rolls back if it fails. Treat merging to `main` as releasing. Setup and details:
+[docs/auto-deploy.md](docs/auto-deploy.md).
+
 ```bash
 git checkout dev
 git pull origin dev

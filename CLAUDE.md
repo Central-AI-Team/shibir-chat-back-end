@@ -115,8 +115,10 @@ scripts/                  Migrations, corpus cleanup, evaluation and debugging t
   dedupe_pages.py                 Flags byte-identical duplicate pages.
   load_tafheem.py                 data/tafheemul_quran.db -> pages, one per ayah (§9).
   load_articles.py                data/{pp-articles,cs-posts}-*.sql -> articles (§9).
+  deploy.sh                       Runs ON the VPS: pull main, rebuild, health-check, roll back
+                                  (§12). Bash, not a Python module.
 tests/                    pytest suite; no network or real models by default (§11).
-docs/                     deployment.md, evaluation.md, tracing.md.
+docs/                     auto-deploy.md, deployment.md, evaluation.md, tracing.md.
 chroma_db/                Generated vector store, git-ignored. Deleting it is only half of
                           a reindex (§9).
 ```
@@ -513,8 +515,12 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
   add about 30 real questions (20 answerable, 10 not), and run
   `uv run python -m scripts.tune_threshold your_questions.json`.
 - **Measure quality:** see [docs/evaluation.md](docs/evaluation.md).
-- **Deploy:** the systemd unit `shibirgpt.service` runs `run.sh` from `/home/lab/apps/shibirgpt`
-  with `Restart=always`. `docker-compose.yml` is an alternative single-host setup. Scaling
+- **Deploy:** automatic. A push to `main` runs `.github/workflows/deploy.yml`, which SSHes to the
+  VPS with a forced-command key that can only run `scripts/deploy.sh`: reset to `origin/main`,
+  `docker compose up -d --build`, poll `/health` for 180 s, and on failure roll back to the
+  previous commit and exit 1. Rollback is code only (no migrations exist). One-time setup:
+  [docs/auto-deploy.md](docs/auto-deploy.md). The old systemd unit `shibirgpt.service`
+  (`run.sh` on the host) must stay disabled, or it fights the container for port 9200. Scaling
   guidance: [docs/deployment.md](docs/deployment.md).
 
 ## 13. Conventions for changes
@@ -530,9 +536,9 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 
 - **Heavy dependencies in GPU mode:** torch, sentence-transformers and the `nvidia-*` packages are
   still required even when `GPU_SERVICE_URL` is set. Moving them to an optional extra is planned.
-- **No deployment pipeline:** `.github/workflows/deploy.yml` is a placeholder (`echo`). CI
-  (`ci.yml`) runs the Postgres-backed test suite on pull requests to `main`, but nothing deploys
-  on merge.
+- **Shallow deploy health check:** auto-deploy (§12) gates on `/health`, which loads no models
+  and checks neither Postgres nor Chroma, so a broken database, model or OpenAI setup still
+  passes and is not rolled back. A `/ready` endpoint is planned.
 - **Hard-coded host and port:** `run.sh` and the Dockerfile start uvicorn on `0.0.0.0:9200`
   regardless of `HOST`/`PORT`.
 - **Single-worker sessions:** `session_store.py` is an in-process dict (§7).
