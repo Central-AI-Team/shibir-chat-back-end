@@ -29,6 +29,9 @@ class ChatRequest(BaseModel):
     # logic -- it is only forwarded to Langfuse (when tracing is enabled) so
     # traces can be grouped per end user. Safe to omit.
     user_id: str | None = None
+    # true -> same dispatch as POST /chat/stream (Server-Sent Events). Default
+    # false keeps the JSON response the existing front-end expects.
+    stream: bool = False
 
 
 class ChatResponse(BaseModel):

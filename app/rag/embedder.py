@@ -21,9 +21,11 @@ queries with "query: ".
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from app.core import timing
 from app.core.config import settings
 from app.rag import gpu_client
 
@@ -128,3 +130,37 @@ def embed_query(query: str) -> list[float]:
     revisit this function.)
     """
     return embed_texts([query])[0]
+
+
+# LRU of query embeddings keyed by the normalized rewritten query (the string
+# actually embedded), so a repeated question skips the ~2 s embed round trip.
+# Same input -> same vector, so this cannot change retrieval results.
+_query_cache: OrderedDict[str, list[float]] = OrderedDict()
+_query_cache_lock = threading.Lock()
+
+
+def embed_queries(queries: list[str]) -> list[list[float]]:
+    """embed_texts() for search queries, with an in-memory LRU in front.
+
+    Misses are embedded in one batch; settings.embed_cache_size <= 0 disables
+    the cache. Not used by ingest (documents are never repeated queries).
+    """
+    size = settings.embed_cache_size
+    if size <= 0:
+        return embed_texts(queries)
+    with _query_cache_lock:
+        found = {q: _query_cache[q] for q in queries if q in _query_cache}
+        for q in found:
+            _query_cache.move_to_end(q)
+    missing = [q for q in dict.fromkeys(queries) if q not in found]
+    if not missing:
+        timing.mark("query_embedding", "cache hit")
+    else:
+        for q, vec in zip(missing, embed_texts(missing)):
+            found[q] = vec
+        with _query_cache_lock:
+            for q in missing:
+                _query_cache[q] = found[q]
+            while len(_query_cache) > size:
+                _query_cache.popitem(last=False)
+    return [found[q] for q in queries]

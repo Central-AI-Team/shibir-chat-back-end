@@ -12,7 +12,9 @@ def _citation(n: int) -> Citation:
     return Citation(book=f"বই {n}", chapter="অধ্যায়", source_db="tarun", content=f"অংশ {n}")
 
 
-def test_excerpts_are_labelled_with_bengali_digits():
+def test_excerpts_are_labelled_with_bengali_digits(monkeypatch):
+    # This test is about labels, not the context_top_k prompt limit.
+    monkeypatch.setattr('app.rag.generator.settings.context_top_k', 20)
     context = format_context([_citation(n) for n in range(1, 13)])
 
     for label in ("[১]", "[২]", "[৯]", "[১০]", "[১২]"):

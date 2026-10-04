@@ -30,6 +30,45 @@ class Settings(BaseSettings):
     # old 450s timeout that was ~22 minutes. 1 retry covers a transient blip.
     llm_max_retries: int = 1
 
+    # Latency knobs (see CLAUDE.md §5). gpt-5-mini spends completion tokens on
+    # hidden reasoning before it writes anything; "minimal" cuts most of that
+    # wait. Applied only to OpenAI gpt-5* models (Groq/other models reject it);
+    # empty string = send nothing (the API default, "medium").
+    openai_reasoning_effort: str = "minimal"
+    # Per-task override of the above. Measured live (2026-10-05) on gpt-5-mini:
+    # "minimal" misrouted plain questions as the intent classifier
+    # ("রোযা কীভাবে আত্মসংযম শেখায়?" -> SUGGESTION 3/3, "যাকাতের গুরুত্ব নিয়ে
+    # বিস্তারিত বলো" -> NOTE 3/3) and left Latin letters in a Banglish rewrite
+    # ("শirk"), which corrupts retrieval. "low" matched the default on intent.
+    # Tasks not listed use openai_reasoning_effort. JSON map in .env.
+    openai_reasoning_effort_by_task: dict[str, str] = {"intent": "low", "rewrite": "low"}
+    # Completion-token caps per mode, applied when a call site passes no
+    # token_budget. Bengali tokenizes ~3-4x worse than English, so these are
+    # generous: a cap that truncates an answer mid-sentence is worse than slow.
+    # NOTE is a ceiling on note_service's own per-call budgets (4000 map / 6000 reduce).
+    max_tokens_qa: int = 2500
+    max_tokens_suggestion: int = 2000
+    max_tokens_roleplay: int = 1500
+    max_tokens_note: int = 6000
+    # Excerpts / characters per excerpt put in the prompt. Defaults send
+    # everything retrieval returns (top_k chunks are ~900 chars + header), so
+    # lowering them is a speed-vs-grounding trade-off; if context_top_k < top_k
+    # the sources list can show excerpts the model never saw.
+    context_top_k: int = 5
+    context_max_chars: int = 1200
+    # Queries whose letters are at least this fraction Bengali script skip the
+    # LLM rewrite (query_rewriter.expand_query).
+    rewrite_skip_bengali_ratio: float = 0.6
+    # When intent needs the LLM AND the query needs a rewrite, do both in one
+    # call returning JSON; falls back to the two-call path on invalid JSON.
+    combine_intent_rewrite: bool = True
+    # LRU of query embeddings, keyed by the normalized rewritten query. 0 = off.
+    embed_cache_size: int = 512
+    # Embed + search + rerank a dummy query in the background at startup.
+    warmup_on_startup: bool = True
+    # Max concurrent LLM map calls when building a chapter note.
+    note_map_concurrency: int = 4
+
     # Groq (OpenAI-compatible API, different base_url) -- used only by
     # scripts/eval_generation_ab.py for a different-provider challenger model
     # and an independent judge model. Not read anywhere in the production

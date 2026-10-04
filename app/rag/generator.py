@@ -16,6 +16,7 @@ through -- unaffected by settings.model_by_task either way.
 from __future__ import annotations
 
 from app.core import timing
+from app.core.config import settings
 from app.core.llm import complete, get_client, get_model
 from app.schemas.query import Citation
 
@@ -57,9 +58,10 @@ def format_context(citations: list[Citation]) -> str:
     prompt asking for [১] (CLAUDE.md §4, rule 3).
     """
     blocks = []
-    for i, c in enumerate(citations, start=1):
+    for i, c in enumerate(citations[: settings.context_top_k], start=1):
         label = str(i).translate(_BN_DIGITS)
-        blocks.append(f"[{label}] বই: {c.book} | অধ্যায়: {c.chapter}\n{c.content}")
+        content = c.content[: settings.context_max_chars]
+        blocks.append(f"[{label}] বই: {c.book} | অধ্যায়: {c.chapter}\n{content}")
     return "\n\n---\n\n".join(blocks)
 
 

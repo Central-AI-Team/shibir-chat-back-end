@@ -50,3 +50,10 @@ def db_session():
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture(autouse=True)
+def _timing_off(monkeypatch):
+    """A developer's ENABLE_TIMING=1 must not change what the router passes to
+    mocked functions (the local timing recorder is exercised on its own)."""
+    monkeypatch.setattr(settings, "enable_timing", False)

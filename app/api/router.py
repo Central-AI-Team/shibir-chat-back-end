@@ -107,7 +107,9 @@ def health() -> dict:
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(body: ChatRequest) -> ChatResponse:
+async def chat(body: ChatRequest):
+    if body.stream:
+        return chat_stream(body)
     timing.start_request(body.message)
     try:
         return await _chat(body)

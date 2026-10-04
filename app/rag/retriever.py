@@ -45,7 +45,7 @@ from app.db.models import Book
 from app.db.session import SessionLocal
 from app.rag.chroma_client import get_collection, get_named_collection
 from app.rag.chunker import normalize
-from app.rag.embedder import embed_texts
+from app.rag.embedder import embed_queries
 from app.rag.query_rewriter import expand_query
 from app.rag.reranker import rerank
 from app.schemas.query import Citation
@@ -114,7 +114,7 @@ def retrieve_stages(
         queries = (normalize(query),) if normalize(query) else (query,)
     tracing.record_rewrite(queries)
     with timing.timed("query_embedding"):
-        embeddings = embed_texts(list(queries))
+        embeddings = embed_queries(list(queries))
 
     collection = get_collection() if collection_name is None else get_named_collection(collection_name)
     with timing.timed("vector_search"):

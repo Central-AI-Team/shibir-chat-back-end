@@ -48,8 +48,9 @@ logger = logging.getLogger(__name__)
 # these phrases are how conversational turns actually open. Bengali and the
 # common Banglish (Bengali typed in Latin letters) spellings are both covered.
 _GREETING_RE = re.compile(
-    r"^(?:আসসালামু\s*আলাইকুম|ওয়ালাইকুম\s*আসসালাম|সালাম|হ্যালো|হাই+|হেই|হ্যাই|নমস্কার|"
-    r"assalamu\s*alaikum|salam|hello+|hi+|hey+|namaskar)\b"
+    r"^(?:আস্?সালাম\S*|ওয়া?\s*আলাইকুম\s*(?:আস্?)?সালাম|সালাম|হ্যালো|হাই+|হেই|হ্যাই|নমস্কার|"
+    r"gm|ass?alam\w*|wa\s*alaikum\s*(?:as)?salam|slm|salam|hello+|hi+|hey+|namaskar|"
+    r"good\s*(?:morning|afternoon|evening|night))\b"
 )
 _WELLBEING_RE = re.compile(
     r"^(?:কেমন\s+আছ(?:েন|ো|িস)|কী\s+খবর|কি\s+খবর|"
