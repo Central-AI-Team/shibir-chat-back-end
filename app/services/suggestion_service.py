@@ -8,9 +8,10 @@ allowed to phrase a recommendation/opinion based on the retrieved context.
 
 from __future__ import annotations
 
-from app.core import tracing
+from app.core import timing, tracing
 from app.core.config import settings
 from app.core.llm import complete
+from app.rag.generator import format_context
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import Citation
 
@@ -49,13 +50,6 @@ _USER_UNGROUNDED = """প্রশ্ন/পরিস্থিতি: {query}
 উপরের নিয়ম মেনে বাংলায় উত্তর দাও।"""
 
 
-def _format_context(citations: list[Citation]) -> str:
-    blocks = []
-    for i, c in enumerate(citations, start=1):
-        blocks.append(f"[{i}] বই: {c.book} | অধ্যায়: {c.chapter}\n{c.content}")
-    return "\n\n---\n\n".join(blocks)
-
-
 def give_suggestion(query: str) -> tuple[str, list[Citation]]:
     # The `retrieve` trace span is emitted inside retrieve_stages().
     citations = retrieve_relevant_docs(query)
@@ -67,12 +61,13 @@ def give_suggestion(query: str) -> tuple[str, list[Citation]]:
     )
     grounding = citations if relevant else []
 
-    if relevant:
-        system, user = _SYSTEM_GROUNDED, _USER_GROUNDED.format(
-            context=_format_context(grounding), query=query
-        )
-    else:
-        system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=query)
+    with timing.timed("prompt_build"):
+        if relevant:
+            system, user = _SYSTEM_GROUNDED, _USER_GROUNDED.format(
+                context=format_context(grounding), query=query
+            )
+        else:
+            system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=query)
 
     response = complete("suggest", [
         {"role": "system", "content": system},

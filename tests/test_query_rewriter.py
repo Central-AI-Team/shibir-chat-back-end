@@ -178,9 +178,11 @@ class TestExpandQuery:
         with mock.patch.object(qr, "complete", side_effect=Exception("API down")):
             qr.expand_query.cache_clear()
             qr._reset_fallback_count()
-            result = qr.expand_query("নামাযের গুরুত্ব কী")
+            # Banglish on purpose: an already-Bengali query skips the LLM
+            # (and so can never fall back) -- see TestMostlyBengaliSkip.
+            result = qr.expand_query("namajer gurutto ki")
 
-        assert result == ("নামাযের গুরুত্ব কী",), "Fallback-এ raw query return হওয়া উচিত"
+        assert result == ("namajer gurutto ki",), "Fallback-এ raw query return হওয়া উচিত"
         assert qr.get_fallback_count() == 1, "Fallback counter increment হয়নি"
 
     def test_llm_empty_content_falls_back(self, qr):

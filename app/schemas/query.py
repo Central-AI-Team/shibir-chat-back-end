@@ -3,10 +3,6 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
-class QueryRequest(BaseModel):
-    query: str
-
-
 class Citation(BaseModel):
     book: str
     chapter: str
@@ -26,25 +22,6 @@ class QueryResponse(BaseModel):
     response_time_ms: float
 
 
-class NoteRequest(BaseModel):
-    chapter_id: int
-
-
-class NoteByTextRequest(BaseModel):
-    text: str
-
-
-class ChapterNote(BaseModel):
-    chapter: str
-    pages_used: int
-    note: str
-
-
-class NoteByTextResponse(BaseModel):
-    book: str
-    chapters: list[ChapterNote]
-
-
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
@@ -52,6 +29,9 @@ class ChatRequest(BaseModel):
     # logic -- it is only forwarded to Langfuse (when tracing is enabled) so
     # traces can be grouped per end user. Safe to omit.
     user_id: str | None = None
+    # true -> same dispatch as POST /chat/stream (Server-Sent Events). Default
+    # false keeps the JSON response the existing front-end expects.
+    stream: bool = False
 
 
 class ChatResponse(BaseModel):

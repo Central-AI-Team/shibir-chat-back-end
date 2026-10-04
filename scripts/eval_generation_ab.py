@@ -76,7 +76,7 @@ shown here (the anonymization is only for the automatic judge; there is no
 self-preference risk in a human reading their own eval). This is the real
 tiebreaker for the fluency call, not the judge's numbers.
 
-REUSED, not reinvented: app/rag/generator._SYSTEM/_USER/_format_context (same
+REUSED, not reinvented: app/rag/generator._SYSTEM/_USER/format_context (same
 prompt every model gets -- called directly rather than through
 generate_answer() because this script needs the raw API response for
 per-call token usage/cost, which generate_answer()'s str-only return
@@ -120,7 +120,7 @@ from app.core.llm import MODEL_ADAPTERS
 from app.core.llm import _client_for_provider as _client_for
 from app.db.models import Article, Page
 from app.db.session import SessionLocal
-from app.rag.generator import _SYSTEM, _USER, _format_context
+from app.rag.generator import _SYSTEM, _USER, format_context
 from app.rag.query_rewriter import _looks_bengali
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import Citation
@@ -290,7 +290,7 @@ def _call_model(spec: ModelSpec, query: str, citations: list[Citation]) -> dict:
             messages=[
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user", "content": _USER.format(
-                    context=_format_context(citations), query=query
+                    context=format_context(citations), query=query
                 )},
             ],
             **spec.extra_params,
@@ -314,8 +314,8 @@ def _call_model(spec: ModelSpec, query: str, citations: list[Citation]) -> dict:
 # --------------------------------------------------------------------------
 
 _BENGALI_DIGIT_TRANS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
-# generator.py's prompt EXAMPLE shows Bengali-digit brackets ([১]/[২]) but
-# _format_context() actually labels chunks with plain "[1]"/"[2]" -- accept
+# format_context() labels chunks with Bengali digits ([১]/[২]), as the prompt
+# asks; older answers (and some models) still use "[1]"/"[2]" -- accept
 # whichever digit style a model actually produced.
 _CITATION_RE = re.compile(r"\[([০-৯0-9]+)\]")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[।.!?])\s+")
@@ -411,7 +411,7 @@ def _judge_one(session_specs: list[dict], query: str, citations: list[Citation],
             messages=[
                 {"role": "system", "content": _JUDGE_SYSTEM.format(n=len(labels))},
                 {"role": "user", "content": _JUDGE_USER.format(
-                    query=query, context=_format_context(citations),
+                    query=query, context=format_context(citations),
                     candidates=candidates_block,
                 )},
             ],

@@ -103,11 +103,15 @@ def test_get_client_is_the_plain_openai_client_when_disabled(monkeypatch):
     assert _openai_class() is OpenAI
 
 
-def test_complete_adds_no_langfuse_kwargs_to_the_openai_call_when_disabled():
+def test_complete_adds_no_langfuse_kwargs_to_the_openai_call_when_disabled(monkeypatch):
     """complete() must issue the exact same chat.completions.create() call it
     would in a build without tracing -- no name=, metadata=, trace_id=."""
     from app.core import llm
 
+    # Latency defaults (reasoning_effort, token caps) are real params, not
+    # tracing kwargs; switch them off so this test sees only tracing's effect.
+    monkeypatch.setattr(llm.settings, "openai_reasoning_effort", "")
+    monkeypatch.setattr(llm.settings, "max_tokens_qa", 0)
     fake_client = MagicMock()
     fake_client.chat.completions.create.return_value = MagicMock()
 
@@ -130,6 +134,8 @@ def test_complete_strips_langfuse_kwargs_when_wrapper_patch_is_absent(monkeypatc
     monkeypatch.setattr(tracing, "is_enabled", lambda: True)
     monkeypatch.setattr(tracing, "_openai_wrapper_ready", False)
     assert tracing.openai_wrapper_active() is False
+    monkeypatch.setattr(llm.settings, "openai_reasoning_effort", "")
+    monkeypatch.setattr(llm.settings, "max_tokens_qa", 0)
 
     fake_client = MagicMock()
     with patch.object(llm, "_client_for_provider", return_value=fake_client):

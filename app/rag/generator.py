@@ -15,6 +15,8 @@ through -- unaffected by settings.model_by_task either way.
 
 from __future__ import annotations
 
+from app.core import timing
+from app.core.config import settings
 from app.core.llm import complete, get_client, get_model
 from app.schemas.query import Citation
 
@@ -45,10 +47,21 @@ _USER = """উদ্ধৃত অংশসমূহ:
 উপরের নিয়ম মেনে বাংলায় উত্তর দাও।"""
 
 
-def _format_context(citations: list[Citation]) -> str:
+_BN_DIGITS = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
+
+
+def format_context(citations: list[Citation]) -> str:
+    """Numbered excerpt blocks for the prompt; shared with suggestion_service.
+
+    Labels use Bengali digits ([১], [২], ...) because the model cites with
+    whatever labels it sees: with ASCII labels it answered "[1][2]" despite the
+    prompt asking for [১] (CLAUDE.md §4, rule 3).
+    """
     blocks = []
-    for i, c in enumerate(citations, start=1):
-        blocks.append(f"[{i}] বই: {c.book} | অধ্যায়: {c.chapter}\n{c.content}")
+    for i, c in enumerate(citations[: settings.context_top_k], start=1):
+        label = str(i).translate(_BN_DIGITS)
+        content = c.content[: settings.context_max_chars]
+        blocks.append(f"[{label}] বই: {c.book} | অধ্যায়: {c.chapter}\n{content}")
     return "\n\n---\n\n".join(blocks)
 
 
@@ -69,12 +82,13 @@ def generate_answer(
     eval script does, to run this exact prompt through an arbitrary model)
     bypasses that routing entirely and calls exactly what was asked for.
     """
-    messages = [
-        {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": _USER.format(
-            context=_format_context(citations), query=query
-        )},
-    ]
+    with timing.timed("prompt_build"):
+        messages = [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": _USER.format(
+                context=format_context(citations), query=query
+            )},
+        ]
     if model is None and client is None:
         response = complete("qa", messages, **(extra_params or {}))
     else:
@@ -100,6 +114,7 @@ def stream_answer(
     *,
     trace_id: str | None = None,
     parent_observation_id: str | None = None,
+    timing_rec=None,
 ):
     """Streaming counterpart of generate_answer(): yields answer text deltas
     as they arrive from the model.
@@ -117,20 +132,26 @@ def stream_answer(
     context app/core/llm.py would otherwise read is not visible by this point
     (see app/core/tracing.py's module docstring). None -> unchanged.
     """
-    messages = [
-        {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": _USER.format(
-            context=_format_context(citations), query=query
-        )},
-    ]
+    with timing.timed("prompt_build", rec=timing_rec):
+        messages = [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": _USER.format(
+                context=format_context(citations), query=query
+            )},
+        ]
     extra = {}
     if trace_id:
         extra["trace_id"] = trace_id
     if parent_observation_id:
         extra["parent_observation_id"] = parent_observation_id
-    for chunk in complete("qa", messages, stream=True, **extra):
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta.content
-        if delta:
-            yield delta
+    with timing.timed("llm_generation", rec=timing_rec) as gen:
+        first = True
+        for chunk in complete("qa", messages, stream=True, **extra):
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if delta:
+                if first:
+                    gen.lap("llm_first_token")
+                    first = False
+                yield delta

@@ -100,10 +100,7 @@ app/
   schemas/query.py        Pydantic models. ChatRequest / ChatResponse (/chat, /chat/stream),
                           Citation (shared source shape), ConversationSummary /
                           ConversationMessage (/conversations). QueryResponse is
-                          answer_question()'s internal return type. QueryRequest,
-                          NoteRequest, NoteByTextRequest, NoteByTextResponse and ChapterNote
-                          are unused leftovers from the removed /ask, /note, /note-by-text
-                          routes.
+                          answer_question()'s internal return type.
 
 scripts/                  Migrations, corpus cleanup, evaluation and debugging tools.
                           Run as `uv run python -m scripts.<name>`. See docs/evaluation.md.
@@ -208,6 +205,27 @@ breaks downstream parsing.
 result should be recorded next to `model_by_task` in `config.py`. For `rewrite`, repeat each query
 several times: `openai/gpt-oss-20b` passed a single run but misspelled key Banglish terms in 7 of
 18 repeated rewrites, collapsing retrieval, and was reverted on 2026-09-24.
+
+### Latency controls (measured 2026-10-05: Bengali question ~19-27 s -> ~10.5 s)
+
+- **Reasoning effort.** `complete()` sends `reasoning_effort` (default `minimal`) to OpenAI gpt-5*
+  models only. `OPENAI_REASONING_EFFORT_BY_TASK` overrides it per task and defaults to `low` for
+  `intent` and `rewrite`: on gpt-5-mini `minimal` misrouted plain questions as the classifier and
+  left Latin letters in a Banglish rewrite ("শirk"), which corrupts retrieval. Re-test both before
+  loosening that. Per-mode completion-token caps: `MAX_TOKENS_{QA,SUGGESTION,ROLEPLAY,NOTE}`.
+- **Rewrite skip.** `expand_query()` skips the LLM when >= `REWRITE_SKIP_BENGALI_RATIO` of the
+  letters are Bengali script (the rewrite only re-spelled them). Banglish/English still rewrite.
+- **Intent.** Greetings never reach the LLM (`classify_intent` returns QA, `answer_question`/
+  `_qa_stream` send the canned reply). When the LLM is needed for a non-Bengali message, ONE call
+  returns `{"intent","rewritten_query"}` and primes `expand_query()` (`COMBINE_INTENT_REWRITE`);
+  invalid JSON falls back to the old two calls.
+- **Embedding LRU** (`embedder.embed_queries`, `EMBED_CACHE_SIZE`), **startup warm-up** in the
+  lifespan (background; failure only logs; `WARMUP_ON_STARTUP`), **note map calls** run
+  concurrently (`NOTE_MAP_CONCURRENCY`; each task gets the request's contextvars).
+- **`POST /chat` with `"stream": true`** returns the same SSE events as `/chat/stream`. Default
+  `false`: the JSON response is unchanged.
+- `CONTEXT_TOP_K` / `CONTEXT_MAX_CHARS` limit what goes in the prompt; `CONTEXT_TOP_K` below
+  `TOP_K` makes `sources` list excerpts the model never saw.
 
 ## 6. GPU service (`app/rag/gpu_client.py`)
 
