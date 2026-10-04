@@ -16,6 +16,7 @@ cd shibir-chat-back-end
 uv sync --locked
 cp .env.example .env        # set OPENAI_API_KEY and DATABASE_URL at minimum
 uv run pytest               # should pass before you change anything
+uvx pre-commit install      # runs ruff, gitleaks and file checks on every commit
 ```
 
 Before starting work, confirm that:
@@ -34,6 +35,10 @@ models locally.
 | `main` | Stable, deployable code. No direct pushes; changes arrive from `dev` by pull request. |
 | `dev` | Integration branch. All feature work merges here first. |
 | `feature/<short-description>` | One branch per change, for example `feature/reranker-threshold-fix`. Use `fix/...` for bug fixes if you prefer. |
+
+Every merge to `main` deploys automatically to the production VPS, which health-checks the new
+build and rolls back if it fails. Treat merging to `main` as releasing. Setup and details:
+[docs/auto-deploy.md](docs/auto-deploy.md).
 
 ```bash
 git checkout dev
@@ -59,8 +64,9 @@ under about 72 characters, and use the body to explain *why* when it isn't obvio
 
 ## Coding guidelines
 
-- **Match the surrounding code.** No formatter or linter is enforced yet (see Known gaps in
-  CLAUDE.md). If you use one locally, don't reformat code you aren't otherwise changing.
+- **Match the surrounding code.** Ruff enforces only bug-class rules (syntax errors, undefined
+  names, unused imports; see `ruff.toml`); no formatter or style rules are enforced. If you use a
+  formatter locally, don't reformat code you aren't otherwise changing.
 - **Follow PEP 8.** Use `snake_case` for functions and variables and `PascalCase` for classes.
   Order imports as standard library, then third-party, then local.
 - **Add type hints** to new functions.
@@ -96,7 +102,9 @@ For quality changes that tests cannot catch, use the evaluation scripts describe
 
 1. Open the pull request against **`dev`** (only release PRs target `main`).
 2. Fill in the pull request template: what changed, why, and how you tested it.
-3. CI must pass.
+3. CI must pass. It runs three jobs on every pull request into `dev` or `main`, and all three
+   must succeed: **lint** (ruff), **secret-scan** (gitleaks over the branch history) and
+   **test** (pytest against Postgres).
 4. At least one approval is required; Safaet approves merges.
 5. Delete the feature branch after merging.
 
