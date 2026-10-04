@@ -256,8 +256,9 @@ the same source to draft. To write a new loader, follow
 
 ### Deployment
 
-Production runs as the systemd unit `shibirgpt.service`, which executes `run.sh`. The
-`deploy.yml` GitHub Actions workflow is still a placeholder. For scaling beyond one instance, see
+Production runs with Docker Compose on a VPS and deploys automatically: every push to `main`
+rebuilds it, checks `/health` and rolls back to the previous commit if the check fails. One-time
+setup: [docs/auto-deploy.md](docs/auto-deploy.md). For scaling beyond one instance, see
 [docs/deployment.md](docs/deployment.md).
 
 ### Observability
@@ -301,7 +302,7 @@ app/
   schemas/           Pydantic request/response models
 scripts/             data loaders, migrations, corpus cleanup, evaluation and debugging tools
 tests/               pytest suite
-docs/                deployment, evaluation and tracing guides
+docs/                auto-deploy, deployment, evaluation and tracing guides
 chroma_db/           generated vector store (not committed)
 ```
 
@@ -311,6 +312,7 @@ chroma_db/           generated vector store (not committed)
 |---|---|
 | [CLAUDE.md](CLAUDE.md) | Maintainers and AI coding agents: architecture, contracts that must not regress, full configuration reference, known gaps. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to set up, branch, commit, test and open pull requests. |
+| [docs/auto-deploy.md](docs/auto-deploy.md) | One-time setup for automatic deploys to the VPS. |
 | [docs/deployment.md](docs/deployment.md) | Scaling beyond a single instance. |
 | [docs/evaluation.md](docs/evaluation.md) | Measuring retrieval and answer quality. |
 | [docs/tracing.md](docs/tracing.md) | Langfuse tracing setup and trace contents. |

@@ -1,13 +1,50 @@
 name: Deploy
 
+# Every push to main (in practice, a merged PR that already passed CI) updates
+# the VPS. The runner only opens an SSH connection; the work happens on the
+# server in scripts/deploy.sh, which health-checks the new build and rolls
+# back on failure. One-time setup: docs/auto-deploy.md.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Queue deploys instead of cancelling one halfway through a rebuild.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    needs: []  # no CI job here since push-to-main already passed the PR's CI check
+    environment: production
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - run: echo "Add your deploy steps here (Vercel, AWS, Docker push, etc.)"
+      # Secrets go through env:, never inline in the script text, so they
+      # can't end up in a shell trace or the rendered workflow.
+      - name: Prepare SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # The trailing "deploy" is ignored: this key's authorized_keys entry on
+      # the VPS has a forced command (scripts/deploy.sh), so the server runs
+      # that script whatever command the client asks for.
+      - name: Deploy over SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${VPS_PORT:-22}" \
+            -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 \
+            "$VPS_USER@$VPS_HOST" deploy
