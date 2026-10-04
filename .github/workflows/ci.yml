@@ -107,7 +107,7 @@ jobs:
       # uv.lock pins ~150 packages including torch -- cache to avoid
       # re-downloading/rebuilding all of them on every run.
       - name: Cache uv package cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/uv
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
@@ -115,7 +115,7 @@ jobs:
       # BAAI/bge-m3 (~2.2 GB) is downloaded once by test_bengali_embedding.py;
       # cache it so only the first run (or a cache eviction) pays that cost.
       - name: Cache HuggingFace model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface
           key: hf-bge-m3-v1
