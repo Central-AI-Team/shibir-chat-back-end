@@ -196,6 +196,51 @@ class TestExpandQuery:
         assert result == ("namajer gurutto ki",)
         assert qr.get_fallback_count() == 1
 
+    def test_mixed_script_query_is_translated(self, qr):
+        """Bengali + Latin word must NOT skip the rewrite."""
+        fake_resp = _make_llm_response("নামাজে খুশু কীভাবে আনব")
+        with mock.patch.object(qr, "complete", return_value=fake_resp) as m:
+            qr.expand_query.cache_clear()
+            result = qr.expand_query("নামাজে khushu কিভাবে আনব")
+
+        assert m.called
+        assert result == ("নামাজে খুশু কীভাবে আনব",)
+
+    def test_arabic_query_is_translated(self, qr):
+        fake_resp = _make_llm_response("কীভাবে ওযু করব")
+        with mock.patch.object(qr, "complete", return_value=fake_resp):
+            qr.expand_query.cache_clear()
+            assert qr.expand_query("كيف أتوضأ") == ("কীভাবে ওযু করব",)
+
+    def test_non_bengali_reply_is_retried_then_accepted(self, qr):
+        replies = [_make_llm_response("importance of prayer"), _make_llm_response("নামাজের গুরুত্ব কী")]
+        with mock.patch.object(qr, "complete", side_effect=replies) as m:
+            qr.expand_query.cache_clear()
+            result = qr.expand_query("importance of prayer")
+
+        assert m.call_count == 2
+        assert result == ("নামাজের গুরুত্ব কী",)
+
+    def test_non_bengali_reply_twice_falls_back(self, qr):
+        fake_resp = _make_llm_response("importance of prayer")
+        with mock.patch.object(qr, "complete", return_value=fake_resp):
+            qr.expand_query.cache_clear()
+            qr._reset_fallback_count()
+            result = qr.expand_query("prayer importance")
+
+        assert result == ("prayer importance",)
+        assert qr.get_fallback_count() == 1
+
+    def test_non_bengali_primed_rewrite_is_ignored(self, qr):
+        qr.prime_rewrite("prayer importance", "prayer importance")
+        fake_resp = _make_llm_response("নামাজের গুরুত্ব")
+        with mock.patch.object(qr, "complete", return_value=fake_resp) as m:
+            qr.expand_query.cache_clear()
+            result = qr.expand_query("prayer importance")
+
+        assert m.called
+        assert result == ("নামাজের গুরুত্ব",)
+
     def test_empty_query_returns_empty_tuple(self, qr):
         """Empty query → empty tuple।"""
         qr.expand_query.cache_clear()

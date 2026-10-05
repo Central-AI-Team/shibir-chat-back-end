@@ -48,6 +48,21 @@ This is a retrieval-augmented generation (RAG) service, not a general-purpose ch
   `shibir-chat-gpu-service` deployed on [Modal](https://modal.com). See [GPU service](#gpu-service).
 - **The LLM** is OpenAI `gpt-5-mini`, called through a single module (`app/core/llm.py`).
 
+### Query rewrite
+
+The books are in Bengali, so the search query must be too. Before retrieval,
+`expand_query()` (`app/rag/query_rewriter.py`) turns the question into one Bengali search string:
+
+| Input | What happens |
+|---|---|
+| Entirely Bengali script | Used as is, with no LLM call. |
+| Banglish, English, Arabic, or Bengali mixed with Latin/Arabic letters | An LLM call rewrites it into standard Bengali, using the books' own terms (prayer → নামাজ, riba → রিবা/সুদ) rather than a literal translation. |
+
+For these inputs the rewrite normally comes from the same LLM call that classifies intent. The
+reply must be at least 80 % Bengali; otherwise it is retried once, and if that also fails the raw
+query is used and a warning is logged. The answer is still written in the language of the
+question. Details and measurements: `CLAUDE.md` §5.
+
 ## Requirements
 
 | Requirement | Notes |

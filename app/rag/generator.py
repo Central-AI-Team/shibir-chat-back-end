@@ -20,7 +20,19 @@ from app.core.config import settings
 from app.core.llm import complete, get_client, get_model
 from app.schemas.query import Citation
 
-_SYSTEM = """তুমি একজন বন্ধুত্বপূর্ণ বাংলা প্রশ্নোত্তর সহকারী। ব্যবহারকারীকে নিচে
+# Incident 2026-10-05: English questions got Bengali answers. The answer now
+# follows the question's language; the LLM decides English vs Banglish (a
+# word-list heuristic would call Banglish without known particles "English").
+# Excerpt labels stay [১], [২] either way (CLAUDE.md §4, rule 3).
+ANSWER_LANGUAGE_RULE = (
+    "উত্তরের ভাষা হবে প্রশ্নের ভাষা: প্রশ্ন ইংরেজিতে হলে সম্পূর্ণ উত্তর স্বাভাবিক ইংরেজিতে লেখো "
+    "(ইসলামি পরিভাষা বইয়ে যেভাবে আছে সেভাবে রাখতে পারো); প্রশ্ন বাংলা, Banglish বা অন্য যেকোনো "
+    "ভাষায় হলে সম্পূর্ণ উত্তর প্রমিত বাংলায় লেখো, রোমান হরফে বাংলা লিখবে না। "
+    "উত্তরের প্রতিটি অংশ, এমনকি 'বইয়ে কী নেই' জানানোর বাক্যটিও, একই ভাষায় হবে — দুই ভাষা মেশাবে না। "
+    "উৎস-নম্বর সবসময় [১], [২] ... আকারেই দেবে।"
+)
+
+_SYSTEM = f"""তুমি একজন বন্ধুত্বপূর্ণ বাংলা প্রশ্নোত্তর সহকারী। ব্যবহারকারীকে নিচে
 দেওয়া বইয়ের অংশ থেকে সাহায্য করাই তোমার একমাত্র কাজ।
 
 নিয়মাবলি:
@@ -34,8 +46,7 @@ _SYSTEM = """তুমি একজন বন্ধুত্বপূর্ণ �
    বলে থেমে যেও না। নম্র ও বন্ধুত্বপূর্ণ ভাষায় জানাও যে এই নির্দিষ্ট বিষয়ে
    বইগুলোতে তথ্য খুঁজে পাওনি, এবং প্রশ্নটি অন্যভাবে বা আরেকটু নির্দিষ্ট করে
    জিজ্ঞাসা করতে উৎসাহ দাও। "উদ্ধৃত অংশ"-এর বাইরের কোনো তথ্য উত্তরে যোগ কোরো না।
-৪। সম্পূর্ণ উত্তর প্রমিত বাংলায় লেখো। ইংরেজি বাক্য বা রোমান হরফে বাংলা লিখবে না।
-   পারিভাষিক শব্দ বইয়ে যেভাবে আছে সেভাবেই রাখো।
+৪। {ANSWER_LANGUAGE_RULE}
 ৫। উত্তর গুছিয়ে লেখো — প্রয়োজনে অনুচ্ছেদ বা বুলেট ব্যবহার করো, তবে ছোট প্রশ্নে
    অকারণে দীর্ঘ উত্তর দিও না।"""
 
@@ -44,7 +55,9 @@ _USER = """উদ্ধৃত অংশসমূহ:
 
 প্রশ্ন: {query}
 
-উপরের নিয়ম মেনে বাংলায় উত্তর দাও।"""
+উপরের নিয়ম মেনে প্রশ্নের ভাষায় উত্তর দাও।
+
+(Reply language: if the question above is written in English, write the ENTIRE reply in English, including any note about what the excerpts do not cover, with no Bengali sentences (Bengali excerpt labels like [১] and Islamic terms are fine); otherwise answer in Bengali.)"""
 
 
 _BN_DIGITS = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
