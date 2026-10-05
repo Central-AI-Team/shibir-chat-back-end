@@ -15,7 +15,7 @@ import json
 from app.core import timing, tracing
 from app.core.config import settings
 from app.core.llm import complete
-from app.rag.query_rewriter import mostly_bengali, prime_rewrite
+from app.rag.query_rewriter import SEARCH_RULES, mostly_bengali, prime_rewrite
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +102,8 @@ QA - ব্যবহারকারী সরাসরি কোনো তথ্
 
 ২) বার্তাটি (বাংলা, Banglish, ইংরেজি বা আরবি যাই হোক) শুদ্ধ, সহজ, প্রমিত বাংলায় রূপান্তর করো।
 বার্তার উত্তর দেবে না; অর্থ পরিবর্তন করবে না; মূল ভাবটি অক্ষুণ্ন রাখো।
+
+""" + SEARCH_RULES + """
 
 শুধুমাত্র একটি JSON অবজেক্ট দিয়ে উত্তর দাও, অন্য কিছু লিখো না:
 {"intent": "NOTE|ROLEPLAY|SUGGESTION|QA", "rewritten_query": "<বাংলা রূপান্তর>"}"""
