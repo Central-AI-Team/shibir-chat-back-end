@@ -15,7 +15,7 @@ import json
 from app.core import timing, tracing
 from app.core.config import settings
 from app.core.llm import complete
-from app.rag.query_rewriter import SEARCH_RULES, mostly_bengali, prime_rewrite
+from app.rag.query_rewriter import SEARCH_RULES, is_bengali_query, prime_rewrite
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def classify_intent(message: str, has_active_roleplay_session: bool) -> str:
         return "QA"
 
     result = None
-    if settings.combine_intent_rewrite and not mostly_bengali(normalized):
+    if settings.combine_intent_rewrite and not is_bengali_query(normalized):
         timing.mark("intent_classification", "llm fallback (combined with rewrite)")
         result = _classify_and_rewrite(normalized)
         if result is None:

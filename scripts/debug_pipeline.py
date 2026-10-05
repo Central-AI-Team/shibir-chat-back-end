@@ -87,10 +87,7 @@ def step_intent(query):
     mod=_imp("app.services.intent_classifier")
     if mod is None: return "QA"
     t0=time.perf_counter()
-    try: intent=mod.classify_intent(query)
-    except TypeError:
-        try: intent=mod.classify_intent(query,was_roleplaying=False)
-        except Exception as e: _err(str(e)); return "QA"
+    try: intent=mod.classify_intent(query,False)  # has_active_roleplay_session
     except Exception as e: _err(str(e)); return "QA"
     ms=(time.perf_counter()-t0)*1000
     desc={"QA":"Normal Q&A → retrieval","NOTE":"Note → note service","SUGGESTION":"Suggestion service","ROLEPLAY":"Roleplay service"}

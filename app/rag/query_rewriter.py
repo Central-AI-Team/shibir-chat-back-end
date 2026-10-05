@@ -18,6 +18,7 @@ longer used inside expand_query() itself.
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from collections import OrderedDict
@@ -27,6 +28,8 @@ from app.core import timing
 from app.core.config import settings
 from app.core.llm import complete
 from app.rag.chunker import normalize
+
+logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -51,6 +54,26 @@ def mostly_bengali(text: str, ratio: float | None = None) -> bool:
     if not letters:
         return False
     return sum(1 for c in letters if "ঀ" <= c <= "৿") / len(letters) >= ratio
+
+
+def is_bengali_query(text: str) -> bool:
+    """True only when the query is entirely Bengali script, so it needs no
+    translation. Any Latin (English/Banglish) or Arabic letter makes it False:
+    a mixed query like "নামাজে khushu কিভাবে আনব" used to skip the rewrite
+    (>= 60 % Bengali) and reach the embedder with its Latin word untranslated."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    return all("ঀ" <= c <= "৿" for c in letters)
+
+
+# A rewrite is accepted only if it really is Bengali; the LLM may answer in
+# English, leave Latin letters in, or add an explanation.
+_OUTPUT_BENGALI_RATIO = 0.8
+
+
+def _is_bengali_output(text: str) -> bool:
+    return mostly_bengali(text, _OUTPUT_BENGALI_RATIO)
 
 
 def _looks_arabic(text: str) -> bool:
@@ -129,7 +152,11 @@ SEARCH_RULES = """\
 fasting/sawm → রোজা, charity/zakat → যাকাত, supplication/dua → দোয়া, pilgrimage → হজ্জ।
 রূপান্তরটি হবে বইয়ে খোঁজার উপযোগী প্রশ্ন: আক্ষরিক অনুবাদ নয়, বরং বইয়ে সাধারণত যেসব শব্দে বিষয়টি
 আলোচিত হয় সেগুলো ব্যবহার করবে (যেমন "improve my prayers" → নামাজে খুশু ও মনোযোগ অর্জনের উপায়)।
-প্রশ্নের মূল বিষয় বজায় রাখবে, উত্তর বা নতুন তথ্য যোগ করবে না, সর্বোচ্চ এক বা দুই বাক্য।"""
+প্রশ্নের মূল বিষয় বজায় রাখবে, উত্তর বা নতুন তথ্য যোগ করবে না, সর্বোচ্চ এক বা দুই বাক্য।
+অনুবাদের ভাষারীতি: পূর্ণাঙ্গ বাংলা সাহিত্যের ভাষায়, বাংলা একাডেমির অনুবাদরীতি ও প্রমিত বানানরীতি মেনে
+লিখবে: শুদ্ধ চলিত ভাষা, স্বাভাবিক বাক্যগঠন, কোনো ইংরেজি শব্দ বা রোমান হরফ নয়, শব্দানুগ বা যান্ত্রিক
+অনুবাদ নয় (ইংরেজি বাক্যের গঠন বাংলায় টেনে আনবে না)। তবে ইসলামি পরিভাষা ও বইয়ের প্রচলিত শব্দের
+নিয়ম (ওপরে) সবসময় অগ্রাধিকার পাবে।"""
 
 _PROMPT_TRANSLATE = """\
 তুমি একটি বাংলা ইসলামিক গ্রন্থাগার সার্চ সিস্টেমের query প্রসেসর।
@@ -201,25 +228,27 @@ def expand_query(query: str, max_variants: int | None = None) -> tuple[str, ...]
     if not query:
         return ()
 
-    if mostly_bengali(query):
+    if is_bengali_query(query):
         # Already Bengali: the LLM rewrite only re-spelled it (3-4 s per call).
         timing.mark("query_rewrite", "skipped: already Bengali")
         return (query,)
     with _primed_lock:
         primed = _primed.pop(query, None)
-    if primed:
+    if primed and _is_bengali_output(primed):
         timing.mark("query_rewrite", "skipped: rewritten in intent call")
         return (primed,)
 
     prompt = _PROMPT_TRANSLATE.format(q=query)
-    try:
-        resp = complete("rewrite", [{"role": "user", "content": prompt}], token_budget=2000)
-        bn = normalize(resp.choices[0].message.content.strip())
-        if not bn:
-            raise ValueError("empty translation")
-    except Exception:
-        global _fallback_count
-        _fallback_count += 1
-        return (query,)
+    for _attempt in range(2):  # one retry if the reply is not Bengali
+        try:
+            resp = complete("rewrite", [{"role": "user", "content": prompt}], token_budget=2000)
+            bn = normalize((resp.choices[0].message.content or "").strip())
+        except Exception:
+            break
+        if bn and _is_bengali_output(bn):
+            return (bn,)
 
-    return (bn,)
+    global _fallback_count
+    _fallback_count += 1
+    logger.warning("query rewrite did not produce Bengali; using the raw query")
+    return (query,)
