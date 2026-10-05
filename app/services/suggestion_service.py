@@ -11,11 +11,11 @@ from __future__ import annotations
 from app.core import timing, tracing
 from app.core.config import settings
 from app.core.llm import complete
-from app.rag.generator import format_context
+from app.rag.generator import ANSWER_LANGUAGE_RULE, format_context
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import Citation
 
-_SYSTEM_GROUNDED = """তুমি একজন বন্ধুত্বপূর্ণ বাংলা পরামর্শদাতা সহকারী। ব্যবহারকারীকে
+_SYSTEM_GROUNDED = f"""তুমি একজন বন্ধুত্বপূর্ণ বাংলা পরামর্শদাতা সহকারী। ব্যবহারকারীকে
 নিচে দেওয়া বইয়ের অংশের ভিত্তিতে একটি পরামর্শ/সুপারিশ দেওয়াই তোমার কাজ।
 
 নিয়মাবলি:
@@ -25,7 +25,7 @@ _SYSTEM_GROUNDED = """তুমি একজন বন্ধুত্বপূ�
 ২। প্রতিটি দাবির শেষে বর্গবন্ধনীতে উৎস দাও, যেমন [১] বা [২], যেখানে প্রাসঙ্গিক।
 ৩। উদ্ধৃত অংশের বাইরের কল্পিত তথ্য বানিও না -- পরামর্শ বইয়ের বক্তব্যের সাথে
    সঙ্গতিপূর্ণ হতে হবে।
-৪। সম্পূর্ণ উত্তর প্রমিত বাংলায় লেখো। ইংরেজি বাক্য বা রোমান হরফে বাংলা লিখবে না।
+৪। {ANSWER_LANGUAGE_RULE}
 ৫। উত্তর গুছিয়ে লেখো, প্রয়োজনে বুলেট ব্যবহার করো, তবে অকারণে দীর্ঘ কোরো না।"""
 
 _USER_GROUNDED = """উদ্ধৃত অংশসমূহ:
@@ -33,21 +33,25 @@ _USER_GROUNDED = """উদ্ধৃত অংশসমূহ:
 
 প্রশ্ন/পরিস্থিতি: {query}
 
-উপরের নিয়ম মেনে বাংলায় একটি পরামর্শ দাও।"""
+উপরের নিয়ম মেনে প্রশ্নের ভাষায় একটি পরামর্শ দাও।
 
-_SYSTEM_UNGROUNDED = """তুমি একজন বন্ধুত্বপূর্ণ বাংলা পরামর্শদাতা সহকারী।
+(Reply language: if the question above is written in English, write the ENTIRE reply in English, including any note about what the excerpts do not cover, with no Bengali sentences (Bengali excerpt labels like [১] and Islamic terms are fine); otherwise answer in Bengali.)"""
+
+_SYSTEM_UNGROUNDED = f"""তুমি একজন বন্ধুত্বপূর্ণ বাংলা পরামর্শদাতা সহকারী।
 
 নিয়মাবলি:
 ১। প্রথমে স্পষ্টভাবে জানাও যে এই নির্দিষ্ট বিষয়ে বইগুলোতে যথেষ্ট তথ্য পাওয়া
    যায়নি, তাই বইভিত্তিক গ্রাউন্ডেড পরামর্শ দেওয়া সম্ভব হচ্ছে না।
 ২। এরপর চাইলে একটি সাধারণ পরামর্শ দিতে পারো, কিন্তু সেটিকে স্পষ্টভাবে "সাধারণ
    পরামর্শ (বই-ভিত্তিক নয়)" বলে আলাদা করে উল্লেখ করো।
-৩। সম্পূর্ণ উত্তর প্রমিত বাংলায় লেখো। ইংরেজি বাক্য বা রোমান হরফে বাংলা লিখবে না।
+৩। {ANSWER_LANGUAGE_RULE}
 ৪। উত্তর সংক্ষিপ্ত ও স্পষ্ট রাখো।"""
 
 _USER_UNGROUNDED = """প্রশ্ন/পরিস্থিতি: {query}
 
-উপরের নিয়ম মেনে বাংলায় উত্তর দাও।"""
+উপরের নিয়ম মেনে প্রশ্নের ভাষায় উত্তর দাও।
+
+(Reply language: if the question above is written in English, write the ENTIRE reply in English, including any note about what the excerpts do not cover, with no Bengali sentences (Bengali excerpt labels like [১] and Islamic terms are fine); otherwise answer in Bengali.)"""
 
 
 def give_suggestion(query: str) -> tuple[str, list[Citation]]:

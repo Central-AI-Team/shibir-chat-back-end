@@ -61,11 +61,14 @@ app/
     chunker.py            normalize(text): NFC + whitespace cleanup; apply at ingest AND
                           query time. chunk_text(text): paragraph → danda (।) → period →
                           space splitting, ~900 chars per chunk, 150 overlap.
-    query_rewriter.py     expand_query(query) -> tuple[str, ...]. One LLM call (task
-                          "rewrite") turns Banglish/English/Bengali into Bengali-script
-                          search variants. lru_cached per process. Falls back to the raw
-                          query on any failure, including a truncated or empty response;
-                          see the incident comment in the file before lowering its token budget.
+    query_rewriter.py     expand_query(query) -> 1-element tuple holding one Bengali search
+                          string. A query that is entirely Bengali script passes through;
+                          anything else (Banglish, English, Arabic, or Bengali mixed with
+                          Latin/Arabic letters) goes through one LLM call (task "rewrite").
+                          The reply must be >= 80 % Bengali letters or it is retried once,
+                          then the raw query is used (and a warning logged). lru_cached per
+                          process; see the incident comment in the file before lowering its
+                          token budget.
     embedder.py           embed_text / embed_texts / embed_query with BAAI/bge-m3 (1024-dim,
                           multilingual). GPU mode calls the external service (§6); otherwise
                           a local sentence-transformers model, imported and loaded lazily
@@ -79,8 +82,8 @@ app/
                           created. The collection uses hnsw:space="cosine" (Chroma's default
                           is L2, which would break similarity thresholds).
     retriever.py          retrieve_relevant_docs(query) -> list[Citation]:
-                          expand_query → embed all variants → Chroma FETCH_K neighbours per
-                          variant → merge + dedupe → drop below MIN_SIMILARITY → rerank →
+                          expand_query → embed the query → Chroma FETCH_K neighbours
+                          → merge + dedupe → drop below MIN_SIMILARITY → rerank →
                           TOP_K. Citations carry `similarity` (cosine pre-filter) and
                           `rerank_score` (the real relevance signal).
     generator.py          generate_answer(query, citations) -> str (task "qa") and
@@ -154,7 +157,11 @@ idempotent. The running app does not read them.
 2. Give **partial answers** when the excerpts partly cover the question, naming the gap in one
    sentence. Refuse only when the topic is not mentioned at all.
 3. Cite every claim with `[১]`, `[২]`, ... excerpt numbers.
-4. Write entirely in standard Bengali: no English sentences, no Banglish.
+4. Answer in the language of the question (`ANSWER_LANGUAGE_RULE` in `generator.py`, shared with
+   `suggestion_service.py`): an English question gets an English answer; Bengali, Banglish or
+   anything else gets standard Bengali, never Banglish. Never mix the two in one answer. The LLM
+   picks the language (a word-list heuristic mislabels Banglish as English). Excerpt labels stay
+   `[১]`, `[২]` either way. Canned greeting replies are still Bengali.
 
 No `temperature` is passed: `gpt-5-mini` is a reasoning model and rejects any value except its
 default of 1 (§5).
@@ -213,12 +220,17 @@ several times: `openai/gpt-oss-20b` passed a single run but misspelled key Bangl
   `intent` and `rewrite`: on gpt-5-mini `minimal` misrouted plain questions as the classifier and
   left Latin letters in a Banglish rewrite ("শirk"), which corrupts retrieval. Re-test both before
   loosening that. Per-mode completion-token caps: `MAX_TOKENS_{QA,SUGGESTION,ROLEPLAY,NOTE}`.
-- **Rewrite skip.** `expand_query()` skips the LLM when >= `REWRITE_SKIP_BENGALI_RATIO` of the
-  letters are Bengali script (the rewrite only re-spelled them). Banglish/English still rewrite.
+- **Rewrite skip.** `expand_query()` skips the LLM only when `is_bengali_query()` is true, i.e.
+  *every* letter is Bengali script (the rewrite only re-spelled them). Any Latin or Arabic letter
+  forces a rewrite: a 60 %-Bengali cutoff used to let "নামাজে khushu কিভাবে আনব" through with its
+  Latin word untranslated. Cost: Bengali with one stray Latin word pays one rewrite call (~3-4 s).
+  Rewrites are validated (`_is_bengali_output`, >= 80 % Bengali); a non-Bengali reply is retried
+  once, and a non-Bengali primed rewrite from the intent call is discarded.
 - **Intent.** Greetings never reach the LLM (`classify_intent` returns QA, `answer_question`/
   `_qa_stream` send the canned reply). When the LLM is needed for a non-Bengali message, ONE call
-  returns `{"intent","rewritten_query"}` and primes `expand_query()` (`COMBINE_INTENT_REWRITE`);
-  invalid JSON falls back to the old two calls.
+  returns `{"intent","rewritten_query"}` and primes `expand_query()` (`COMBINE_INTENT_REWRITE`;
+  the same `is_bengali_query()` decides whether a message needs it); invalid JSON falls back to
+  the old two calls.
 - **Embedding LRU** (`embedder.embed_queries`, `EMBED_CACHE_SIZE`), **startup warm-up** in the
   lifespan (background; failure only logs; `WARMUP_ON_STARTUP`), **note map calls** run
   concurrently (`NOTE_MAP_CONCURRENCY`; each task gets the request's contextvars).
@@ -297,7 +309,7 @@ An empty message returns 400.
 ```json
 {
   "mode": "qa",
-  "answer": "… (always Bengali)",
+  "answer": "… (in the question's language: English or Bengali)",
   "sources": [
     {
       "book": "…", "chapter": "…", "source_db": "tarun",
@@ -479,7 +491,7 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 | `CHROMA_COLLECTION_NAME` | `documents_bge_m3` | Encodes the embedding model on purpose, so a model change without a new name fails loudly on dimension mismatch. |
 | `TOP_K` | `5` | Excerpts sent to the LLM after reranking. |
 | `FETCH_K` | `25` | Chroma candidates per query variant, before merging and reranking. |
-| `MAX_VARIANTS` | `4` | Extra rewrite variants beyond the canonical Bengali form. Each costs one embed and one search; tune with `eval_query_expansion`. |
+| `MAX_VARIANTS` | `4` | **Currently unused:** `expand_query()` returns a single Bengali string and only accepts `max_variants` for call-site compatibility. |
 | `MIN_SIMILARITY` | `0.25` | Loose cosine pre-filter before the reranker. |
 | `MIN_RERANK_SCORE` | `0.5` | The relevance gate (§4). Sigmoid scores in [0, 1]: on-topic questions scored 0.94–0.99, an off-topic one peaked at 0.011. The ">2 is relevant" logit heuristic quoted for this model does **not** apply. Re-tune with `tune_threshold` on at least 30 questions. |
 
@@ -567,9 +579,10 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 - **No lint/format tooling:** the dev dependency group contains only `pytest`.
 - **Single global gate:** `min_rerank_score` applies to every book. Per-category thresholds may be
   needed if the corpus spans very different domains.
-- **Rewrite fallback:** `expand_query()` costs one LLM call per unique query (cached only for the
-  process lifetime). If it fails, retrieval silently uses the raw query, which is fine for Bengali
-  script but degrades Banglish recall.
+- **Rewrite fallback:** `expand_query()` costs one LLM call per unique non-Bengali query (cached
+  only for the process lifetime). If the call fails, or two replies in a row are not Bengali,
+  retrieval uses the raw query (a warning is logged and `get_fallback_count()` increments), which
+  is fine for Bengali script but degrades Banglish recall.
 - **Partial corpus cleanup:**
   - Applied: the 106 duplicate pages in `book203_cross_contamination.csv` are excluded (reason
     `book203_cross_contamination.csv:loser`).
