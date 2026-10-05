@@ -118,6 +118,19 @@ def detect_language(text: str) -> str:
 # direct Bengali.
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Shared with the combined intent+rewrite prompt in intent_classifier.py.
+# Incident 2026-10-05: "How can I improve my daily prayers?" was translated
+# literally ("দৈনন্দিন প্রার্থনা উন্নত করা"): wrong term (the books say নামাজ)
+# and wrong phrasing (they say খুশু/মনোযোগ, not "উন্নত করা"), so the top rerank
+# score was 0.08 and the gate refused. Bengali-script queries skip the rewrite,
+# so this only affects English/Banglish input.
+SEARCH_RULES = """\
+ইসলামি পরিভাষা বইয়ের প্রচলিত বাংলা শব্দে লিখবে: prayer/salah/salat → নামাজ (কখনো "প্রার্থনা" নয়),
+fasting/sawm → রোজা, charity/zakat → যাকাত, supplication/dua → দোয়া, pilgrimage → হজ্জ।
+রূপান্তরটি হবে বইয়ে খোঁজার উপযোগী প্রশ্ন: আক্ষরিক অনুবাদ নয়, বরং বইয়ে সাধারণত যেসব শব্দে বিষয়টি
+আলোচিত হয় সেগুলো ব্যবহার করবে (যেমন "improve my prayers" → নামাজে খুশু ও মনোযোগ অর্জনের উপায়)।
+প্রশ্নের মূল বিষয় বজায় রাখবে, উত্তর বা নতুন তথ্য যোগ করবে না, সর্বোচ্চ এক বা দুই বাক্য।"""
+
 _PROMPT_TRANSLATE = """\
 তুমি একটি বাংলা ইসলামিক গ্রন্থাগার সার্চ সিস্টেমের query প্রসেসর।
 ব্যবহারকারীর প্রশ্নটি বাংলা, Banglish (রোমান হরফে বাংলা), ইংরেজি, বা আরবি -- যে ভাষাতেই হোক।
@@ -129,6 +142,8 @@ _PROMPT_TRANSLATE = """\
   • অর্থ পরিবর্তন করবে না, মূল ভাবটি অক্ষুণ্ণ রাখো।
   • প্রশ্নটি যদি ইতিমধ্যে বাংলায় থাকে, শুধু শুদ্ধ বাংলায় রাখো (রূপান্তরের প্রয়োজন নেই)।
   • কেবল বাংলা টেক্সট ফেরত দেবে -- অন্য কোনো ব্যাখ্যা, উদ্ধৃতি চিহ্ন, বা JSON নয়।
+
+""" + SEARCH_RULES + """
 
 প্রশ্ন: {q}"""
 
