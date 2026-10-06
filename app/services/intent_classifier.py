@@ -1,8 +1,10 @@
 """Intent classification for /chat.
 
-Mirrors qa_service.py's _is_conversational() approach: cheap, deterministic
-regex matching first (anchored, covers Bengali script + common Banglish
-spellings), and only falls back to an LLM call when nothing matches.
+Cheap, deterministic regex matching first (covers Bengali script + common
+Banglish spellings), and only falls back to an LLM call when nothing matches.
+Small talk is recognised by chitchat_service.classify_chitchat(): a message
+that is only small talk is CHITCHAT; "hi, <question>" stays QA, and the QA path
+puts the greeting in front of the answer.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from app.core import timing, tracing
 from app.core.config import settings
 from app.core.llm import complete
 from app.rag.query_rewriter import SEARCH_RULES, is_bengali_query, prime_rewrite
+from app.services.chitchat_service import classify_chitchat
 
 logger = logging.getLogger(__name__)
 
@@ -65,17 +68,18 @@ _INTENT_PATTERNS = (
 # guaranteed iteration order (varies with Python's per-process hash seed), so
 # that pick would be non-deterministic across runs for the identical raw
 # response -- a tuple pins it to this priority order instead.
-_VALID_INTENTS = ("NOTE", "ROLEPLAY", "SUGGESTION", "QA")
+_VALID_INTENTS = ("NOTE", "ROLEPLAY", "SUGGESTION", "CHITCHAT", "QA")
 
 _CLASSIFIER_SYSTEM = """তুমি একজন ইনটেন্ট ক্লাসিফায়ার। ব্যবহারকারীর বার্তাটি পড়ে
-নিচের চারটি ক্যাটাগরির মধ্যে ঠিক একটি বেছে নাও:
+নিচের পাঁচটি ক্যাটাগরির মধ্যে ঠিক একটি বেছে নাও:
 
 NOTE - ব্যবহারকারী কোনো অধ্যায় বা বইয়ের নোট/সারাংশ চাইছে।
 ROLEPLAY - ব্যবহারকারী তোমাকে কোনো চরিত্রে অভিনয় করতে বলছে।
 SUGGESTION - ব্যবহারকারী পরামর্শ/মতামত/সুপারিশ চাইছে।
 QA - ব্যবহারকারী সরাসরি কোনো তথ্যভিত্তিক প্রশ্ন জিজ্ঞাসা করছে।
+CHITCHAT - সালাম, কুশল বিনিময়, ধন্যবাদ/দোয়া, বিদায়, বট সম্পর্কে প্রশ্ন, সাধারণ আলাপ।
 
-শুধুমাত্র একটি শব্দ দিয়ে উত্তর দাও: NOTE, ROLEPLAY, SUGGESTION, অথবা QA।
+শুধুমাত্র একটি শব্দ দিয়ে উত্তর দাও: NOTE, ROLEPLAY, SUGGESTION, QA, অথবা CHITCHAT।
 অন্য কিছু লিখো না।"""
 
 
@@ -94,11 +98,12 @@ def _classify_with_llm(message: str) -> str:
 
 _COMBINED_SYSTEM = """তুমি দুটি কাজ একসাথে করবে। ব্যবহারকারীর বার্তাটি পড়ে:
 
-১) নিচের চারটি ক্যাটাগরির মধ্যে ঠিক একটি বেছে নাও:
+১) নিচের পাঁচটি ক্যাটাগরির মধ্যে ঠিক একটি বেছে নাও:
 NOTE - ব্যবহারকারী কোনো অধ্যায় বা বইয়ের নোট/সারাংশ চাইছে।
 ROLEPLAY - ব্যবহারকারী তোমাকে কোনো চরিত্রে অভিনয় করতে বলছে।
 SUGGESTION - ব্যবহারকারী পরামর্শ/মতামত/সুপারিশ চাইছে।
 QA - ব্যবহারকারী সরাসরি কোনো তথ্যভিত্তিক প্রশ্ন জিজ্ঞাসা করছে।
+CHITCHAT - সালাম, কুশল বিনিময়, ধন্যবাদ/দোয়া, বিদায়, বট সম্পর্কে প্রশ্ন, সাধারণ আলাপ।
 
 ২) বার্তাটি (বাংলা, Banglish, ইংরেজি বা আরবি যাই হোক) শুদ্ধ, সহজ, প্রমিত বাংলায় রূপান্তর করো।
 বার্তার উত্তর দেবে না; অর্থ পরিবর্তন করবে না; মূল ভাবটি অক্ষুণ্ন রাখো।
@@ -106,7 +111,7 @@ QA - ব্যবহারকারী সরাসরি কোনো তথ্
 """ + SEARCH_RULES + """
 
 শুধুমাত্র একটি JSON অবজেক্ট দিয়ে উত্তর দাও, অন্য কিছু লিখো না:
-{"intent": "NOTE|ROLEPLAY|SUGGESTION|QA", "rewritten_query": "<বাংলা রূপান্তর>"}"""
+{"intent": "NOTE|ROLEPLAY|SUGGESTION|CHITCHAT|QA", "rewritten_query": "<বাংলা রূপান্তর>"}"""
 
 
 def _parse_json(raw: str) -> dict | None:
@@ -164,14 +169,15 @@ def classify_intent(message: str, has_active_roleplay_session: bool) -> str:
             tracing.record_intent(intent, method="regex")
             return intent
 
-    # A greeting needs no LLM, no retrieval: answer_question()/_qa_stream() turn
-    # a QA-classified small-talk message into a canned reply.
-    from app.services.qa_service import _is_conversational
-
-    if _is_conversational(normalized):
-        timing.mark("intent_classification", "greeting")
-        tracing.record_intent("QA", method="conversational")
-        return "QA"
+    # Small talk needs no intent LLM call. Pure small talk is CHITCHAT; a
+    # greeting in front of a real question stays QA, and the QA path answers
+    # the greeting first and then the question (chitchat_service.preface).
+    chitchat = classify_chitchat(normalized)
+    if chitchat is not None:
+        intent = "QA" if chitchat[1] else "CHITCHAT"
+        timing.mark("intent_classification", "regex")
+        tracing.record_intent(intent, method="regex")
+        return intent
 
     result = None
     if settings.combine_intent_rewrite and not is_bengali_query(normalized):
