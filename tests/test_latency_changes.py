@@ -83,7 +83,9 @@ def test_primed_rewrite_is_used_without_an_llm_call():
 ])
 def test_greetings_never_reach_the_llm(text):
     with patch.object(ic, "complete") as complete:
-        assert ic.classify_intent(text, False) == "QA"
+        # Pure small talk is its own intent now (chitchat_service); the point of
+        # this test is unchanged: no intent LLM call.
+        assert ic.classify_intent(text, False) == "CHITCHAT"
     complete.assert_not_called()
 
 

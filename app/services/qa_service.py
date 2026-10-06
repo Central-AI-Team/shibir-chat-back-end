@@ -19,20 +19,22 @@ plainly saying the books don't cover it, instead of refusing outright.
 Sources stay empty either way: nothing here grounded the answer, so nothing
 is cited.
 
-CONVERSATIONAL SHORTCUT: greetings / thanks / farewells used to reach the
-rerank gate above, fail it (a "hi" has no book to rank against), and get
-whatever generator.py did with an empty citation list -- previously a stiff
-"not found in the books" refusal. _is_conversational() catches this class of
-query with a cheap, deterministic keyword check *before* retrieval, so
-small talk gets a short friendly reply without ever calling the retriever or
-the LLM.
+SMALL TALK: greetings / thanks / farewells used to reach the rerank gate
+above, fail it (a "hi" has no book to rank against), and get a stiff "not
+found in the books" refusal; they were then given a random canned reply that
+ignored what was said (a salam could get a goodbye). chitchat_service.preface()
+now splits the message *before* retrieval, using the same code as the
+streaming path in app/api/router.py:
+  - pure small talk gets a reply that matches it, with no retrieval and no
+    book-QA LLM call;
+  - "hi, <question>" gets a short greeting in front, and retrieval, the gate
+    and generation run on the question alone. Sources come only from that
+    RAG part.
 """
 
 from __future__ import annotations
 
 import logging
-import random
-import re
 import time
 
 from app.core import tracing
@@ -40,65 +42,34 @@ from app.core.config import settings
 from app.rag.generator import generate_answer
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import QueryResponse
+from app.services.chitchat_service import classify_chitchat, preface
 
 logger = logging.getLogger(__name__)
 
-# Cheap, deterministic small-talk detection -- no LLM/retriever call. Each
-# pattern is anchored at the start of the (stripped, lowercased) query, since
-# these phrases are how conversational turns actually open. Bengali and the
-# common Banglish (Bengali typed in Latin letters) spellings are both covered.
-_GREETING_RE = re.compile(
-    r"^(?:আস্?সালাম\S*|ওয়া?\s*আলাইকুম\s*(?:আস্?)?সালাম|সালাম|হ্যালো|হাই+|হেই|হ্যাই|নমস্কার|"
-    r"gm|ass?alam\w*|wa\s*alaikum\s*(?:as)?salam|slm|salam|hello+|hi+|hey+|namaskar|"
-    r"good\s*(?:morning|afternoon|evening|night))\b"
-)
-_WELLBEING_RE = re.compile(
-    r"^(?:কেমন\s+আছ(?:েন|ো|িস)|কী\s+খবর|কি\s+খবর|"
-    r"kemon\s+ach(?:en|o|is)|ki\s*khobor)\b"
-)
-_THANKS_RE = re.compile(
-    r"^(?:ধন্যবাদ|থ্যাংক(?:স|িউ)?|থ্যাঙ্ক(?:স|\s*ইউ)?|শুকরিয়া|"
-    r"dhonnobad|dhonyobad|dhannobad|thanks?|thank\s*you|shukriya)\b"
-)
-_FAREWELL_RE = re.compile(
-    r"^(?:বিদায়|আল্লাহ্?\s*হাফেজ|খোদা\s*হাফেজ|ভালো\s+থাকবেন|টাটা|বাই|"
-    r"bidae|allah\s*hafez|khoda\s*hafez|tata|bye)\b"
-)
-_CONVERSATIONAL_PATTERNS = (_GREETING_RE, _WELLBEING_RE, _THANKS_RE, _FAREWELL_RE)
-
-_CONVERSATIONAL_REPLIES = (
-    "আসসালামু আলাইকুম! আমি ভালো আছি, আপনাকে ধন্যবাদ। বই সম্পর্কিত কোনো প্রশ্ন থাকলে জিজ্ঞাসা করতে পারেন।",
-    "জি, আলহামদুলিল্লাহ ভালো আছি। আপনার জন্য কী সাহায্য করতে পারি?",
-    "আপনাকেও ধন্যবাদ! বইয়ের কোনো বিষয়ে জানতে চাইলে বলুন।",
-    "আল্লাহ হাফেজ! প্রয়োজন হলে আবার প্রশ্ন নিয়ে আসবেন।",
-)
-
-
 def _is_conversational(query: str) -> bool:
-    normalized = query.strip().lower().strip(" .!?,।-")
-    # A real book question can still open with a greeting word ("হ্যালো,
-    # তৃতীয় অধ্যায়ে কী লেখা আছে?"), so only short pleasantries are treated
-    # as small talk -- anything longer than a handful of words falls through
-    # to normal retrieval instead.
-    if len(normalized.split()) > 6:
-        return False
-    return any(p.search(normalized) for p in _CONVERSATIONAL_PATTERNS)
+    """True for pure small talk (no question attached).
+
+    Kept importable for existing callers; the matching itself lives in
+    chitchat_service.classify_chitchat().
+    """
+    hit = classify_chitchat(query)
+    return hit is not None and not hit[1]
 
 
 def answer_question(query: str) -> QueryResponse:
     start = time.perf_counter()
 
-    if _is_conversational(query):
-        answer = random.choice(_CONVERSATIONAL_REPLIES)
+    greeting, question = preface(query)
+    if not question:  # pure small talk: `greeting` is the whole reply
         response_time_ms = round((time.perf_counter() - start) * 1000, 2)
         logger.info("conversational_shortcut query=%r in %.2fms", query, response_time_ms)
         return QueryResponse(
-            query=query, answer=answer, sources=[], response_time_ms=response_time_ms
+            query=query, answer=greeting, sources=[], response_time_ms=response_time_ms
         )
 
     # The `retrieve` trace span (full candidate pool + rerank scores) is
     # emitted inside retrieve_stages(); nothing to record here.
-    citations = retrieve_relevant_docs(query)
+    citations = retrieve_relevant_docs(question)
 
     # The reranker score is the honest relevance signal. If even the best
     # candidate is below the bar, the corpus does not cover this question --
@@ -113,7 +84,9 @@ def answer_question(query: str) -> QueryResponse:
     )
     grounding = citations if relevant else []
 
-    answer = generate_answer(query, grounding)
+    answer = generate_answer(question, grounding)
+    if greeting:
+        answer = f"{greeting}\n\n{answer}"
 
     response_time_ms = round((time.perf_counter() - start) * 1000, 2)
     if relevant:

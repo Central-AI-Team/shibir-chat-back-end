@@ -26,8 +26,8 @@ single-worker deployment; a shared store (Redis / DB) is the upgrade path.
 
 from __future__ import annotations
 
+import itertools
 import json
-import random
 import time
 
 from fastapi import APIRouter, HTTPException, Response
@@ -48,13 +48,10 @@ from app.schemas.query import (
     ConversationMessage,
     ConversationSummary,
 )
+from app.services.chitchat_service import preface, respond
 from app.services.intent_classifier import classify_intent
 from app.services.note_service import generate_book_notes_from_text
-from app.services.qa_service import (
-    _CONVERSATIONAL_REPLIES,
-    _is_conversational,
-    answer_question,
-)
+from app.services.qa_service import answer_question
 from app.services.roleplay_service import handle_roleplay
 from app.services.session_store import (
     append_history,
@@ -155,6 +152,10 @@ async def _chat(body: ChatRequest) -> ChatResponse:
                 answer = await run_in_threadpool(handle_roleplay, message, session)
             elif intent == "SUGGESTION":
                 answer, sources = await run_in_threadpool(give_suggestion, message)
+            elif intent == "CHITCHAT":
+                # Greetings / thanks / "who are you": no retrieval, no sources.
+                # The history is read before this turn is recorded below.
+                answer = await run_in_threadpool(respond, message, list(session["history"]))
             else:  # QA
                 qa_response = await run_in_threadpool(answer_question, message)
                 answer, sources = qa_response.answer, qa_response.sources
@@ -218,14 +219,16 @@ def _qa_stream(
     streaming path can't rely on ambient trace context for this (see
     app/core/tracing.py's module docstring).
     """
-    # Same cheap deterministic small-talk shortcut as answer_question: a
-    # greeting has nothing to retrieve against, so answer it directly with
-    # no retriever / LLM call.
-    if _is_conversational(message):
-        return [], iter([random.choice(_CONVERSATIONAL_REPLIES)])
+    # Same small-talk split as answer_question (one shared function): pure
+    # small talk is answered directly, with no retriever / book-QA LLM call;
+    # "hi, <question>" yields the greeting as the first delta and then streams
+    # the answer to the question alone.
+    greeting, question = preface(message)
+    if not question:
+        return [], iter([greeting])
 
     # The `retrieve-context` span is emitted inside retrieve_stages().
-    citations = retrieve_relevant_docs(message)
+    citations = retrieve_relevant_docs(question)
     relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
     tracing.record_gate(
         grounded=relevant,
@@ -233,10 +236,14 @@ def _qa_stream(
         threshold=settings.min_rerank_score,
     )
     grounding = citations if relevant else []
-    return grounding, stream_answer(
-        message, grounding, trace_id=trace_id, parent_observation_id=parent_observation_id,
+    deltas = stream_answer(
+        question, grounding, trace_id=trace_id, parent_observation_id=parent_observation_id,
         **({"timing_rec": rec} if rec else {}),
     )
+    if greeting:
+        # Same text as the non-streaming "<greeting>\n\n<answer>".
+        deltas = itertools.chain([f"{greeting}\n\n"], deltas)
+    return grounding, deltas
 
 
 @router.post("/chat/stream")
@@ -293,6 +300,9 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
                         sources = []
                     elif intent == "ROLEPLAY":
                         answer = handle_roleplay(message, session)
+                        sources = []
+                    elif intent == "CHITCHAT":
+                        answer = respond(message, list(session["history"]))
                         sources = []
                     else:  # SUGGESTION
                         answer, sources = give_suggestion(message)
