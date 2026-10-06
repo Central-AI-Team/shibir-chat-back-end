@@ -34,6 +34,7 @@ label -- not five chunks that might all come from the same page.
 Usage:
     python -m scripts.eval_retrieval [path/to/questions.json] [--k 1,3,5,10]
                                      [--no-rewrite] [--ablation] [--report out.json]
+                                     [--mode dense|bm25|hybrid]
     python -m scripts.eval_retrieval --label [path/to/questions.json]
 
 Input file: the {"query": str, "answerable": bool} shape the other two eval
@@ -45,6 +46,12 @@ eval_responses.py.
 --label prints, for every entry whose relevant_ids is empty, the top retrieved
 candidates with an id and a text preview, so a 30-50 question gold set can be
 built by reading instead of by grepping chroma_dump.csv.
+
+--mode picks the retrieval path being scored. Default: whatever
+settings.hybrid_enabled says (what production does). `dense` and `hybrid` force
+that path; `bm25` scores only the lexical leg (app/rag/lexical.py, fused over
+the rewritten and original query), so there is no reranking and only STAGE A is
+reported. Run all three on the same dataset to compare them.
 
 Determinism: everything here is deterministic except the query-rewrite LLM
 call, which is retrieval, not answer generation, and is what --no-rewrite /
@@ -62,7 +69,15 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.config import settings
-from app.rag.retriever import RetrievedChunk, retrieve_stages
+from app.rag import lexical
+from app.rag.chunker import normalize
+from app.rag.query_rewriter import expand_query
+from app.rag.retriever import (
+    RetrievedChunk,
+    hybrid_query_set,
+    retrieve_stages,
+    rrf_fuse,
+)
 
 DEFAULT_FILE = Path(__file__).parent / "retrieval_eval_questions.example.json"
 REPORT_DIR = Path(__file__).parent.parent / "eval_reports"
@@ -159,7 +174,33 @@ def _aggregate(records: list[dict], stage: str, ks: list[int]) -> dict[int, dict
 # running
 # --------------------------------------------------------------------------
 
-def _run(questions: list[dict], ks: list[int], use_rewrite: bool) -> list[dict]:
+def _hybrid_flag(mode: str | None) -> bool | None:
+    """--mode -> retrieve_stages(hybrid=...). None keeps settings.hybrid_enabled."""
+    return None if mode is None else mode == "hybrid"
+
+
+def _bm25_row_keys(query: str, use_rewrite: bool) -> list[str]:
+    """Stage A for --mode bm25: the lexical leg alone, as distinct pages.
+
+    Same query set and fusion as the hybrid retriever, minus the dense leg and
+    the reranker, cut to fetch_k like the dense Stage A.
+    """
+    if use_rewrite:
+        search_query = (expand_query(query) or (query,))[0]
+    else:
+        search_query = normalize(query) or query
+    rankings = [
+        [key for key, _ in lexical.search(q, settings.bm25_fetch_k)]
+        for q in hybrid_query_set(search_query, query)
+    ]
+    # chunk key f"{row_key}:{chunk_index}" -> row_key, first occurrence wins
+    return list(dict.fromkeys(
+        key.rpartition(":")[0] for key in rrf_fuse(rankings)[:settings.fetch_k]
+    ))
+
+
+def _run(questions: list[dict], ks: list[int], use_rewrite: bool,
+         mode: str | None = None) -> list[dict]:
     """Retrieve once per query and score every stage/k off that one call."""
     top_k = settings.top_k
     max_k = max(ks)
@@ -170,12 +211,18 @@ def _run(questions: list[dict], ks: list[int], use_rewrite: bool) -> list[dict]:
         # already scored the whole pool) and lets Stage B be measured at k
         # values above the production cutoff -- i.e. "what would raising top_k
         # buy me?". The production slice is kept separately below.
-        stage_a_chunks, stage_b_chunks = retrieve_stages(
-            q["query"],
-            rerank_top_n=max(max_k, top_k),
-            use_rewrite=use_rewrite,
-        )
-        stage_a = _row_keys(stage_a_chunks)
+        if mode == "bm25":
+            # Lexical leg only: nothing is reranked, so there is no Stage B.
+            stage_a = _bm25_row_keys(q["query"], use_rewrite)
+            stage_b_chunks = []
+        else:
+            stage_a_chunks, stage_b_chunks = retrieve_stages(
+                q["query"],
+                rerank_top_n=max(max_k, top_k),
+                use_rewrite=use_rewrite,
+                hybrid=_hybrid_flag(mode),
+            )
+            stage_a = _row_keys(stage_a_chunks)
         stage_b = _row_keys(stage_b_chunks)
         # What the user actually receives: top_k CHUNKS, then deduped to pages.
         production = _row_keys(stage_b_chunks[:top_k])
@@ -195,19 +242,22 @@ def _run(questions: list[dict], ks: list[int], use_rewrite: bool) -> list[dict]:
             "stage_b_ids": production,
             "metrics": {
                 "candidates": {k: _score_one(stage_a, gold, k) for k in ks},
-                "final": {k: _score_one(stage_b, gold, k) for k in ks},
+                **({} if mode == "bm25" else
+                   {"final": {k: _score_one(stage_b, gold, k) for k in ks}}),
             },
         })
 
         if not scorable:
             state = "----"  # unanswerable, or answerable but unlabelled
-        elif _score_one(production, gold, top_k)["hit_rate"]:
+        elif _score_one(stage_a[:top_k] if mode == "bm25" else production,
+                        gold, top_k)["hit_rate"]:
             state = "HIT "
         else:
             state = "MISS"
         score = "None" if top_rerank is None else f"{top_rerank:.4f}"
+        final = "n/a" if mode == "bm25" else len(production)
         print(f"[{state}] {q['query']!r} candidates={len(stage_a)} "
-              f"final={len(production)} top_rerank={score}")
+              f"final={final} top_rerank={score}")
     return records
 
 
@@ -282,7 +332,7 @@ _STAGE_LABELS = {
 
 
 def _print_table(agg: dict[str, dict[int, dict]], ks: list[int], n_scored: int) -> None:
-    for stage in ("candidates", "final"):
+    for stage in agg:
         print(f"\n{_STAGE_LABELS[stage]}   n={n_scored} labelled answerable queries")
         print(f"  {'k':>4}  {'hit_rate':>9}  {'recall':>9}  {'MRR':>9}  {'precision':>9}")
         print(f"  {'-'*4}  {'-'*9}  {'-'*9}  {'-'*9}  {'-'*9}")
@@ -367,7 +417,7 @@ def _preview(text: str) -> str:
     return flat[:PREVIEW_CHARS] + ("..." if len(flat) > PREVIEW_CHARS else "")
 
 
-def _label(questions: list[dict], use_rewrite: bool) -> None:
+def _label(questions: list[dict], use_rewrite: bool, mode: str | None = None) -> None:
     """Print candidate pages per unlabelled query so gold ids can be pasted in.
 
     Only entries with an empty relevant_ids are shown -- run it repeatedly as
@@ -385,7 +435,8 @@ def _label(questions: list[dict], use_rewrite: bool) -> None:
         # Ask for more CHUNKS than the pages we want to show: several chunks
         # commonly come from the same page and collapse to one entry.
         _, final = retrieve_stages(
-            q["query"], rerank_top_n=LABEL_CANDIDATES * 3, use_rewrite=use_rewrite
+            q["query"], rerank_top_n=LABEL_CANDIDATES * 3, use_rewrite=use_rewrite,
+            hybrid=_hybrid_flag(mode),
         )
         print("=" * 78)
         print(f"QUERY: {q['query']}")
@@ -442,25 +493,39 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--report", metavar="OUT.JSON",
                         help="where to write the JSON report "
                              "(default: eval_reports/retrieval_eval_<stamp>.json)")
+    parser.add_argument("--mode", choices=("dense", "bm25", "hybrid"), default=None,
+                        help="retrieval path to score (default: per "
+                             "settings.hybrid_enabled). bm25 = lexical leg only, "
+                             "Stage A metrics only")
     parser.add_argument("--label", action="store_true",
                         help="labelling helper: print candidate ids + previews for "
                              "every question with an empty relevant_ids")
     return parser.parse_args()
 
 
-def _evaluate(questions: list[dict], ks: list[int], use_rewrite: bool) -> dict:
+def _evaluate(questions: list[dict], ks: list[int], use_rewrite: bool,
+              mode: str | None = None) -> dict:
     print("\n" + "=" * 78)
-    print(f"RUN: query rewrite {'ON' if use_rewrite else 'OFF'}")
+    print(f"RUN: query rewrite {'ON' if use_rewrite else 'OFF'}"
+          + (f", mode {mode}" if mode else ""))
     print("=" * 78)
-    records = _run(questions, ks, use_rewrite)
-    agg = {stage: _aggregate(records, stage, ks) for stage in ("candidates", "final")}
+    records = _run(questions, ks, use_rewrite, mode)
+    stages = ("candidates",) if mode == "bm25" else ("candidates", "final")
+    agg = {stage: _aggregate(records, stage, ks) for stage in stages}
     n_scored = sum(1 for r in records if r["scorable"])
 
     _print_table(agg, ks, n_scored)
-    misses = _miss_analysis(records)
-    _print_misses(misses, n_scored)
-    fp = _false_positives(records)
-    _print_false_positives(fp)
+    misses: list[dict] = []
+    fp: dict = {}
+    if mode == "bm25":
+        # Miss analysis and false positives are defined on the reranked list.
+        print("\n(bm25 mode: no reranking, so no miss analysis or false-positive "
+              "gate check.)")
+    else:
+        misses = _miss_analysis(records)
+        _print_misses(misses, n_scored)
+        fp = _false_positives(records)
+        _print_false_positives(fp)
 
     return {
         "use_rewrite": use_rewrite,
@@ -496,9 +561,12 @@ def main() -> None:
     path = Path(args.questions)
     questions = _load_questions(path)
     use_rewrite = not args.no_rewrite
+    if args.mode == "bm25" and (args.ablation or args.label):
+        raise SystemExit("--mode bm25 has no reranked list, so it cannot be combined "
+                         "with --ablation or --label")
 
     if args.label:
-        _label(questions, use_rewrite)
+        _label(questions, use_rewrite, args.mode)
         return
 
     if not any(q["answerable"] and q["relevant_ids"] for q in questions):
@@ -508,11 +576,11 @@ def main() -> None:
     if args.ablation:
         # --ablation always compares ON against OFF, so --no-rewrite alongside
         # it would otherwise silently run OFF twice.
-        runs = [_evaluate(questions, args.k, use_rewrite=True),
-                _evaluate(questions, args.k, use_rewrite=False)]
+        runs = [_evaluate(questions, args.k, use_rewrite=True, mode=args.mode),
+                _evaluate(questions, args.k, use_rewrite=False, mode=args.mode)]
         _print_delta(runs[0]["metrics"], runs[1]["metrics"], args.k)
     else:
-        runs = [_evaluate(questions, args.k, use_rewrite)]
+        runs = [_evaluate(questions, args.k, use_rewrite, args.mode)]
 
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -526,6 +594,7 @@ def main() -> None:
             "embedding_model": settings.embedding_model_name,
             "reranker_model": settings.reranker_model_name,
             "collection": settings.chroma_collection_name,
+            "mode": args.mode or ("hybrid" if settings.hybrid_enabled else "dense"),
         },
         "runs": [_jsonable(r) for r in runs],
     }
