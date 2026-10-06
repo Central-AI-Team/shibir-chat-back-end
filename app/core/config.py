@@ -196,6 +196,20 @@ class Settings(BaseSettings):
     # -- too high refuses valid questions, too low hallucinates from noise.
     min_rerank_score: float = 0.5
 
+    # Hybrid retrieval (app/rag/lexical.py + retriever.py): a BM25 leg over the
+    # same Chroma chunks, fused with the dense leg by Reciprocal Rank Fusion.
+    # Off by default -- the dense-only path is unchanged until this is enabled.
+    hybrid_enabled: bool = False
+    bm25_fetch_k: int = 25      # BM25 candidates per query
+    rrf_k: int = 60             # RRF damping: score = sum(1 / (rrf_k + rank))
+    # Character n-gram sizes for the BM25 tokenizer. Bengali is suffix-heavy
+    # (নামাজ / নামাজে / নামাজের), so whole-word matching alone misses inflections.
+    ngram_min: int = 3
+    ngram_max: int = 5
+    # After reranking, keep at most this many chunks per page/article so one
+    # long page cannot fill every slot (applies in hybrid mode only).
+    max_chunks_per_page: int = 2
+
     tarun_db_path: str = "data/Tarun_Associate.db"
     nobin_db_path: str = "data/Nobin_Associate.db"
 

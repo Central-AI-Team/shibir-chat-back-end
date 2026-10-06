@@ -31,24 +31,35 @@ CHANGES vs the original:
      is the one place that still holds the FULL pre-truncation candidate pool
      and every candidate's rerank score, so the `retrieve` span can show the
      candidates the reranker dropped, not just the five the user gets.
+  9. retrieve_stages() takes an optional `hybrid` flag (None -> settings
+     .hybrid_enabled, default off). When on, retrieval is handled by
+     _retrieve_hybrid(): a BM25 leg (app/rag/lexical.py) next to the dense
+     leg, fused with Reciprocal Rank Fusion, reranked as usual, then capped at
+     settings.max_chunks_per_page per page. When off, the dense path below is
+     the original code, untouched.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
+import numpy as np
 from sqlalchemy import func
 
 from app.core import timing, tracing
 from app.core.config import settings
 from app.db.models import Book
 from app.db.session import SessionLocal
+from app.rag import lexical
 from app.rag.chroma_client import get_collection, get_named_collection
 from app.rag.chunker import normalize
 from app.rag.embedder import embed_queries
 from app.rag.query_rewriter import expand_query
 from app.rag.reranker import rerank
 from app.schemas.query import Citation
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -80,6 +91,7 @@ def retrieve_stages(
     use_rewrite: bool = True,
     collection_name: str | None = None,
     max_variants: int | None = None,
+    hybrid: bool | None = None,
 ) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
     """Run retrieval and return (candidates, final).
 
@@ -101,6 +113,11 @@ def retrieve_stages(
     (settings.max_variants) alone -- no existing caller needs to pass this.
     It exists so scripts/eval_query_expansion.py can sweep variant counts
     against the real pipeline without a second retrieval code path.
+
+    hybrid=None (default) follows settings.hybrid_enabled; True/False forces
+    the hybrid / dense-only path. In hybrid mode `candidates` is the RRF-fused
+    pool (truncated to fetch_k) and `final` is the reranked list after the
+    per-page cap -- see _retrieve_hybrid().
     """
     top_k = top_k or settings.top_k
     fetch_k = fetch_k or settings.fetch_k
@@ -113,6 +130,10 @@ def retrieve_stages(
         timing.mark("query_rewrite", "disabled")
         queries = (normalize(query),) if normalize(query) else (query,)
     tracing.record_rewrite(queries)
+    if settings.hybrid_enabled if hybrid is None else hybrid:
+        return _retrieve_hybrid(
+            query, queries, fetch_k, rerank_top_n, collection_name
+        )
     with timing.timed("query_embedding"):
         embeddings = embed_queries(list(queries))
 
@@ -193,6 +214,165 @@ def retrieve_relevant_docs(
         )
         for c in final
     ]
+
+
+def _retrieve_hybrid(
+    query: str,
+    queries: tuple[str, ...],
+    fetch_k: int,
+    rerank_top_n: int,
+    collection_name: str | None,
+) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
+    """Dense + BM25 retrieval fused with Reciprocal Rank Fusion.
+
+    The query set is the rewritten query plus the original normalized one:
+    the rewrite fixes Banglish, but it can also drop or respell a rare term
+    that a lexical match on the user's own words would still find. One ranked
+    list is built per (leg, query), all lists are fused (score = sum of
+    1 / (rrf_k + rank)), and the pool is cut to fetch_k.
+
+    The reranker then scores the whole fused pool against the REWRITTEN query,
+    exactly as the dense path does, and the per-page cap is applied to its
+    output so one long page cannot fill every slot.
+    """
+    collection = get_collection() if collection_name is None else get_named_collection(collection_name)
+    search_query = queries[0]
+    query_set = hybrid_query_set(search_query, query)
+
+    # --- dense leg -------------------------------------------------------
+    with timing.timed("query_embedding"):
+        embeddings = embed_queries(query_set)
+    with timing.timed("vector_search"):
+        result = collection.query(
+            query_embeddings=embeddings,
+            n_results=fetch_k,
+            include=["documents", "metadatas", "distances"],
+        )
+
+    # Every dense hit, with its best cosine similarity across the queries.
+    seen: dict[str, tuple[str, dict, float]] = {}
+    ranked_lists: list[list[str]] = []
+    for docs, metas, dists in zip(
+        result.get("documents", []),
+        result.get("metadatas", []),
+        result.get("distances", []),
+    ):
+        ranking: list[str] = []
+        for doc, meta, dist in zip(docs, metas, dists):
+            similarity = 1.0 - float(dist)  # cosine space, see retrieve_stages
+            key = lexical.chunk_key(meta)
+            if key not in seen or similarity > seen[key][2]:
+                seen[key] = (doc, meta, similarity)
+            # min_similarity gates the DENSE leg only: a weak vector hit earns
+            # no dense rank, but BM25 can still bring the chunk in below.
+            if similarity >= settings.min_similarity:
+                ranking.append(key)
+        ranked_lists.append(ranking)
+
+    # --- lexical leg -----------------------------------------------------
+    with timing.timed("bm25_search"):
+        for q in query_set:
+            try:
+                hits = lexical.search(q, settings.bm25_fetch_k, collection_name)
+            except Exception:
+                # Degrade to dense-only rather than fail the request; the
+                # warning keeps an eval from silently passing off dense results
+                # as hybrid ones.
+                logger.warning("BM25 leg failed, continuing dense-only", exc_info=True)
+                hits = []
+            ranked_lists.append([key for key, _ in hits])
+
+    # --- fuse ------------------------------------------------------------
+    order = rrf_fuse(ranked_lists)[:fetch_k]
+
+    missing = [key for key in order if key not in seen]
+    if missing:
+        seen.update(_fetch_chunks(collection, missing, embeddings))
+    candidates = [seen[key] for key in order if key in seen]
+    if not candidates:
+        tracing.record_retrieval([], top_k=rerank_top_n)
+        return [], []
+
+    # --- rerank, then cap per page ---------------------------------------
+    with timing.timed("rerank"):
+        ranked = rerank(search_query, [c[0] for c in candidates], top_n=len(candidates))
+    reranked = [
+        _chunk(*candidates[idx], rerank_score=rerank_score)
+        for idx, rerank_score in ranked
+    ]
+    tracing.record_retrieval(reranked, top_k=rerank_top_n)
+
+    stage_a = [_chunk(doc, meta, sim) for doc, meta, sim in candidates]
+    return stage_a, _cap_per_page(reranked, rerank_top_n, settings.max_chunks_per_page)
+
+
+def hybrid_query_set(search_query: str, original: str) -> list[str]:
+    """The rewritten query plus the user's own normalized words, deduplicated."""
+    return list(dict.fromkeys([search_query, normalize(original) or original]))
+
+
+def rrf_fuse(ranked_lists: list[list[str]]) -> list[str]:
+    """Reciprocal Rank Fusion: keys best first by sum(1 / (rrf_k + rank)).
+
+    Ranks start at 1. Ties keep first-seen order, so with the dense lists
+    passed first a dense hit wins a tie against a BM25 one.
+    """
+    fused: dict[str, float] = {}
+    for ranking in ranked_lists:
+        for rank, key in enumerate(ranking, start=1):
+            fused[key] = fused.get(key, 0.0) + 1.0 / (settings.rrf_k + rank)
+    return sorted(fused, key=fused.__getitem__, reverse=True)
+
+
+def _fetch_chunks(
+    collection, keys: list[str], query_embeddings: list[list[float]]
+) -> dict[str, tuple[str, dict, float]]:
+    """Text, metadata and similarity for BM25-only hits, read from Chroma.
+
+    Chroma ids are f"{row_key}_c{chunk_index}" (ingest.py) while the lexical
+    leg's keys are f"{row_key}:{chunk_index}". Similarity is the best cosine
+    against the already-computed query embeddings, using the vector Chroma
+    stores for the chunk, so the embedder is not called again. A chunk whose
+    vector cannot be read gets 0.0; a key Chroma does not know is dropped.
+    """
+    ids = []
+    for key in keys:
+        row_key, _, chunk_index = key.rpartition(":")
+        ids.append(f"{row_key}_c{chunk_index}")
+    got = collection.get(ids=ids, include=["documents", "metadatas", "embeddings"])
+
+    vectors = got.get("embeddings")
+    queries = np.asarray(query_embeddings, dtype=float)
+    out: dict[str, tuple[str, dict, float]] = {}
+    for i, (doc, meta) in enumerate(zip(got.get("documents") or [], got.get("metadatas") or [])):
+        similarity = 0.0
+        try:
+            vec = np.asarray(vectors[i], dtype=float)
+            norms = np.linalg.norm(queries, axis=1) * np.linalg.norm(vec)
+            similarity = float(np.max(queries @ vec / np.where(norms == 0, 1.0, norms)))
+        except Exception:
+            pass
+        out[lexical.chunk_key(meta)] = (doc, meta, similarity)
+    return out
+
+
+def _cap_per_page(
+    chunks: list[RetrievedChunk], limit: int, per_page: int
+) -> list[RetrievedChunk]:
+    """First `limit` chunks, best first, with at most `per_page` per row_key.
+
+    per_page <= 0 disables the cap. Input order (the rerank order) is kept.
+    """
+    out: list[RetrievedChunk] = []
+    counts: dict[str, int] = {}
+    for chunk in chunks:
+        if per_page > 0 and counts.get(chunk.row_key, 0) >= per_page:
+            continue
+        counts[chunk.row_key] = counts.get(chunk.row_key, 0) + 1
+        out.append(chunk)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _row_key(meta: dict) -> str:
