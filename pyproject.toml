@@ -11,6 +11,7 @@ dependencies = [
     "backoff==2.2.1",
     "bcrypt==5.0.0",
     "beautifulsoup4==4.15.0",
+    "bm25s==0.3.12",
     "build==1.6.1",
     "cachetools==6.2.2",
     "certifi==2026.7.22",

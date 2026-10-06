@@ -281,6 +281,18 @@ wheels = [
 ]
 
 [[package]]
+name = "bm25s"
+version = "0.3.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3a/9b/23633651f5f27635c079a40386f304653bdd3b30cbe4f994149079dfc603/bm25s-0.3.12.tar.gz", hash = "sha256:fe09c21629e2744edb6707ab7eee3c3734c378ccf7190ac9632c54df12af80de", size = 81122, upload-time = "2026-10-02T20:08:12.51Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/29/96da927a96105e7e5ba0f0dcc7312a6db71116a5800a4c75374db5516981/bm25s-0.3.12-py3-none-any.whl", hash = "sha256:0120fb2e5ccb64c3d89e5a06db9662b869156caf5d444dde7f392f8642b2494e", size = 75166, upload-time = "2026-10-02T20:08:10.937Z" },
+]
+
+[[package]]
 name = "build"
 version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3713,6 +3725,7 @@ dependencies = [
     { name = "backoff" },
     { name = "bcrypt" },
     { name = "beautifulsoup4" },
+    { name = "bm25s" },
     { name = "build" },
     { name = "cachetools" },
     { name = "certifi" },
@@ -3833,6 +3846,7 @@ requires-dist = [
     { name = "backoff", specifier = "==2.2.1" },
     { name = "bcrypt", specifier = "==5.0.0" },
     { name = "beautifulsoup4", specifier = "==4.15.0" },
+    { name = "bm25s", specifier = "==0.3.12" },
     { name = "build", specifier = "==1.6.1" },
     { name = "cachetools", specifier = "==6.2.2" },
     { name = "certifi", specifier = "==2026.7.22" },
