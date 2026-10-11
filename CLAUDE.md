@@ -88,7 +88,12 @@ app/
                           `rerank_score` (the real relevance signal).
     generator.py          generate_answer(query, citations) -> str (task "qa") and
                           stream_answer() for /chat/stream. Bengali system prompt with
-                          numbered excerpts (§4).
+                          numbered excerpts (§4). QA and suggestion answers go through
+                          with_script_check() (script_check.py).
+    script_check.py       count_stray_tokens / strip_stray: finds letters from the wrong
+                          script in a Bengali answer (Arabic fused into a Bengali word,
+                          Cyrillic, Thai, ...). Arabic is allowed only as a quotation (a run of
+                          2+ Arabic words) or ﷺ-style ligatures (§4).
     ingest.py             `uv run python -m app.rag.ingest`. Embeds published pages/articles
                           from Postgres into Chroma (§9).
   loaders/                Raw corpus file -> clean text, standard library only; used by
@@ -115,8 +120,16 @@ scripts/                  Migrations, corpus cleanup, evaluation and debugging t
   dedupe_pages.py                 Flags byte-identical duplicate pages.
   load_tafheem.py                 data/tafheemul_quran.db -> pages, one per ayah (§9).
   load_articles.py                data/{pp-articles,cs-posts}-*.sql -> articles (§9).
+  load_leadership.py              data/shibir-central-president.csv -> one article (§9).
+  clean_database.py               Dry-run-by-default cleanup: empty books/chapters, duplicate
+                                  categories, indexes. Backs up first (§3).
+  export_domains.py               Postgres -> data/export/{books,tafheem,articles,shaheed,leadership}.sql,
+                                  idempotent, published rows only, embedded_at NULL (§9).
   deploy.sh                       Runs ON the VPS: pull main, rebuild, health-check, roll back
                                   (§12). Bash, not a Python module.
+notebooks/                Local, git-ignored analysis notebooks over data/export/*.sql (one per
+                          file, plus _sqlexport.py with the SQL parsers). They copy corpus text;
+                          never commit them.
 tests/                    pytest suite; no network or real models by default (§11).
 docs/                     auto-deploy.md, deployment.md, evaluation.md, tracing.md.
 chroma_db/                Generated vector store, git-ignored. Deleting it is only half of
@@ -125,12 +138,21 @@ chroma_db/                Generated vector store, git-ignored. Deleting it is on
 
 ## 3. Data model
 
-All content lives in Postgres (`categories`, `books`, `chapters`, `pages`, `articles`). The
+All content lives in Postgres (`categories`, `books`, `chapters`, `pages`, `articles`, `shaheed`). The
 original per-source SQLite files (`Tarun_Associate.db`, `Nobin_Associate.db`) were migrated once;
 `Page.source_db` / `Page.source_page_id` are kept only as provenance so the migration is
 idempotent. The running app does not read them.
 
 - Only rows with `status == 'published'` are embedded.
+- `shaheed` (234 martyr records: name, date, place, rank) is structured data, not prose. `ingest.py`
+  renders each row to one labelled block (`render_shaheed`, header `বই: শহীদ তালিকা`), row_key
+  `shaheed_<id>`, `source_db="shaheed"`. Vector search answers "who was X" / "who was martyred in
+  Y", but **not** counting or listing questions (only `TOP_K` excerpts reach the LLM). Those need a
+  structured SQL path that does not exist yet.
+- `uv run python -m scripts.clean_database` (dry run) / `--apply` removes empty books and chapters,
+  merges duplicate categories and adds the indexes. It never deletes a row that has a page, aborts if
+  page/article counts change, and lists duplicate book titles without touching them. Run it before
+  `export_domains`.
 - `embedded_at` records the last successful embed. `NULL` means never embedded;
   `updated_at > embedded_at` means stale.
 - `Page.excluded_from_rag` / `Page.exclusion_reason` (added by `scripts/clean_corpus.py`) are a
@@ -236,6 +258,15 @@ several times: `openai/gpt-oss-20b` passed a single run but misspelled key Bangl
   concurrently (`NOTE_MAP_CONCURRENCY`; each task gets the request's contextvars).
 - **`POST /chat` with `"stream": true`** returns the same SSE events as `/chat/stream`. Default
   `false`: the JSON response is unchanged.
+- **Stray-script check** (`ANSWER_SCRIPT_RETRIES`, default 1). Incident 2026-10-11: on the same 18
+  requests, 8 answers contained letters from the wrong script ("নিয়মিত দینی", Cyrillic inside
+  "সিস্টেমатিক", Thai, Korean inside a quoted verse). A prompt rule and `reasoning_effort=low` did
+  not help (10/18 each), and `temperature` cannot be lowered (§4). QA and suggestion answers are
+  therefore checked in code: regenerate up to N times, then strip. Note, roleplay and chitchat
+  answers are stripped only (no retry; a note takes ~28 s) in `router.py`. After the fix: 0/24.
+  **`/chat/stream` QA is not checked**: tokens are sent before the answer can be inspected
+  (known gap, §14). `generate_answer(model=..., client=...)` (eval scripts) is left unchecked on
+  purpose.
 - `CONTEXT_TOP_K` / `CONTEXT_MAX_CHARS` limit what goes in the prompt; `CONTEXT_TOP_K` below
   `TOP_K` makes `sources` list excerpts the model never saw.
 
@@ -396,6 +427,18 @@ The current corpus (4,143 published pages, 0 articles) produces about 12,000 chu
 takes hours on a memory-constrained machine; in GPU mode it is much faster. Never run ingest while
 another process (an evaluation script, a second ingest) has the same `chroma_db/` open.
 
+### Moving the corpus to another server
+
+`uv run python -m scripts.export_domains` writes one SQL file per domain to `data/export/`.
+Restore each with `docker compose exec -T db psql -U postgres -d shibir_chat < data/export/<d>.sql`,
+then run ingest on the server. Domains: `books`, `tafheem`, `articles`, `shaheed`, `leadership`
+(the central president / secretary-general list, one article) plus the dump-only `syllabus` and
+`site-directory`. `data/` is git-ignored, so these files (full book text) travel by copy, not by
+git. `syllabus.sql` and `site-directory.sql` are reference data that exist
+only as pg_dump files (`DUMP_DOMAINS`); the script cleans them for PG16 and makes them re-runnable. Files are re-runnable and order-independent (ids preserved,
+`ON CONFLICT (id) DO UPDATE`). Domains split by page `source_db` / article `source_type`, because
+book 166 mixes Tafheem and Tarun pages. Add a domain by appending to `DOMAINS`.
+
 ### Adding a data source
 
 Content always flows **loader → Postgres → `uv run python -m app.rag.ingest`**. Postgres is the
@@ -418,7 +461,10 @@ Existing loaders:
 | Loader | Source | Rows |
 |---|---|---|
 | `scripts.load_tafheem [--db] [--publish] [--dry-run]` | `data/tafheemul_quran.db` (reads only `alquran`, `expl`, `vumika_sura`, `surah_name`) | Book "তাফহীমুল কুরআন" in category "কুরআন ও তাফসীর"; one chapter per sura; page `sura*1000` = introduction, page `sura*1000+ayah` = translation + that ayah's footnotes; `source_db="tafheem"` |
+| `scripts.load_books [--sql] [--publish] [--dry-run]` | `data/raw/books/books.sql` (6 whole-book rows, pg_dump `COPY`) | Category "সংযোজিত বই"; one chapter per book, pages of ~2000 chars cut on paragraphs, scanner/publisher junk dropped; `source_db="books_sql"` |
+| `scripts.load_shaheed [--sql] [--publish] [--dry-run]` | `data/raw/shaheed/shaheed.sql` (pg_dump `COPY` block) | `shaheed` table, upserted on `serial_no`; creates the table if missing (no migrations) |
 | `scripts.load_articles --source pp-articles\|cs-posts [--sql] [--publish] [--dry-run]` | `data/pp-articles-modified.sql`, `data/cs-posts-modified.sql` | `articles` with `source_type` `pp-article` / `cs-post`, `source_ref` = original id |
+| `scripts.load_leadership [--csv] [--publish] [--dry-run]` | `data/shibir-central-president.csv` (title line, header line, 51 terms) | ONE `articles` row, `source_type="central-leadership"`, `source_ref="shibir-central-president"`; one sentence-paragraph per term (session, start–end, president, secretary general); end `-` = চলমান |
 
 Tafheem footnote numbers restart in every sura, so footnotes are joined on `(sura_id, expl_id)`,
 never `expl_id` alone; a negative `expl_id` is a "(ক)" sub-note. Both loaders print what they
@@ -429,6 +475,12 @@ could not match or skipped — read that output before publishing.
 `chhatrasangbad_post` / `persxpect_article`. `--publish` sets those legacy rows to draft (only the
 ids present in the file, for articles) instead of deleting them, and legacy rows are never used as
 dedupe targets. The next ingest's sweep removes their chunks from Chroma.
+
+**Where the raw files are.** The loaders' default paths are `data/pp-articles-modified.sql`,
+`data/cs-posts-modified.sql`, `data/tafheemul_quran.db`, `data/raw/books/books.sql` and
+`data/raw/shaheed/shaheed.sql`. In the maintainer's checkout the first three sit in
+`data/archive-data/` and the last two are absent, so pass `--sql` / `--db` explicitly.
+`scripts.load_leadership` reads `data/shibir-central-president.csv`.
 
 Typical run:
 
@@ -476,9 +528,12 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 | `OPENAI_API_KEY` | *(required)* | Used only through `app/core/llm.py`. |
 | `OPENAI_MODEL` | `gpt-5-mini` | Reasoning model; see the token-budget note in §5. |
 | `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `90` / `1` | Per LLM call. For streaming, the timeout bounds the gap between chunks. |
+| `ANSWER_SCRIPT_RETRIES` | `1` | Regenerations of a QA/suggestion answer that has stray-script letters, before they are stripped (§5). `0` = strip only. |
 | `MODEL_BY_TASK` | `{}` | JSON map from task (`intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`, `roleplay`) to model. Change only after an evaluation (§5). |
 | `DATABASE_URL` | `postgresql+psycopg2://…` | SQLAlchemy DSN, **not** usable with `psql`. Use `app.db.session.SessionLocal` for one-off queries. |
 | `CORS_ALLOW_ORIGINS` | local Vite (`:5173`) + `https://shibirgpt.potropollob.com` | JSON list. An explicit allow-list, not `*`. |
+| `ENABLE_DOCS` | `false` | Serves `/docs`, `/redoc`, `/openapi.json` when true. Local development only. |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Read by uvicorn, not `Settings`. Compose sets it to the pinned network gateway `172.28.0.1`: the host proxy reaches the container from there. |
 | `HOST` / `PORT` | `0.0.0.0` / `9200` | Not read by `run.sh` or the Dockerfile, which hard-code them (§14). |
 
 **Retrieval**
@@ -564,6 +619,8 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 
 ## 14. Known gaps
 
+- **Streaming QA skips the stray-script check** (§5): about 40 % of unchecked answers had a stray
+  letter in the 2026-10-11 test. Fix by buffering sentences or cleaning the stream on the client.
 - **Heavy dependencies in GPU mode:** torch, sentence-transformers and the `nvidia-*` packages are
   still required even when `GPU_SERVICE_URL` is set. Moving them to an optional extra is planned.
 - **Shallow deploy health check:** auto-deploy (§12) gates on `/health`, which loads no models
@@ -572,7 +629,7 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 - **Hard-coded host and port:** `run.sh` and the Dockerfile start uvicorn on `0.0.0.0:9200`
   regardless of `HOST`/`PORT`.
 - **Single-worker sessions:** `session_store.py` is an in-process dict (§7).
-- **No API authentication or rate limiting**, and `/conversations` exposes every session in the
+- **No API authentication or Python-level rate limiting** (the app is published on `127.0.0.1:9200` only, behind the proxy in `deploy/`, which rate-limits `/chat`), and `/conversations` exposes every session in the
   process to any caller. See [SECURITY.md](SECURITY.md).
 - **Vector store:** still local Chroma. A move to pgvector or Qdrant is planned for a corpus of
   several million chunks, but not started.
