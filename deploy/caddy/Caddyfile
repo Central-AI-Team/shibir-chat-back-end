@@ -1,0 +1,42 @@
+# Caddy alternative to deploy/nginx/shibirgpt-api.conf. Use one or the other.
+# Caddy gets and renews the Let's Encrypt certificate itself and redirects
+# HTTP to HTTPS automatically, so no certificate paths are needed.
+#
+#   sudo cp deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+
+askshibir-back.potropollob.com {
+	# Chat messages are short; reject anything bigger before it reaches Python.
+	request_body {
+		max_size 64KB
+	}
+
+	# Second layer: the app already serves no docs unless ENABLE_DOCS=true.
+	@docs path /docs /docs/* /redoc /redoc/* /openapi.json
+	respond @docs 404
+
+	# Rate limit (~30 requests/minute per IP on /chat and /chat/stream).
+	# Not built into Caddy: needs a build with github.com/mholt/caddy-ratelimit
+	# (`xcaddy build --with github.com/mholt/caddy-ratelimit`). Uncomment after.
+	# Without the plugin, keep rate limiting in nginx or leave it off.
+	#
+	# order rate_limit before reverse_proxy   <- goes in the global options block
+	# @chat path /chat /chat/stream
+	# rate_limit @chat {
+	# 	zone chat {
+	# 		key    {remote_host}
+	# 		events 30
+	# 		window 1m
+	# 	}
+	# }
+
+	reverse_proxy 127.0.0.1:9200 {
+		# Caddy already sets Host, X-Forwarded-For/-Proto/-Host; X-Real-IP is added.
+		header_up X-Real-IP {remote_host}
+		# Flush SSE events immediately instead of buffering them.
+		flush_interval -1
+		transport http {
+			read_timeout 300s
+		}
+	}
+}

@@ -34,4 +34,4 @@ fi
 
 # Run FastAPI server
 echo "🌐 Starting FastAPI server..."
-uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
+uv run uvicorn app.main:app --host 0.0.0.0 --port 9200 --proxy-headers --forwarded-allow-ips 127.0.0.1

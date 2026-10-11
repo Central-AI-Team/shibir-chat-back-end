@@ -23,4 +23,10 @@ RUN uv sync --locked --no-dev
 
 EXPOSE 9200
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9200"]
+# Behind the reverse proxy uvicorn must trust X-Forwarded-* only from the proxy.
+# From inside the container the proxy is the Docker bridge gateway, so
+# docker-compose.yml overrides this env var (an explicit --forwarded-allow-ips
+# flag would take precedence over it and defeat that override).
+ENV FORWARDED_ALLOW_IPS=127.0.0.1
+
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9200", "--proxy-headers"]

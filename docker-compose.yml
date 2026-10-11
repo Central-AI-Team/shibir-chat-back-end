@@ -27,15 +27,31 @@ services:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/shibir_chat
       HOST: 0.0.0.0
       PORT: 9200
+      # uvicorn only trusts X-Forwarded-* from these addresses. A request the
+      # host proxy sends to 127.0.0.1:9200 reaches the container from the
+      # compose network's gateway (the pinned address below), not 127.0.0.1.
+      FORWARDED_ALLOW_IPS: 172.28.0.1
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "9200:9200"
+      # Loopback only: the reverse proxy (deploy/) is the sole public entry
+      # point. Never publish 9200 on 0.0.0.0 (the API has no authentication).
+      - "127.0.0.1:9200:9200"
+    networks:
+      - default
     volumes:
       - chroma_db:/app/chroma_db
       - hf_cache:/app/.cache/huggingface
       - ./data:/app/data
+
+networks:
+  # Pinned so the gateway address FORWARDED_ALLOW_IPS trusts is stable.
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
 
 volumes:
   pgdata:
