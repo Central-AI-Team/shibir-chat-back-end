@@ -2,6 +2,10 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+# 43 chars = base64url of 32 random bytes (secrets.token_urlsafe(32)). Shared by
+# the body field and the path-parameter check in app/api/router.py.
+SESSION_ID_PATTERN = r"^[A-Za-z0-9_-]{43}$"
+
 
 class Citation(BaseModel):
     book: str
@@ -24,10 +28,14 @@ class QueryResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    # Only ever continues a session the server issued to THIS browser (owner
+    # cookie). Anything else -- unknown, someone else's, or malformed (e.g. a
+    # uuid4 from before ids were tokens) -- starts a new session; see
+    # router._resolve_session. Deliberately not validated here: a 422 would
+    # break front-ends still holding an old-format id.
     session_id: str | None = None
-    # Optional caller-supplied user / anonymous id. Not used by any request
-    # logic -- it is only forwarded to Langfuse (when tracing is enabled) so
-    # traces can be grouped per end user. Safe to omit.
+    # Accepted for front-end compatibility but IGNORED: it is client-supplied
+    # and spoofable. Langfuse gets a prefix of the server-side owner hash instead.
     user_id: str | None = None
     # true -> same dispatch as POST /chat/stream (Server-Sent Events). Default
     # false keeps the JSON response the existing front-end expects.

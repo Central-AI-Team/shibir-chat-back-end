@@ -53,6 +53,15 @@ def db_session():
 
 
 @pytest.fixture(autouse=True)
+def _plain_http_cookies(monkeypatch):
+    """TestClient talks http://testserver, and httpx (like a browser) never
+    sends a Secure cookie over http -- so with the production default every
+    request would mint a fresh owner and lose its own sessions. Tests that
+    check the Secure flag turn it back on and use an https base_url."""
+    monkeypatch.setattr(settings, "cookie_secure", False)
+
+
+@pytest.fixture(autouse=True)
 def _timing_off(monkeypatch):
     """A developer's ENABLE_TIMING=1 must not change what the router passes to
     mocked functions (the local timing recorder is exercised on its own)."""

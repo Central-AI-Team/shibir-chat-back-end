@@ -7,6 +7,7 @@ NEW:
   reranker_model_name, fetch_k, min_similarity, min_rerank_score
 """
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -266,10 +267,29 @@ class Settings(BaseSettings):
     # surface, so they are off unless ENABLE_DOCS=true (local development).
     enable_docs: bool = False
 
+    # Anonymous per-browser ownership of chat sessions (app/api/deps.py). The
+    # owner cookie is Secure by default; COOKIE_SECURE=false is for plain-http
+    # local development only (browsers drop Secure cookies on http://).
+    cookie_secure: bool = True
+    # Session caps (app/services/session_store.py): creating one past the limit
+    # evicts the least-recently-updated session (the owner's own, or globally).
+    # No TTL or rate limiting yet (Step 3).
+    max_sessions_per_owner: int = 50
+    max_sessions_total: int = 10000
+
     host: str = "0.0.0.0"
     port: int = 9200
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @field_validator("cors_allow_origins")
+    @classmethod
+    def _no_wildcard_origin(cls, origins: list[str]) -> list[str]:
+        # The owner cookie needs allow_credentials=True, and browsers refuse a
+        # credentialed response whose allowed origin is "*".
+        if any(o.strip() == "*" for o in origins):
+            raise ValueError("CORS_ALLOW_ORIGINS must list explicit origins; '*' is not allowed (cookies are used)")
+        return origins
 
 
 settings = Settings()

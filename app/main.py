@@ -55,12 +55,13 @@ _docs_kwargs = (
 )
 app = FastAPI(title="Shibir Chat Backend", lifespan=lifespan, **_docs_kwargs)
 
-# Cross-origin access for the browser front-end. No cookies are used, so
-# allow_credentials stays False and a plain origin allow-list is enough
-# (see settings.cors_allow_origins).
+# Cross-origin access for the browser front-end. The anonymous owner cookie
+# (app/api/deps.py) needs allow_credentials=True; Settings rejects "*" in
+# cors_allow_origins because browsers refuse credentials with a wildcard.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allow_origins,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type"],
 )

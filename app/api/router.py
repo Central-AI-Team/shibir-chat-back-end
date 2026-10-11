@@ -22,19 +22,28 @@ The /conversations endpoints read app.services.session_store, which is an
 in-process dict -- see that module's docstring: they only see sessions this
 worker handled and lose everything on restart. Good enough for the current
 single-worker deployment; a shared store (Redis / DB) is the upgrade path.
+
+Access control (anonymous, no accounts): every route resolves the caller's
+owner hash from the `shibir_owner` cookie (app/api/deps.py) and only ever sees
+that owner's sessions. An unknown session id and someone else's id get the
+same 404 body on /conversations, and on /chat both silently start a new
+session under a fresh id, so ownership cannot be probed. POST/DELETE also reject a
+browser Origin that is not on the CORS allow-list (CSRF).
 """
 
 from __future__ import annotations
 
 import itertools
 import json
+import re
 import time
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from openai import APIError
 from starlette.concurrency import run_in_threadpool
 
+from app.api.deps import apply_owner_cookie, check_origin, get_owner, trace_ids
 from app.core import timing, tracing
 from app.core.network_errors import NETWORK_ERRORS, NETWORK_UNAVAILABLE_DETAIL, is_network_error
 from app.core.config import settings
@@ -48,6 +57,7 @@ from app.schemas.query import (
     Citation,
     ConversationMessage,
     ConversationSummary,
+    SESSION_ID_PATTERN,
 )
 from app.services.chitchat_service import preface, respond
 from app.services.intent_classifier import classify_intent
@@ -56,9 +66,10 @@ from app.services.qa_service import answer_question
 from app.services.roleplay_service import handle_roleplay
 from app.services.session_store import (
     append_history,
+    create_session,
     delete_session,
     get_history,
-    get_or_create_session,
+    get_owned_session,
     list_sessions,
     update_session,
 )
@@ -67,6 +78,27 @@ from app.services.suggestion_service import give_suggestion
 router = APIRouter()
 
 _LLM_UNAVAILABLE_DETAIL = "উত্তর তৈরির সার্ভিস সাময়িকভাবে অনুপলব্ধ। কিছুক্ষণ পর আবার চেষ্টা করুন।"
+# One body for "unknown" AND "not yours" -- they must be indistinguishable.
+_NOT_FOUND_DETAIL = "conversation পাওয়া যায়নি।"
+_SESSION_ID_RE = re.compile(SESSION_ID_PATTERN)
+
+
+def _not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
+
+
+def _resolve_session(session_id: str | None, owner: str) -> tuple[str, dict]:
+    """The owner's session if the id exists AND is theirs; otherwise (no id,
+    malformed, unknown, someone else's) a NEW session under a fresh server-issued id,
+    which the response returns. Unknown and not-owned look identical, so ids
+    cannot be probed, and the client's id is never reused. Why not 404: the
+    store is in-memory, so every restart/deploy made each open chat 404 until
+    the front-end dropped its id; this restores main's silent fresh start."""
+    if session_id is not None and _SESSION_ID_RE.fullmatch(session_id):
+        session = get_owned_session(session_id, owner)
+        if session is not None:
+            return session_id, session
+    return create_session(owner)
 
 
 def _format_note_result(result: dict) -> str:
@@ -104,13 +136,14 @@ def health() -> dict:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(body: ChatRequest):
+@router.post("/chat", response_model=ChatResponse, dependencies=[Depends(check_origin)])
+async def chat(body: ChatRequest, request: Request, owner: str = Depends(get_owner)):
     if body.stream:
-        return chat_stream(body)
+        # chat_stream returns its own StreamingResponse and sets the cookie on it.
+        return chat_stream(body, request, owner)
     timing.start_request(body.message)
     try:
-        return await _chat(body)
+        return await _chat(body, owner)
     except Exception as e:
         timing.record_error("request_total", e)
         raise
@@ -118,20 +151,23 @@ async def chat(body: ChatRequest):
         timing.finish_request()
 
 
-async def _chat(body: ChatRequest) -> ChatResponse:
+async def _chat(body: ChatRequest, owner: str) -> ChatResponse:
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
 
-    session_id, session = get_or_create_session(body.session_id)
+    session_id, session = _resolve_session(body.session_id, owner)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
+    trace_user, trace_session = trace_ids(owner, session_id)
 
     # One Langfuse trace per request -- every nested LLM call (via
     # app/core/llm.py) and every pipeline-stage span groups under it. No-op
     # when tracing is disabled. Everything tracing-related below is inside the
     # try/finally so a tracing failure can never affect the response.
+    # body.user_id is client-supplied (spoofable) and ignored; neither the real
+    # session id nor the owner hash leaves the process (see trace_ids()).
     tracing.start_request_trace(
-        name="chat", query=message, session_id=session_id, user_id=body.user_id
+        name="chat", query=message, session_id=trace_session, user_id=trace_user
     )
     start = time.perf_counter()
     intent = "QA"
@@ -249,14 +285,17 @@ def _qa_stream(
     return grounding, deltas
 
 
-@router.post("/chat/stream")
-def chat_stream(body: ChatRequest) -> StreamingResponse:
+@router.post("/chat/stream", dependencies=[Depends(check_origin)])
+def chat_stream(
+    body: ChatRequest, request: Request, owner: str = Depends(get_owner)
+) -> StreamingResponse:
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
 
-    session_id, session = get_or_create_session(body.session_id)
+    session_id, session = _resolve_session(body.session_id, owner)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
+    trace_user, trace_session = trace_ids(owner, session_id)
 
     # A plain (sync) generator: Starlette iterates it in a threadpool, so the
     # blocking retriever / LLM-stream calls below don't stall the event loop.
@@ -272,8 +311,8 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
         # `trace_id` / `parent_observation_id` captured here instead. No-op
         # when disabled. See app/core/tracing.py's module docstring.
         trace = tracing.start_request_trace(
-            name="chat_stream", query=message, session_id=session_id,
-            user_id=body.user_id,
+            name="chat_stream", query=message, session_id=trace_session,
+            user_id=trace_user,
         )
         rec = timing.start_request(message, route="POST /chat/stream")
         trace_id = tracing.trace_id_of(trace)
@@ -349,10 +388,15 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
             tracing.clear_request_trace()
             timing.finish_request(rec)
 
-    return StreamingResponse(
-        gen(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    # A returned Response drops headers set on the injected one, so the owner
+    # cookie (if just minted) is attached here explicitly.
+    return apply_owner_cookie(
+        request,
+        StreamingResponse(
+            gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        ),
     )
 
 
@@ -361,24 +405,38 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 
+def _owned_id(session_id: str) -> str:
+    """Path ids are checked for format first; a malformed one is the same 404
+    as an unknown one (no separate 422 to probe with)."""
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        raise _not_found()
+    return session_id
+
+
 @router.get("/conversations", response_model=list[ConversationSummary])
-def list_conversations() -> list[ConversationSummary]:
-    return [ConversationSummary(**row) for row in list_sessions()]
+def list_conversations(owner: str = Depends(get_owner)) -> list[ConversationSummary]:
+    return [ConversationSummary(**row) for row in list_sessions(owner)]
 
 
 @router.get(
     "/conversations/{session_id}/messages",
     response_model=list[ConversationMessage],
 )
-def conversation_messages(session_id: str) -> list[ConversationMessage]:
-    history = get_history(session_id)
+def conversation_messages(
+    session_id: str, owner: str = Depends(get_owner)
+) -> list[ConversationMessage]:
+    history = get_history(_owned_id(session_id), owner)
     if history is None:
-        raise HTTPException(status_code=404, detail="conversation পাওয়া যায়নি।")
+        raise _not_found()
     return [ConversationMessage(**turn) for turn in history]
 
 
-@router.delete("/conversations/{session_id}", status_code=204)
-def delete_conversation(session_id: str) -> Response:
-    if not delete_session(session_id):
-        raise HTTPException(status_code=404, detail="conversation পাওয়া যায়নি।")
-    return Response(status_code=204)
+@router.delete(
+    "/conversations/{session_id}", status_code=204, dependencies=[Depends(check_origin)]
+)
+def delete_conversation(
+    session_id: str, request: Request, owner: str = Depends(get_owner)
+) -> Response:
+    if not delete_session(_owned_id(session_id), owner):
+        raise _not_found()
+    return apply_owner_cookie(request, Response(status_code=204))

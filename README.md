@@ -177,9 +177,16 @@ Leave `GPU_SERVICE_URL` empty to use the local models.
 | `GET` | `/health` | Liveness check. Returns `{"status": "ok"}`. |
 | `POST` | `/chat` | Main entry point. Classifies the message and returns an answer. |
 | `POST` | `/chat/stream` | Same as `/chat`, as Server-Sent Events. |
-| `GET` | `/conversations` | Sessions handled by this process, most recent first. |
-| `GET` | `/conversations/{id}/messages` | Messages in one session (`404` if unknown). |
-| `DELETE` | `/conversations/{id}` | Delete a session (`204`, or `404` if unknown). |
+| `GET` | `/conversations` | The caller's own sessions in this process, most recent first. |
+| `GET` | `/conversations/{id}/messages` | Messages in one of the caller's sessions (`404` if unknown or not theirs). |
+| `DELETE` | `/conversations/{id}` | Delete one of the caller's sessions (`204`, or `404` if unknown or not theirs). |
+
+**Session ownership.** There are no accounts. The first request from a browser receives an
+HttpOnly `shibir_owner` cookie; sessions belong to that cookie and nobody else can list, read,
+continue or delete them. The browser must send the cookie: call the API with
+`fetch(url, { credentials: "include" })`. Clearing cookies loses access to earlier chats, and all
+sessions are lost when the server restarts. For local development over plain `http://`, set
+`COOKIE_SECURE=false`, or the browser drops the cookie.
 
 ### `POST /chat`
 
@@ -189,8 +196,12 @@ Request:
 { "message": "your question", "session_id": null, "user_id": null }
 ```
 
-- `session_id`: omit to start a new session. Send back the returned value to continue it.
-- `user_id`: optional; used only to group traces in Langfuse.
+- `session_id`: omit to start a new session. Send back the returned value to continue it. It must
+  be an id this server issued to this browser. Any other value (malformed, unknown after a server
+  restart, or someone else's) starts a new session instead, so always use the
+  `session_id` returned by the latest response. The server never creates a session from a
+  client-chosen id.
+- `user_id`: accepted for compatibility but ignored (it is client-supplied and spoofable).
 
 Response:
 

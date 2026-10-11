@@ -36,9 +36,24 @@ If an API key, database password or other secret is committed, pasted or shared 
 
 Be aware of these limitations when deploying:
 
-- The API itself has **no authentication or rate limiting** in Python. It relies on network
-  placement and on CORS (`CORS_ALLOW_ORIGINS`, request header `Content-Type` only) for browser
-  callers. CORS does not stop non-browser clients.
+- There are **no user accounts or logins**. Chat sessions are protected by **anonymous per-browser
+  ownership**: the server issues a random token in the `shibir_owner` cookie (HttpOnly,
+  SameSite=Lax, Secure unless `COOKIE_SECURE=false`, 30 days) and stores only its SHA-256 hash. A
+  session is visible only to the owner that created it; an unknown session id and someone else's
+  id get the same 404 on `/conversations`, and on `/chat` both start a new session under a fresh
+  id, so neither reveals whether the id exists. Session ids are server-generated 256-bit random values. This is access
+  control between anonymous browsers, not authentication: anyone can get a fresh identity, and
+  whoever holds a browser's cookie is that owner.
+- **Clearing cookies (or a different browser/device) loses access to earlier chats.** There is no
+  recovery.
+- Cross-site requests: CORS allows credentials only for the explicit `CORS_ALLOW_ORIGINS` list
+  (`*` is rejected at startup), and `POST`/`DELETE` with an `Origin` outside that list get 403
+  (CSRF), except same-origin requests (the API's own address, e.g. `/docs`). Requests without an
+  `Origin` (curl, scripts) are allowed but only ever see their own anonymous sessions.
+- **No rate limiting in Python yet**, and sessions have **no TTL**: only caps
+  (`MAX_SESSIONS_PER_OWNER`=50, `MAX_SESSIONS_TOTAL`=10000, least-recently-updated evicted). A
+  client that discards its cookie can create sessions until the global cap evicts other users'
+  oldest sessions. Rate limiting is currently only at the proxy.
 - **The app must not be exposed directly.** `docker-compose.yml` publishes it on `127.0.0.1:9200`
   only; a TLS reverse proxy (`deploy/nginx/` or `deploy/caddy/`) is the sole public entry point and
   adds HTTP→HTTPS redirect, a 64 KB body limit and per-IP rate limiting on `/chat` and
@@ -46,9 +61,9 @@ Be aware of these limitations when deploying:
   the README "Firewall" section).
 - `/docs`, `/redoc` and `/openapi.json` are **off by default** (`ENABLE_DOCS=false`); the proxy
   also returns 404 for them. Enable them only for local development.
-- The proxy does not authenticate anyone: `/conversations` is still reachable by any internet
-  client through it (see the next item).
-- Chat sessions are held in process memory and are listed by `GET /conversations` without any
-  per-user separation. Anyone who can reach the API can read and delete every session in that
-  process.
+- Chat sessions are held in process memory: they are **lost on restart** and not shared between
+  workers.
+- Langfuse receives only a 12-character prefix of the owner hash as `user_id` and a hash of the
+  session id; the client-supplied `user_id` field is ignored. The raw cookie, the full owner hash
+  and the session id are never logged, traced or sent to an LLM.
 - The GPU service is protected by a single shared API key (`X-API-Key`).
