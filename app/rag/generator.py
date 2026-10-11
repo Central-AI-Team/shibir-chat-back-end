@@ -15,10 +15,16 @@ through -- unaffected by settings.model_by_task either way.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+
 from app.core import timing
 from app.core.config import settings
 from app.core.llm import complete, get_client, get_model
+from app.rag.script_check import count_stray_tokens, strip_stray
 from app.schemas.query import Citation
+
+logger = logging.getLogger(__name__)
 
 # Incident 2026-10-05: English questions got Bengali answers. The answer now
 # follows the question's language; the LLM decides English vs Banglish (a
@@ -80,7 +86,7 @@ def format_context(citations: list[Citation]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def generate_answer(
+def _generate_once(
     query: str,
     citations: list[Citation],
     *,
@@ -121,6 +127,46 @@ def generate_answer(
     # typed `str`, so returning None here would fail Pydantic validation with
     # an unhandled 500 instead of a plain (if unhelpful) empty-ish answer.
     return response.choices[0].message.content or ""
+
+
+def with_script_check(produce: Callable[[], str]) -> str:
+    """Run produce(); if the text has stray-script letters, regenerate up to
+    settings.answer_script_retries times (keeping the cleanest), then strip
+    whatever is left. Shared by QA and suggestion; see app/rag/script_check.py."""
+    answer = produce()
+    bad = count_stray_tokens(answer)
+    for _ in range(settings.answer_script_retries if bad else 0):
+        logger.warning("answer has %d stray-script token(s); regenerating", bad)
+        retry = produce()
+        retry_bad = count_stray_tokens(retry)
+        if retry_bad < bad:
+            answer, bad = retry, retry_bad
+        if not bad:
+            break
+    if bad:
+        logger.warning("answer still has %d stray-script token(s); stripping", bad)
+        answer = strip_stray(answer)
+    return answer
+
+
+def generate_answer(
+    query: str,
+    citations: list[Citation],
+    *,
+    model: str | None = None,
+    client=None,
+    extra_params: dict | None = None,
+) -> str:
+    """_generate_once() plus the stray-script check (app/rag/script_check.py).
+
+    The check runs only on the production path (model=client=None). Eval
+    scripts that pass an explicit model/client get that model's raw output, so
+    comparisons are not flattered by the repair. Not applied to stream_answer():
+    tokens are already sent by the time the answer could be checked.
+    """
+    if model is not None or client is not None:
+        return _generate_once(query, citations, model=model, client=client, extra_params=extra_params)
+    return with_script_check(lambda: _generate_once(query, citations, extra_params=extra_params))
 
 
 def stream_answer(

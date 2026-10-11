@@ -161,3 +161,36 @@ def read_pp_articles(path: Path, stats: DumpStats | None = None) -> Iterator[Raw
                 "video_url": r.get("video_url") or "",
             },
         )
+
+
+# ---------- pg_dump COPY blocks ----------
+
+_COPY_UNESCAPES = {"t": "\t", "n": "\n", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "\\": "\\"}
+_COPY_ESCAPE_RE = re.compile(r"\\(.)")
+
+
+def iter_copy_rows(path: Path, table: str) -> Iterator[dict[str, str | None]]:
+    """Rows of `COPY public.<table> (cols) FROM stdin;` in a plain-text pg_dump.
+
+    Yields {column: value}; `\\N` becomes None. Tab-separated with backslash
+    escapes, as pg_dump writes it. Stops at the terminating `\\.` line.
+    """
+    header = re.compile(rf"COPY (?:public\.)?{re.escape(table)} \(([^)]*)\) FROM stdin;")
+    columns: list[str] | None = None
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if columns is None:
+                m = header.match(line)
+                if m:
+                    columns = [c.strip() for c in m.group(1).split(",")]
+                continue
+            if line == "\\.":
+                return
+            values = [
+                None if v == "\\N" else _COPY_ESCAPE_RE.sub(lambda m: _COPY_UNESCAPES.get(m.group(1), m.group(1)), v)
+                for v in line.split("\t")
+            ]
+            if len(values) != len(columns):
+                continue
+            yield dict(zip(columns, values))

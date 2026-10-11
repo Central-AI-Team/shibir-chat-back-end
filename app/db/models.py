@@ -3,9 +3,11 @@ import enum
 from sqlalchemy import (
     Boolean,
     Column,
+    Date,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -43,6 +45,8 @@ class Book(Base):
     language = Column(String(10), nullable=False)
     author = Column(String(255), nullable=True)
 
+    __table_args__ = (Index("ix_books_category_id", "category_id"),)
+
     category = relationship("Category", back_populates="books")
     chapters = relationship("Chapter", back_populates="book")
 
@@ -54,6 +58,8 @@ class Chapter(Base):
     book_id = Column(Integer, ForeignKey("books.id"), nullable=False)
     name = Column(String(255), nullable=False)
     position = Column(Integer, nullable=True)  # ordering within the book
+
+    __table_args__ = (Index("ix_chapters_book_id", "book_id"),)
 
     book = relationship("Book", back_populates="chapters")
     pages = relationship("Page", back_populates="chapter")
@@ -91,6 +97,15 @@ class Page(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     embedded_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Keep in sync with INDEXES in scripts/clean_database.py (which adds them to
+    # an existing database; create_all only builds them for new tables).
+    __table_args__ = (
+        Index("ix_pages_book_id", "book_id"),
+        Index("ix_pages_chapter_id", "chapter_id"),
+        Index("ix_pages_status_embedded", "status", "embedded_at"),
+        Index("uq_pages_source", "source_db", "source_page_id", unique=True),
+    )
+
     book = relationship("Book")
     chapter = relationship("Chapter", back_populates="pages")
 
@@ -117,3 +132,33 @@ class Article(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     embedded_at = Column(DateTime(timezone=True), nullable=True)
     published_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_articles_status_source", "status", "source_type"),
+        Index("uq_articles_source", "source_type", "source_ref", unique=True),
+    )
+
+
+class Shaheed(Base):
+    """One martyr record (name, date, place, organisational rank).
+
+    A separate table, not `pages`: the data is structured, not prose. ingest.py
+    renders each row to a short labelled text block (`render_shaheed`) and
+    embeds that, so the chatbot can answer "who was ...", "who was martyred in
+    ...". Column names match the original dump so it loads unchanged.
+    """
+
+    __tablename__ = "shaheed"
+
+    id = Column(Integer, primary_key=True)
+    serial_no = Column(Integer, nullable=False, unique=True)  # provenance + upsert key
+    name = Column(Text, nullable=False)
+    shahadat_date = Column(Date, nullable=True)
+    shahadat_date_text = Column(Text, nullable=False)  # as written, Bengali digits
+    shahadat_place = Column(Text, nullable=False)
+    organizational_rank = Column(Text, nullable=False)
+
+    status = Column(SAEnum(ContentStatus), nullable=False, default=ContentStatus.draft)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    embedded_at = Column(DateTime(timezone=True), nullable=True)

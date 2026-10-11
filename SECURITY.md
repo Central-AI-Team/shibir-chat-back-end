@@ -36,8 +36,18 @@ If an API key, database password or other secret is committed, pasted or shared 
 
 Be aware of these limitations when deploying:
 
-- The API has **no authentication or rate limiting**. It relies on network placement and on CORS
-  (`CORS_ALLOW_ORIGINS`) for browser callers. CORS does not stop non-browser clients.
+- The API itself has **no authentication or rate limiting** in Python. It relies on network
+  placement and on CORS (`CORS_ALLOW_ORIGINS`, request header `Content-Type` only) for browser
+  callers. CORS does not stop non-browser clients.
+- **The app must not be exposed directly.** `docker-compose.yml` publishes it on `127.0.0.1:9200`
+  only; a TLS reverse proxy (`deploy/nginx/` or `deploy/caddy/`) is the sole public entry point and
+  adds HTTP→HTTPS redirect, a 64 KB body limit and per-IP rate limiting on `/chat` and
+  `/chat/stream` (nginx; Caddy needs a plugin). The firewall allows only ports 22, 80 and 443 (see
+  the README "Firewall" section).
+- `/docs`, `/redoc` and `/openapi.json` are **off by default** (`ENABLE_DOCS=false`); the proxy
+  also returns 404 for them. Enable them only for local development.
+- The proxy does not authenticate anyone: `/conversations` is still reachable by any internet
+  client through it (see the next item).
 - Chat sessions are held in process memory and are listed by `GET /conversations` without any
   per-user separation. Anyone who can reach the API can read and delete every session in that
   process.

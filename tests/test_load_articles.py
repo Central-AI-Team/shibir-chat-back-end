@@ -189,6 +189,7 @@ def test_ingest_uses_title_and_source_type_for_articles(monkeypatch):
     monkeypatch.setattr(ingest, "sweep_unpublished", lambda s, c: 0)
     monkeypatch.setattr(ingest, "_due_pages", lambda s: [])
     monkeypatch.setattr(ingest, "_due_articles", lambda s: [])
+    monkeypatch.setattr(ingest, "_due_shaheed", lambda s: [])
     monkeypatch.setattr(ingest, "_ingest", fake_ingest)
     ingest.ingest_all()
 

@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # everything retrieval returns (top_k chunks are ~900 chars + header), so
     # lowering them is a speed-vs-grounding trade-off; if context_top_k < top_k
     # the sources list can show excerpts the model never saw.
+    # Regenerations allowed when a QA answer has stray-script letters
+    # (app/rag/script_check.py); after that the stray letters are stripped. 0 = strip only.
+    answer_script_retries: int = 1
     context_top_k: int = 5
     context_max_chars: int = 1200
     # Queries whose letters are at least this fraction Bengali script skip the
@@ -258,6 +261,10 @@ class Settings(BaseSettings):
         # own domain; this is the site calling it).
         "https://shibirgpt.potropollob.com",
     ]
+
+    # Interactive docs (/docs, /redoc, /openapi.json) expose the whole API
+    # surface, so they are off unless ENABLE_DOCS=true (local development).
+    enable_docs: bool = False
 
     host: str = "0.0.0.0"
     port: int = 9200

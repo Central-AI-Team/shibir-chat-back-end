@@ -46,7 +46,14 @@ async def lifespan(app: FastAPI):
     tracing.shutdown()
 
 
-app = FastAPI(title="Shibir Chat Backend", lifespan=lifespan)
+# Docs are opt-in (settings.enable_docs): in production the API schema is not
+# published, and the reverse proxy 404s these paths as a second layer.
+_docs_kwargs = (
+    {}
+    if settings.enable_docs
+    else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+)
+app = FastAPI(title="Shibir Chat Backend", lifespan=lifespan, **_docs_kwargs)
 
 # Cross-origin access for the browser front-end. No cookies are used, so
 # allow_credentials stays False and a plain origin allow-list is enough
@@ -55,7 +62,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allow_origins,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type"],
 )
 
 app.include_router(router)
