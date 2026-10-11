@@ -40,6 +40,7 @@ from app.core.network_errors import NETWORK_ERRORS, NETWORK_UNAVAILABLE_DETAIL, 
 from app.core.config import settings
 from app.rag.gpu_client import GPUServiceError
 from app.rag.generator import stream_answer
+from app.rag.script_check import strip_stray
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import (
     ChatRequest,
@@ -145,17 +146,19 @@ async def _chat(body: ChatRequest) -> ChatResponse:
                 intent = await run_in_threadpool(classify_intent, message, was_roleplaying)
             timing.set_mode(intent)
 
+            # NOTE/ROLEPLAY/CHITCHAT answers skip generator.py, so strip stray-script
+            # letters here (no retry: a note is 28 s). QA/SUGGESTION retry in generator.
             if intent == "NOTE":
                 result = await run_in_threadpool(generate_book_notes_from_text, message)
-                answer = _format_note_result(result)
+                answer = strip_stray(_format_note_result(result))
             elif intent == "ROLEPLAY":
-                answer = await run_in_threadpool(handle_roleplay, message, session)
+                answer = strip_stray(await run_in_threadpool(handle_roleplay, message, session))
             elif intent == "SUGGESTION":
                 answer, sources = await run_in_threadpool(give_suggestion, message)
             elif intent == "CHITCHAT":
                 # Greetings / thanks / "who are you": no retrieval, no sources.
                 # The history is read before this turn is recorded below.
-                answer = await run_in_threadpool(respond, message, list(session["history"]))
+                answer = strip_stray(await run_in_threadpool(respond, message, list(session["history"])))
             else:  # QA
                 qa_response = await run_in_threadpool(answer_question, message)
                 answer, sources = qa_response.answer, qa_response.sources
@@ -296,13 +299,13 @@ def chat_stream(body: ChatRequest) -> StreamingResponse:
                         yield _sse("token", {"text": delta})
                 else:
                     if intent == "NOTE":
-                        answer = _format_note_result(generate_book_notes_from_text(message))
+                        answer = strip_stray(_format_note_result(generate_book_notes_from_text(message)))
                         sources = []
                     elif intent == "ROLEPLAY":
-                        answer = handle_roleplay(message, session)
+                        answer = strip_stray(handle_roleplay(message, session))
                         sources = []
                     elif intent == "CHITCHAT":
-                        answer = respond(message, list(session["history"]))
+                        answer = strip_stray(respond(message, list(session["history"])))
                         sources = []
                     else:  # SUGGESTION
                         answer, sources = give_suggestion(message)
