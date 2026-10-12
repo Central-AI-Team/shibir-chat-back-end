@@ -18,9 +18,10 @@ import hashlib
 import re
 import secrets
 
-from fastapi import HTTPException, Request, Response
+from fastapi import Depends, HTTPException, Request, Response
 
 from app.core.config import settings
+from app.services import rate_limiter
 
 COOKIE_NAME = "shibir_owner"
 COOKIE_MAX_AGE = 30 * 24 * 3600  # 30 days
@@ -81,6 +82,38 @@ def check_origin(request: Request) -> None:
     if origin == f"{request.url.scheme}://{request.url.netloc}":
         return
     raise HTTPException(status_code=403, detail="origin not allowed")
+
+
+def too_many_requests(detail: str, retry_after: int) -> HTTPException:
+    return HTTPException(status_code=429, detail=detail, headers={"Retry-After": str(retry_after)})
+
+
+def _client_ip(request: Request) -> str:
+    # uvicorn --proxy-headers already rewrote this from X-Forwarded-For, trusting
+    # it only from FORWARDED_ALLOW_IPS; never read that header here.
+    return request.client.host if request.client else "unknown"
+
+
+def limit_chat(request: Request, owner: str = Depends(get_owner)) -> None:
+    """POST /chat, /chat/stream: per-IP, then per-owner, then the global daily
+    budget, so a request rejected by a limit is not counted against the budget.
+    Runs before the route body, so a rejected request creates no session and
+    reaches no LLM. get_owner is cached per request: the route sees this owner."""
+    retry = rate_limiter.chat_per_ip.hit(_client_ip(request), settings.rate_limit_per_ip_per_minute)
+    if retry is None:
+        retry = rate_limiter.chat_per_owner.hit(owner, settings.rate_limit_per_owner_per_minute)
+    if retry is not None:
+        raise too_many_requests(rate_limiter.RATE_LIMIT_DETAIL, retry)
+    retry = rate_limiter.daily_budget.hit(settings.daily_llm_request_budget)
+    if retry is not None:
+        raise too_many_requests(rate_limiter.DAILY_BUDGET_DETAIL, retry)
+
+
+def limit_reads(request: Request) -> None:
+    """GET /conversations, GET /conversations/{id}/messages, DELETE: per IP."""
+    retry = rate_limiter.read_per_ip.hit(_client_ip(request), settings.rate_limit_read_per_ip_per_minute)
+    if retry is not None:
+        raise too_many_requests(rate_limiter.RATE_LIMIT_DETAIL, retry)
 
 
 def trace_ids(owner: str, session_id: str) -> tuple[str, str]:

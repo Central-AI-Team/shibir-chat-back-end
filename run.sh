@@ -16,22 +16,15 @@ fi
 echo "📥 Syncing dependencies..."
 uv sync --locked
 
-# Check if .env exists, if not create template
+# Check if .env exists, if not copy it from .env.example
 if [ ! -f ".env" ]; then
-    echo "📝 Creating .env template..."
-    cat > .env << 'EOF'
-# Environment variables for FastAPI app
-# Add your configuration here
-# Example:
-# DATABASE_URL=sqlite:///./test.db
-# SECRET_KEY=your-secret-key-here
-# API_KEY=your-api-key
-EOF
-    echo "⚠️  .env file created - please configure your environment variables"
+    echo "📝 Creating .env from .env.example..."
+    cp .env.example .env
+    echo "⚠️  .env file created - fill in OPENAI_API_KEY and DATABASE_URL (see .env.example)"
 else
     echo "✅ .env file already exists"
 fi
 
 # Run FastAPI server
 echo "🌐 Starting FastAPI server..."
-uv run uvicorn app.main:app --host 0.0.0.0 --port 9200 --proxy-headers --forwarded-allow-ips 127.0.0.1
+uv run uvicorn app.main:app --host 127.0.0.1 --port 9200 --proxy-headers --forwarded-allow-ips 127.0.0.1

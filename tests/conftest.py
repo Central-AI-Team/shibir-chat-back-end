@@ -66,3 +66,14 @@ def _timing_off(monkeypatch):
     """A developer's ENABLE_TIMING=1 must not change what the router passes to
     mocked functions (the local timing recorder is exercised on its own)."""
     monkeypatch.setattr(settings, "enable_timing", False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """Every TestClient request comes from the same IP ("testclient"), so the
+    in-process limiters must start empty in each test or the suite trips them."""
+    from app.services import rate_limiter
+
+    rate_limiter.reset()
+    yield
+    rate_limiter.reset()

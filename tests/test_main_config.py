@@ -12,7 +12,7 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 import app.main as main_module
 
 DOC_PATHS = ["/docs", "/redoc", "/openapi.json"]
@@ -31,6 +31,11 @@ def make_client(monkeypatch):
 
 def test_enable_docs_defaults_to_false():
     assert type(settings).model_fields["enable_docs"].default is False
+
+
+def test_host_defaults_to_loopback_when_unset(monkeypatch):
+    monkeypatch.delenv("HOST", raising=False)
+    assert Settings(_env_file=None, openai_api_key="x").host == "127.0.0.1"
 
 
 @pytest.mark.parametrize("path", DOC_PATHS)

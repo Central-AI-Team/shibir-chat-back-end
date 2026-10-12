@@ -276,8 +276,29 @@ class Settings(BaseSettings):
     # No TTL or rate limiting yet (Step 3).
     max_sessions_per_owner: int = 50
     max_sessions_total: int = 10000
+    # Message length caps (characters, after strip), enforced in router.py with
+    # a 413. The general one bounds what reaches the intent/rewrite/answer LLM
+    # calls. NOTE never sends the message to an LLM -- note_service only
+    # substring-matches it against book titles (longest 53 chars, 2026-10-11)
+    # and map-reduces that book's pages from Postgres -- so legitimate NOTE input
+    # is a request phrase plus a title; a pasted chapter is not summarised and
+    # only raises the odds of an accidental title match (a whole-book note job).
+    max_message_chars: int = 4000
+    max_note_chars: int = 300
+    # In-process rate limits (app/services/rate_limiter.py; single worker, reset
+    # on restart), each a 429 with Retry-After. Chat = POST /chat and
+    # /chat/stream; read = GET /conversations, GET .../messages and DELETE.
+    # The per-owner limit alone is bypassed by dropping the cookie, so the
+    # per-IP one is the backstop; NOTE is limited separately because one note
+    # request map-reduces a whole book. The daily budget is a global count of
+    # chat requests per UTC day; 0 = unlimited.
+    rate_limit_per_ip_per_minute: int = 30
+    rate_limit_per_owner_per_minute: int = 20
+    rate_limit_read_per_ip_per_minute: int = 120
+    note_limit_per_owner_per_hour: int = 3
+    daily_llm_request_budget: int = 5000
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 9200
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

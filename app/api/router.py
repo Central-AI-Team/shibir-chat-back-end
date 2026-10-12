@@ -43,7 +43,15 @@ from fastapi.responses import StreamingResponse
 from openai import APIError
 from starlette.concurrency import run_in_threadpool
 
-from app.api.deps import apply_owner_cookie, check_origin, get_owner, trace_ids
+from app.api.deps import (
+    apply_owner_cookie,
+    check_origin,
+    get_owner,
+    limit_chat,
+    limit_reads,
+    too_many_requests,
+    trace_ids,
+)
 from app.core import timing, tracing
 from app.core.network_errors import NETWORK_ERRORS, NETWORK_UNAVAILABLE_DETAIL, is_network_error
 from app.core.config import settings
@@ -59,6 +67,7 @@ from app.schemas.query import (
     ConversationSummary,
     SESSION_ID_PATTERN,
 )
+from app.services import rate_limiter
 from app.services.chitchat_service import preface, respond
 from app.services.intent_classifier import classify_intent
 from app.services.note_service import generate_book_notes_from_text
@@ -85,6 +94,10 @@ _SESSION_ID_RE = re.compile(SESSION_ID_PATTERN)
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
+
+
+def _too_long_detail(limit: int) -> str:
+    return f"message অনেক বড়। সর্বোচ্চ {limit} অক্ষর লেখা যাবে।"
 
 
 def _resolve_session(session_id: str | None, owner: str) -> tuple[str, dict]:
@@ -136,7 +149,9 @@ def health() -> dict:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/chat", response_model=ChatResponse, dependencies=[Depends(check_origin)])
+@router.post(
+    "/chat", response_model=ChatResponse, dependencies=[Depends(check_origin), Depends(limit_chat)]
+)
 async def chat(body: ChatRequest, request: Request, owner: str = Depends(get_owner)):
     if body.stream:
         # chat_stream returns its own StreamingResponse and sets the cookie on it.
@@ -155,6 +170,8 @@ async def _chat(body: ChatRequest, owner: str) -> ChatResponse:
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
+    if len(message) > settings.max_message_chars:
+        raise HTTPException(status_code=413, detail=_too_long_detail(settings.max_message_chars))
 
     session_id, session = _resolve_session(body.session_id, owner)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
@@ -185,6 +202,11 @@ async def _chat(body: ChatRequest, owner: str) -> ChatResponse:
             # NOTE/ROLEPLAY/CHITCHAT answers skip generator.py, so strip stray-script
             # letters here (no retry: a note is 28 s). QA/SUGGESTION retry in generator.
             if intent == "NOTE":
+                if len(message) > settings.max_note_chars:
+                    raise HTTPException(status_code=413, detail=_too_long_detail(settings.max_note_chars))
+                retry = rate_limiter.note_per_owner.hit(owner, settings.note_limit_per_owner_per_hour)
+                if retry is not None:
+                    raise too_many_requests(rate_limiter.NOTE_LIMIT_DETAIL, retry)
                 result = await run_in_threadpool(generate_book_notes_from_text, message)
                 answer = strip_stray(_format_note_result(result))
             elif intent == "ROLEPLAY":
@@ -285,13 +307,15 @@ def _qa_stream(
     return grounding, deltas
 
 
-@router.post("/chat/stream", dependencies=[Depends(check_origin)])
+@router.post("/chat/stream", dependencies=[Depends(check_origin), Depends(limit_chat)])
 def chat_stream(
     body: ChatRequest, request: Request, owner: str = Depends(get_owner)
 ) -> StreamingResponse:
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
+    if len(message) > settings.max_message_chars:
+        raise HTTPException(status_code=413, detail=_too_long_detail(settings.max_message_chars))
 
     session_id, session = _resolve_session(body.session_id, owner)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
@@ -338,6 +362,12 @@ def chat_stream(
                         yield _sse("token", {"text": delta})
                 else:
                     if intent == "NOTE":
+                        if len(message) > settings.max_note_chars:
+                            yield _sse("error", {"detail": _too_long_detail(settings.max_note_chars)})
+                            return
+                        if rate_limiter.note_per_owner.hit(owner, settings.note_limit_per_owner_per_hour) is not None:
+                            yield _sse("error", {"detail": rate_limiter.NOTE_LIMIT_DETAIL})
+                            return
                         answer = strip_stray(_format_note_result(generate_book_notes_from_text(message)))
                         sources = []
                     elif intent == "ROLEPLAY":
@@ -413,7 +443,9 @@ def _owned_id(session_id: str) -> str:
     return session_id
 
 
-@router.get("/conversations", response_model=list[ConversationSummary])
+@router.get(
+    "/conversations", response_model=list[ConversationSummary], dependencies=[Depends(limit_reads)]
+)
 def list_conversations(owner: str = Depends(get_owner)) -> list[ConversationSummary]:
     return [ConversationSummary(**row) for row in list_sessions(owner)]
 
@@ -421,6 +453,7 @@ def list_conversations(owner: str = Depends(get_owner)) -> list[ConversationSumm
 @router.get(
     "/conversations/{session_id}/messages",
     response_model=list[ConversationMessage],
+    dependencies=[Depends(limit_reads)],
 )
 def conversation_messages(
     session_id: str, owner: str = Depends(get_owner)
@@ -432,7 +465,9 @@ def conversation_messages(
 
 
 @router.delete(
-    "/conversations/{session_id}", status_code=204, dependencies=[Depends(check_origin)]
+    "/conversations/{session_id}",
+    status_code=204,
+    dependencies=[Depends(check_origin), Depends(limit_reads)],
 )
 def delete_conversation(
     session_id: str, request: Request, owner: str = Depends(get_owner)

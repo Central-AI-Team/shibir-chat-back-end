@@ -94,7 +94,7 @@ HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
 
 # 5. Run the server on :9200
 ./run.sh
-# or: HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
+# or: HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 127.0.0.1 --port 9200
 ```
 
 Check it:
@@ -114,7 +114,7 @@ Interactive API docs are off by default; set `ENABLE_DOCS=true` in `.env` to ser
 
 ```powershell
 $env:HF_HUB_OFFLINE = "1"
-uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
+uv run uvicorn app.main:app --host 127.0.0.1 --port 9200
 ```
 
 `psycopg2-binary` bundles `libpq`, and the CUDA/`uvloop` packages carry platform markers, so

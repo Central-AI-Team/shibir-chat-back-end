@@ -50,10 +50,25 @@ Be aware of these limitations when deploying:
   (`*` is rejected at startup), and `POST`/`DELETE` with an `Origin` outside that list get 403
   (CSRF), except same-origin requests (the API's own address, e.g. `/docs`). Requests without an
   `Origin` (curl, scripts) are allowed but only ever see their own anonymous sessions.
-- **No rate limiting in Python yet**, and sessions have **no TTL**: only caps
-  (`MAX_SESSIONS_PER_OWNER`=50, `MAX_SESSIONS_TOTAL`=10000, least-recently-updated evicted). A
-  client that discards its cookie can create sessions until the global cap evicts other users'
-  oldest sessions. Rate limiting is currently only at the proxy.
+- **In-app rate limits** (`app/services/rate_limiter.py`), each an HTTP 429 with `Retry-After`,
+  enforced whichever proxy is in front:
+  - `/chat` and `/chat/stream`: `RATE_LIMIT_PER_IP_PER_MINUTE` (30) and
+    `RATE_LIMIT_PER_OWNER_PER_MINUTE` (20). Dropping the cookie escapes the owner limit, not the IP
+    one.
+  - `GET /conversations`, `GET /conversations/{id}/messages` and `DELETE`:
+    `RATE_LIMIT_READ_PER_IP_PER_MINUTE` (120).
+  - Note requests: `NOTE_LIMIT_PER_OWNER_PER_HOUR` (3); an SSE `error` event on `/chat/stream`.
+  - `DAILY_LLM_REQUEST_BUDGET` (5000): a global count of chat requests per UTC day; past it every
+    chat request gets 429 until midnight UTC. `0` = unlimited.
+
+  The state is in process memory: it is per worker and **resets on restart** (including the daily
+  budget).
+- Sessions have **no TTL**: only caps (`MAX_SESSIONS_PER_OWNER`=50, `MAX_SESSIONS_TOTAL`=10000,
+  least-recently-updated evicted). A client that discards its cookie can create sessions (now at
+  most the per-IP chat rate) until the global cap evicts other users' oldest sessions.
+- **Message length limits:** a chat message over `MAX_MESSAGE_CHARS` (4000) characters, or a note
+  request over `MAX_NOTE_CHARS` (300), gets HTTP 413 (an SSE `error` event for a note on
+  `/chat/stream`), on top of the proxy's 64 KB body limit.
 - **The app must not be exposed directly.** `docker-compose.yml` publishes it on `127.0.0.1:9200`
   only; a TLS reverse proxy (`deploy/nginx/` or `deploy/caddy/`) is the sole public entry point and
   adds HTTP→HTTPS redirect, a 64 KB body limit and per-IP rate limiting on `/chat` and
