@@ -23,9 +23,13 @@ in-process dict -- see that module's docstring: they only see sessions this
 worker handled and lose everything on restart. Good enough for the current
 single-worker deployment; a shared store (Redis / DB) is the upgrade path.
 
-Access control (anonymous, no accounts): every route resolves the caller's
-owner hash from the `shibir_owner` cookie (app/api/deps.py) and only ever sees
-that owner's sessions. An unknown session id and someone else's id get the
+Access control: every route declares a level in app/auth/policy.py. Chat and
+conversation routes resolve the caller's principal (app/api/deps.py) -- a
+logged-in user, or a guest identified by the `shibir_owner` cookie -- and only
+ever see that principal's sessions (principal.owner_key). Guests get
+settings.guest_message_limit responses in total (app/auth/guest_quota.py:
+reserved before any LLM work, refunded if no response was produced) and cannot
+request notes. An unknown session id and someone else's id get the
 same 404 body on /conversations, and on /chat both silently start a new
 session under a fresh id, so ownership cannot be probed. POST/DELETE also reject a
 browser Origin that is not on the CORS allow-list (CSRF).
@@ -39,19 +43,25 @@ import re
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from openai import APIError
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import (
+    SERVICE_UNAVAILABLE_DETAIL,
+    _client_ip,
     apply_owner_cookie,
     check_origin,
-    get_owner,
+    get_principal,
     limit_chat,
     limit_reads,
+    public_route,
     too_many_requests,
     trace_ids,
 )
+from app.auth import audit, guest_quota
+from app.auth.principal import Principal
 from app.core import timing, tracing
 from app.core.network_errors import NETWORK_ERRORS, NETWORK_UNAVAILABLE_DETAIL, is_network_error
 from app.core.config import settings
@@ -90,6 +100,7 @@ _LLM_UNAVAILABLE_DETAIL = "উত্তর তৈরির সার্ভিস
 # One body for "unknown" AND "not yours" -- they must be indistinguishable.
 _NOT_FOUND_DETAIL = "conversation পাওয়া যায়নি।"
 _SESSION_ID_RE = re.compile(SESSION_ID_PATTERN)
+_LOGIN_FOR_NOTE_DETAIL = "নোট তৈরি করতে অনুগ্রহ করে লগইন বা নিবন্ধন করুন।"
 
 
 def _not_found() -> HTTPException:
@@ -98,6 +109,47 @@ def _not_found() -> HTTPException:
 
 def _too_long_detail(limit: int) -> str:
     return f"message অনেক বড়। সর্বোচ্চ {limit} অক্ষর লেখা যাবে।"
+
+
+def validate_chat(body: ChatRequest) -> None:
+    """Runs before limit_chat and the guest quota, so an empty or oversized
+    message consumes no rate-limit hit and no guest message."""
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
+    if len(message) > settings.max_message_chars:
+        raise HTTPException(status_code=413, detail=_too_long_detail(settings.max_message_chars))
+
+
+def _reserve_guest(
+    principal: Principal, request: Request
+) -> tuple[guest_quota.Reservation | None, Response | None]:
+    """(reservation, None) for a guest with quota left; (None, None) for a
+    user; (None, 401 response) for a guest who has run out. Blocking (DB):
+    call from a threadpool. A database failure is a 503 (fail closed)."""
+    if principal.is_user:
+        return None, None
+    ip = _client_ip(request)
+    try:
+        reservation = guest_quota.reserve(principal.owner_key, ip)
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=503, detail=SERVICE_UNAVAILABLE_DETAIL) from e
+    if reservation is not None:
+        return reservation, None
+    audit.event("guest_limit_reached", ip=ip)
+    body = {
+        "detail": guest_quota.LIMIT_DETAIL,
+        "code": guest_quota.LIMIT_CODE,
+        "guest_limit": settings.guest_message_limit,
+        "guest_remaining": 0,
+    }
+    return None, apply_owner_cookie(request, JSONResponse(status_code=401, content=body))
+
+
+def _guest_fields(principal: Principal, reservation: guest_quota.Reservation | None) -> dict:
+    if principal.is_user or reservation is None:
+        return {"guest_remaining": None, "guest_limit": None}
+    return {"guest_remaining": reservation.remaining, "guest_limit": settings.guest_message_limit}
 
 
 def _resolve_session(session_id: str | None, owner: str) -> tuple[str, dict]:
@@ -139,7 +191,7 @@ def _record_turn(session_id: str, intent: str, message: str, answer: str) -> Non
 # ---------------------------------------------------------------------------
 
 
-@router.get("/health")
+@router.get("/health", dependencies=[Depends(public_route)])
 def health() -> dict:
     return {"status": "ok"}
 
@@ -150,23 +202,35 @@ def health() -> dict:
 
 
 @router.post(
-    "/chat", response_model=ChatResponse, dependencies=[Depends(check_origin), Depends(limit_chat)]
+    "/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(check_origin), Depends(validate_chat), Depends(limit_chat)],
 )
-async def chat(body: ChatRequest, request: Request, owner: str = Depends(get_owner)):
+async def chat(body: ChatRequest, request: Request, principal: Principal = Depends(get_principal)):
     if body.stream:
         # chat_stream returns its own StreamingResponse and sets the cookie on it.
-        return chat_stream(body, request, owner)
+        # It reserves guest quota (a DB call), so it runs in the threadpool.
+        return await run_in_threadpool(chat_stream, body, request, principal)
+    reservation, rejected = await run_in_threadpool(_reserve_guest, principal, request)
+    if rejected is not None:
+        return rejected
     timing.start_request(body.message)
     try:
-        return await _chat(body, owner)
+        return await _chat(body, principal, reservation, _client_ip(request))
     except Exception as e:
         timing.record_error("request_total", e)
+        # No response was produced (upstream 503, guest NOTE 403, ...): give
+        # the guest's message back. Never reached after a successful response.
+        await run_in_threadpool(guest_quota.refund, reservation)
         raise
     finally:
         timing.finish_request()
 
 
-async def _chat(body: ChatRequest, owner: str) -> ChatResponse:
+async def _chat(
+    body: ChatRequest, principal: Principal, reservation: guest_quota.Reservation | None, ip: str
+) -> ChatResponse:
+    owner = principal.owner_key
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
@@ -202,6 +266,9 @@ async def _chat(body: ChatRequest, owner: str) -> ChatResponse:
             # NOTE/ROLEPLAY/CHITCHAT answers skip generator.py, so strip stray-script
             # letters here (no retry: a note is 28 s). QA/SUGGESTION retry in generator.
             if intent == "NOTE":
+                if not principal.is_user:
+                    audit.event("forbidden_access", ip=ip, path="/chat", reason="guest_note")
+                    raise HTTPException(status_code=403, detail=_LOGIN_FOR_NOTE_DETAIL)
                 if len(message) > settings.max_note_chars:
                     raise HTTPException(status_code=413, detail=_too_long_detail(settings.max_note_chars))
                 retry = rate_limiter.note_per_owner.hit(owner, settings.note_limit_per_owner_per_hour)
@@ -246,6 +313,7 @@ async def _chat(body: ChatRequest, owner: str) -> ChatResponse:
             sources=sources,
             session_id=session_id,
             response_time_ms=response_time_ms,
+            **_guest_fields(principal, reservation),
         )
     finally:
         tracing.finalize_request_trace(
@@ -307,15 +375,23 @@ def _qa_stream(
     return grounding, deltas
 
 
-@router.post("/chat/stream", dependencies=[Depends(check_origin), Depends(limit_chat)])
+@router.post(
+    "/chat/stream", dependencies=[Depends(check_origin), Depends(validate_chat), Depends(limit_chat)]
+)
 def chat_stream(
-    body: ChatRequest, request: Request, owner: str = Depends(get_owner)
-) -> StreamingResponse:
+    body: ChatRequest, request: Request, principal: Principal = Depends(get_principal)
+) -> Response:
+    owner = principal.owner_key
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message খালি রাখা যাবে না।")
     if len(message) > settings.max_message_chars:
         raise HTTPException(status_code=413, detail=_too_long_detail(settings.max_message_chars))
+    # Plain HTTP 401 before the stream starts when a guest is out of messages.
+    reservation, rejected = _reserve_guest(principal, request)
+    if rejected is not None:
+        return rejected
+    ip = _client_ip(request)
 
     session_id, session = _resolve_session(body.session_id, owner)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
@@ -362,6 +438,11 @@ def chat_stream(
                         yield _sse("token", {"text": delta})
                 else:
                     if intent == "NOTE":
+                        if not principal.is_user:
+                            audit.event("forbidden_access", ip=ip, path="/chat/stream", reason="guest_note")
+                            guest_quota.refund(reservation)
+                            yield _sse("error", {"detail": _LOGIN_FOR_NOTE_DETAIL})
+                            return
                         if len(message) > settings.max_note_chars:
                             yield _sse("error", {"detail": _too_long_detail(settings.max_note_chars)})
                             return
@@ -386,8 +467,12 @@ def chat_stream(
                 trace_error = True
                 timing.record_error("request_total", e, rec=rec)
                 detail = NETWORK_UNAVAILABLE_DETAIL if is_network_error(e) else _LLM_UNAVAILABLE_DETAIL
+                guest_quota.refund(reservation)
                 yield _sse("error", {"detail": detail})
                 return
+            except Exception:
+                guest_quota.refund(reservation)
+                raise
 
             if was_roleplaying and intent != "ROLEPLAY":
                 update_session(session_id, mode=intent, persona=None)
@@ -402,6 +487,7 @@ def chat_stream(
                     "mode": intent.lower(),
                     "session_id": session_id,
                     "response_time_ms": response_time_ms,
+                    **_guest_fields(principal, reservation),
                 },
             )
         finally:
@@ -446,8 +532,8 @@ def _owned_id(session_id: str) -> str:
 @router.get(
     "/conversations", response_model=list[ConversationSummary], dependencies=[Depends(limit_reads)]
 )
-def list_conversations(owner: str = Depends(get_owner)) -> list[ConversationSummary]:
-    return [ConversationSummary(**row) for row in list_sessions(owner)]
+def list_conversations(principal: Principal = Depends(get_principal)) -> list[ConversationSummary]:
+    return [ConversationSummary(**row) for row in list_sessions(principal.owner_key)]
 
 
 @router.get(
@@ -456,9 +542,9 @@ def list_conversations(owner: str = Depends(get_owner)) -> list[ConversationSumm
     dependencies=[Depends(limit_reads)],
 )
 def conversation_messages(
-    session_id: str, owner: str = Depends(get_owner)
+    session_id: str, principal: Principal = Depends(get_principal)
 ) -> list[ConversationMessage]:
-    history = get_history(_owned_id(session_id), owner)
+    history = get_history(_owned_id(session_id), principal.owner_key)
     if history is None:
         raise _not_found()
     return [ConversationMessage(**turn) for turn in history]
@@ -470,8 +556,8 @@ def conversation_messages(
     dependencies=[Depends(check_origin), Depends(limit_reads)],
 )
 def delete_conversation(
-    session_id: str, request: Request, owner: str = Depends(get_owner)
+    session_id: str, request: Request, principal: Principal = Depends(get_principal)
 ) -> Response:
-    if not delete_session(_owned_id(session_id), owner):
+    if not delete_session(_owned_id(session_id), principal.owner_key):
         raise _not_found()
     return apply_owner_cookie(request, Response(status_code=204))

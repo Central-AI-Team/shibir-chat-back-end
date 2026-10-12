@@ -156,3 +156,22 @@ def delete_session(session_id: str, owner: str) -> bool:
             return False
         del _sessions[session_id]
         return True
+
+
+def reassign_owner(old_owner: str, new_owner: str) -> int:
+    """Move every session of `old_owner` to `new_owner` (a guest who logs in or
+    registers keeps their chats). Callers pass only the guest owner from the
+    cookie on THAT request. Past max_sessions_per_owner the new owner's
+    least-recently-updated sessions are evicted. Returns how many moved."""
+    if old_owner == new_owner:
+        return 0
+    with _lock:
+        moved = [s for s in _sessions.values() if _owns(s, old_owner)]
+        for session in moved:
+            session["owner"] = new_owner
+        while True:
+            mine = [(sid, s) for sid, s in _sessions.items() if _owns(s, new_owner)]
+            if len(mine) <= settings.max_sessions_per_owner:
+                break
+            _evict_oldest(mine)
+        return len(moved)

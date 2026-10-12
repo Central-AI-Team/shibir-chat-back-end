@@ -165,7 +165,7 @@ def test_read_routes_have_their_own_per_ip_limit(clock, limits):
 # ---------------------------------------------------------------------------
 
 
-def test_note_hourly_limit_on_chat(clock, limits):
+def test_note_hourly_limit_on_chat(clock, limits, logged_in_user):
     limits(note=2)
     client = _client()
     with _note() as mock_note:
@@ -184,7 +184,7 @@ def test_note_hourly_limit_on_chat(clock, limits):
         assert client.post("/chat", json={"message": "নোট বানাও বই"}).status_code == 200
 
 
-def test_note_hourly_limit_on_stream_is_an_sse_error(clock, limits):
+def test_note_hourly_limit_on_stream_is_an_sse_error(clock, limits, logged_in_user):
     limits(note=1)
     client = _client()
     with _note() as mock_note:

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth_routes import router as auth_router
 from app.api.router import router
 from app.core import tracing
 from app.core.config import settings
@@ -29,8 +30,36 @@ def _warmup_models() -> None:
         logger.warning("warmup failed; the first request will be slower", exc_info=True)
 
 
+def create_auth_tables() -> None:
+    """Create users / auth_sessions / guest_usage if missing (checkfirst; never
+    alters an existing table). Without them every guest chat and login is a 503
+    (the auth code fails closed), and nothing else creates them: there are no
+    migrations. docs/sql/auth_tables.sql is the same schema for manual use.
+    Never raises: a database that is down at startup only logs."""
+    try:
+        from app.auth import open_db
+        from app.db.base import Base
+        from app.db.models import AuthSession, GuestUsage, User
+
+        with open_db() as db:
+            Base.metadata.create_all(
+                db.get_bind(), tables=[User.__table__, AuthSession.__table__, GuestUsage.__table__]
+            )
+    except Exception:
+        logger.warning(
+            "could not create the auth tables; guest chat and login return 503 "
+            "until the database is reachable and they exist", exc_info=True,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Awaited, but bounded: a database that hangs must not block startup (the
+    # deploy health check gives up after 180 s).
+    try:
+        await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(None, create_auth_tables), 20)
+    except asyncio.TimeoutError:
+        logger.warning("creating the auth tables timed out; continuing startup")
     # Pay the langfuse SDK import + client-init cost now, not on the first
     # /chat request. No-op when tracing is disabled; never raises.
     tracing.init()
@@ -67,3 +96,4 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(auth_router)

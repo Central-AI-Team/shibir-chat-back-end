@@ -77,3 +77,122 @@ def _reset_rate_limits():
     rate_limiter.reset()
     yield
     rate_limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def auth_db(monkeypatch):
+    """Accounts and the guest quota run on a fresh in-memory SQLite database
+    (only users / auth_sessions / guest_usage; the content tables use JSONB),
+    with a cheap argon2 hasher for speed. Guest limits are raised so tests that
+    predate the quota are not capped; tests/test_auth_*.py set them back."""
+    from argon2 import PasswordHasher
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    import app.auth as auth
+    from app.auth import passwords
+    from app.db.base import Base
+    from app.db.models import AuthSession, GuestUsage, User
+
+    engine = create_engine(
+        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine, tables=[User.__table__, AuthSession.__table__, GuestUsage.__table__])
+    monkeypatch.setattr(auth, "SESSION_FACTORY", sessionmaker(bind=engine, future=True))
+    monkeypatch.setattr(passwords, "_hasher", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1))
+    passwords._dummy_hash.cache_clear()
+    monkeypatch.setattr(settings, "guest_message_limit", 10_000)
+    monkeypatch.setattr(settings, "guest_ip_limit_per_day", 10_000)
+    yield engine
+    passwords._dummy_hash.cache_clear()
+    engine.dispose()
+
+
+@pytest.fixture
+def logged_in_user(auth_db, monkeypatch):
+    """Every request in the test is made by one logged-in user (role "user"),
+    for tests of user-only behaviour (notes) that are not about login. A real
+    user and session exist in the test database; only the cookie lookup is
+    patched, so this works whichever `app` object a test module imported
+    (tests/test_main_config.py reloads app.main)."""
+    from types import SimpleNamespace
+
+    from app.auth import now, open_db, principal, sessions
+    from app.db.models import User
+
+    at = now()
+    user = User(
+        id="00000000-0000-4000-8000-000000000001",
+        email="tester@example.com",
+        password_hash="unused",
+        role="user",
+        is_active=True,
+        failed_login_count=0,
+        created_at=at,
+        password_changed_at=at,
+    )
+    with open_db() as db:
+        db.add(user)
+        db.flush()
+        token = sessions.create(db, user, SimpleNamespace(headers={}, client=None))
+        db.commit()
+    monkeypatch.setattr(sessions, "request_token", lambda request: token)
+    return principal.user("00000000-0000-4000-8000-000000000001", "user")
+
+
+AUTH_TEST_ORIGIN = "http://localhost:5173"
+AUTH_TEST_PASSWORD = "correct horse battery"
+
+
+@pytest.fixture
+def auth_origin(monkeypatch):
+    """The allowed front-end origin for auth tests, independent of a local
+    .env that overrides CORS_ALLOW_ORIGINS."""
+    monkeypatch.setattr(settings, "cors_allow_origins", [AUTH_TEST_ORIGIN])
+    return AUTH_TEST_ORIGIN
+
+
+@pytest.fixture
+def auth_clock(monkeypatch):
+    """Controls app.auth time: advance with clock["now"] += timedelta(...).
+    The modules bind `now` at import, so each is patched."""
+    from datetime import datetime, timezone
+
+    import app.auth as auth
+    from app.api import auth_routes
+    from app.auth import audit, guest_quota, sessions
+
+    state = {"now": datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)}
+    for module in (auth, audit, guest_quota, sessions, auth_routes):
+        monkeypatch.setattr(module, "now", lambda: state["now"])
+    return state
+
+
+@pytest.fixture
+def make_user(auth_db):
+    """make_user(email=..., password=..., role=..., is_active=...) -> user id."""
+    import uuid
+
+    from app.auth import now, open_db, passwords
+    from app.db.models import User
+
+    def _make(email="alice@example.com", password=AUTH_TEST_PASSWORD, role="user", is_active=True) -> str:
+        user_id = str(uuid.uuid4())
+        at = now()
+        with open_db() as db:
+            db.add(
+                User(
+                    id=user_id,
+                    email=email,
+                    password_hash=passwords.hash_password(password),
+                    role=role,
+                    is_active=is_active,
+                    failed_login_count=0,
+                    created_at=at,
+                    password_changed_at=at,
+                )
+            )
+            db.commit()
+        return user_id
+
+    return _make

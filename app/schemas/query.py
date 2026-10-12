@@ -48,6 +48,10 @@ class ChatResponse(BaseModel):
     sources: list[Citation] = []
     session_id: str
     response_time_ms: float
+    # Guests only (null for logged-in users): responses left after this one,
+    # and the per-guest total. See docs/auth.md.
+    guest_remaining: int | None = None
+    guest_limit: int | None = None
 
 
 class ConversationSummary(BaseModel):

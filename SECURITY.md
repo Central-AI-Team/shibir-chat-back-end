@@ -36,20 +36,35 @@ If an API key, database password or other secret is committed, pasted or shared 
 
 Be aware of these limitations when deploying:
 
-- There are **no user accounts or logins**. Chat sessions are protected by **anonymous per-browser
-  ownership**: the server issues a random token in the `shibir_owner` cookie (HttpOnly,
-  SameSite=Lax, Secure unless `COOKIE_SECURE=false`, 30 days) and stores only its SHA-256 hash. A
-  session is visible only to the owner that created it; an unknown session id and someone else's
-  id get the same 404 on `/conversations`, and on `/chat` both start a new session under a fresh
-  id, so neither reveals whether the id exists. Session ids are server-generated 256-bit random values. This is access
-  control between anonymous browsers, not authentication: anyone can get a fresh identity, and
-  whoever holds a browser's cookie is that owner.
-- **Clearing cookies (or a different browser/device) loses access to earlier chats.** There is no
-  recovery.
+- **Accounts** (`app/auth/`, [docs/auth.md](docs/auth.md)): email + password, hashed with argon2id
+  (library defaults). Login sessions are random 256-bit tokens in an HttpOnly, SameSite=Lax,
+  `__Host-` cookie (Secure); only their SHA-256 is stored. Every login issues a fresh token,
+  sessions expire after 7 days idle / 30 days absolute, logout and password change revoke them,
+  and a user has at most 10. Login is throttled per email (5 / 15 min) and per IP (20 / h), and an
+  account locks for 30 s to 15 min (never permanently) after 10 consecutive failures. Every
+  failure kind gets the same 401 and, as far as possible, the same timing. Registration is open
+  (3 per IP per hour, `AUTH_REGISTRATIONS_PER_DAY` overall) and has **no email verification,
+  password reset or MFA**, so anyone can create accounts, which also weakens the guest limit.
+  Security events go to the `app.auth.audit` log (no passwords, tokens, hashes, full emails or
+  full IPs) and never to Langfuse.
+- **Guests** (no login) keep the anonymous per-browser ownership: the server issues a random token
+  in the `shibir_owner` cookie (HttpOnly, SameSite=Lax, Secure unless `COOKIE_SECURE=false`, 30
+  days) and stores only its SHA-256 hash. Guests get `GUEST_MESSAGE_LIMIT` (5) responses in total
+  per cookie and `GUEST_IP_LIMIT_PER_DAY` (15) per IP per 24 h, counted in Postgres
+  (`guest_usage`, which holds IP addresses and is purged after 30 days idle), then must log in or
+  register. Rotating IPs or using a VPN gets around the IP counter. Guests cannot request notes.
+- A chat session is visible only to the owner that created it (a user, from any of their browsers,
+  or one guest cookie); an unknown session id and someone else's id get the same 404 on
+  `/conversations`, and on `/chat` both start a new session under a fresh id, so neither reveals
+  whether the id exists. Session ids are server-generated 256-bit random values. A guest who logs
+  in or registers takes their in-memory chats along.
+- **A guest who clears cookies (or uses a different browser/device) loses access to earlier
+  chats.** There is no recovery. A user's chats are kept in process memory and are lost on restart.
 - Cross-site requests: CORS allows credentials only for the explicit `CORS_ALLOW_ORIGINS` list
   (`*` is rejected at startup), and `POST`/`DELETE` with an `Origin` outside that list get 403
   (CSRF), except same-origin requests (the API's own address, e.g. `/docs`). Requests without an
-  `Origin` (curl, scripts) are allowed but only ever see their own anonymous sessions.
+  `Origin` (curl, scripts) are allowed but only ever see their own anonymous sessions. On
+  `/auth/*`, a `POST` that carries a login-session cookie but no `Origin` is also rejected.
 - **In-app rate limits** (`app/services/rate_limiter.py`), each an HTTP 429 with `Retry-After`,
   enforced whichever proxy is in front:
   - `/chat` and `/chat/stream`: `RATE_LIMIT_PER_IP_PER_MINUTE` (30) and
@@ -58,6 +73,8 @@ Be aware of these limitations when deploying:
   - `GET /conversations`, `GET /conversations/{id}/messages` and `DELETE`:
     `RATE_LIMIT_READ_PER_IP_PER_MINUTE` (120).
   - Note requests: `NOTE_LIMIT_PER_OWNER_PER_HOUR` (3); an SSE `error` event on `/chat/stream`.
+  - Logged-in users: `USER_DAILY_MESSAGE_LIMIT` (100) chat requests per UTC day.
+  - `/auth/login` and `/auth/register`: see Accounts above. The proxy does not rate-limit `/auth/*`.
   - `DAILY_LLM_REQUEST_BUDGET` (5000): a global count of chat requests per UTC day; past it every
     chat request gets 429 until midnight UTC. `0` = unlimited.
 

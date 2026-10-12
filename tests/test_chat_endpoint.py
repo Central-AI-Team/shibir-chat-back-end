@@ -43,7 +43,7 @@ def _completion(content: str) -> MagicMock:
     return response
 
 
-def test_chat_note_intent_routes_to_note_generation():
+def test_chat_note_intent_routes_to_note_generation(logged_in_user):
     note_result = {
         "book": "Test Book",
         "chapters": [
@@ -215,7 +215,7 @@ def test_chat_message_exactly_at_max_message_chars_works():
     assert response.json()["mode"] == "qa"
 
 
-def test_chat_note_over_max_note_chars_returns_413():
+def test_chat_note_over_max_note_chars_returns_413(logged_in_user):
     from app.core.config import settings
 
     with (

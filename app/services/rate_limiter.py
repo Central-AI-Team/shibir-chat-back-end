@@ -112,14 +112,57 @@ class DailyBudget:
             self._day, self._count = None, 0
 
 
+class KeyedDailyLimiter:
+    """At most `limit` hits per key per UTC day. limit <= 0 means unlimited.
+    The whole table is dropped when the day changes, so memory is one int per
+    key seen today."""
+
+    def __init__(self) -> None:
+        self._day: int | None = None
+        self._counts: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def hit(self, key: str, limit: int) -> int | None:
+        """Count a hit and return None, or return the seconds until the next
+        UTC midnight when this key's budget is spent."""
+        if limit <= 0:
+            return None
+        now = _time()
+        day = int(now // _DAY_SECONDS)
+        with self._lock:
+            if day != self._day:
+                self._day, self._counts = day, {}
+            count = self._counts.get(key, 0)
+            if count >= limit:
+                return max(1, math.ceil((day + 1) * _DAY_SECONDS - now))
+            self._counts[key] = count + 1
+            return None
+
+    def reset(self) -> None:
+        with self._lock:
+            self._day, self._counts = None, {}
+
+
+USER_DAILY_LIMIT_DETAIL = "আজকের বার্তার সীমা পূর্ণ হয়েছে। আগামীকাল আবার চেষ্টা করুন।"
+AUTH_RATE_LIMIT_DETAIL = "too many attempts; try again later"
+
 chat_per_ip = SlidingWindowLimiter(60)
 chat_per_owner = SlidingWindowLimiter(60)
 read_per_ip = SlidingWindowLimiter(60)
 note_per_owner = SlidingWindowLimiter(3600)
 daily_budget = DailyBudget()
+# Accounts (app/api/auth_routes.py, app/api/deps.py).
+login_per_email = SlidingWindowLimiter(15 * 60)
+login_per_ip = SlidingWindowLimiter(3600)
+register_per_ip = SlidingWindowLimiter(3600)
+registrations_daily = DailyBudget()
+user_daily = KeyedDailyLimiter()
 
 
 def reset() -> None:
     """Clear every limiter (tests)."""
-    for limiter in (chat_per_ip, chat_per_owner, read_per_ip, note_per_owner, daily_budget):
+    for limiter in (
+        chat_per_ip, chat_per_owner, read_per_ip, note_per_owner, daily_budget,
+        login_per_email, login_per_ip, register_per_ip, registrations_daily, user_daily,
+    ):
         limiter.reset()

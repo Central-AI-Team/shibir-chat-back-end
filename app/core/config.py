@@ -298,6 +298,25 @@ class Settings(BaseSettings):
     note_limit_per_owner_per_hour: int = 3
     daily_llm_request_budget: int = 5000
 
+    # Accounts (app/auth/, docs/auth.md). Login sessions slide their idle
+    # expiry (at most one DB write per 5 minutes); the absolute expiry is never
+    # extended. Registration is open by default with a per-day global cap as a
+    # circuit breaker (0 = unlimited); there is no email verification yet.
+    auth_session_idle_days: int = 7
+    auth_session_absolute_days: int = 30
+    auth_registration_enabled: bool = True
+    auth_registrations_per_day: int = 200
+    # Guests (no login) get guest_message_limit responses in total per owner
+    # cookie, and guest_ip_limit_per_day per client IP (IPv6: per /64) in a 24 h
+    # window; either running out means "log in or register". Stored in Postgres
+    # (guest_usage), so restarts do not reset it. 0 = guests cannot chat.
+    # Higher per IP than per cookie so a shared network (a campus) is not
+    # blocked after one person. Logged-in users have a per-UTC-day cap instead
+    # (in-process; 0 = unlimited).
+    guest_message_limit: int = 5
+    guest_ip_limit_per_day: int = 15
+    user_daily_message_limit: int = 100
+
     host: str = "127.0.0.1"
     port: int = 9200
 

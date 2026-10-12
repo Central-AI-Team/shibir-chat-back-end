@@ -180,13 +180,23 @@ Leave `GPU_SERVICE_URL` empty to use the local models.
 | `GET` | `/conversations` | The caller's own sessions in this process, most recent first. |
 | `GET` | `/conversations/{id}/messages` | Messages in one of the caller's sessions (`404` if unknown or not theirs). |
 | `DELETE` | `/conversations/{id}` | Delete one of the caller's sessions (`204`, or `404` if unknown or not theirs). |
+| `POST` | `/auth/register` | Create an account and log in (open unless `AUTH_REGISTRATION_ENABLED=false`). |
+| `POST` | `/auth/login` | Log in; sets the session cookie. |
+| `GET` | `/auth/me` | The logged-in user, or a guest's remaining free messages. |
+| `POST` | `/auth/logout`, `/auth/logout-all` | End this session, or every session of the user. |
+| `POST` | `/auth/change-password` | Change the password; ends every other session. |
 
-**Session ownership.** There are no accounts. The first request from a browser receives an
-HttpOnly `shibir_owner` cookie; sessions belong to that cookie and nobody else can list, read,
-continue or delete them. The browser must send the cookie: call the API with
-`fetch(url, { credentials: "include" })`. Clearing cookies loses access to earlier chats, and all
+**Accounts and guests.** Full contract: [docs/auth.md](docs/auth.md). Without logging in, a
+browser is a guest: the first request receives an HttpOnly `shibir_owner` cookie, its sessions
+belong to that cookie, and it gets `GUEST_MESSAGE_LIMIT` (5) answers in total. After that `/chat`
+returns 401 with `"code": "guest_limit_reached"` until the user registers or logs in. Guests cannot
+request notes. A logged-in user's sessions follow the account across browsers, and a guest's chats
+move to the account on login. Nobody else can list, read, continue or delete a session. The
+browser must send cookies: call the API with `fetch(url, { credentials: "include" })`. All chat
 sessions are lost when the server restarts. For local development over plain `http://`, set
-`COOKIE_SECURE=false`, or the browser drops the cookie.
+`COOKIE_SECURE=false`, or the browser drops the cookies. Create the first admin with
+`uv run python -m scripts.create_user --email you@example.com --role admin` (the app creates its
+account tables on startup).
 
 ### `POST /chat`
 
@@ -310,7 +320,7 @@ rebuilds it, checks `/health` and rolls back to the previous commit if the check
 setup: [docs/auto-deploy.md](docs/auto-deploy.md). For scaling beyond one instance, see
 [docs/deployment.md](docs/deployment.md).
 
-**The app must never be exposed directly.** It has no authentication, so `docker-compose.yml`
+**The app must never be exposed directly.** It relies on the proxy for TLS, so `docker-compose.yml`
 publishes it on `127.0.0.1:9200` only, and a TLS reverse proxy is the single public entry point
 (`https://askshibir-back.potropollob.com`, front-end origin `https://shibirgpt.potropollob.com`).
 Ready-made configs, with HTTP→HTTPS redirect, SSE-safe proxying for `/chat/stream`, a 64 KB body
