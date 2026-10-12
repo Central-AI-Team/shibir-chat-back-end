@@ -9,9 +9,19 @@ contain "test" (CI's is shibir_test), or the test is skipped: locally
 DATABASE_URL is the real corpus, and loader tests write to pages/articles.
 """
 
+
 from __future__ import annotations
 
 import os
+
+# Tests must not depend on a developer's local .env. Environment variables
+# beat .env in pydantic-settings, and this must run before app.main is imported
+# because CORSMiddleware reads the list once, at import time.
+os.environ["CORS_ALLOW_ORIGINS"] = (
+    '["http://localhost:5173","http://127.0.0.1:5173","https://shibirgpt.potropollob.com"]'
+)
+
+
 from functools import lru_cache
 
 import pytest
