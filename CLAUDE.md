@@ -35,6 +35,9 @@ app/
                           sanctioned way to call an LLM (§5).
     tracing.py            Opt-in Langfuse tracing (§10).
   api/
+    deps.py               get_owner (anonymous `shibir_owner` cookie -> sha256 owner hash),
+                          apply_owner_cookie (for routes that return their own Response),
+                          check_origin (CSRF), trace_ids (what Langfuse may see).
     router.py             HTTP routes (§7). Thin: validates input, dispatches to services,
                           maps upstream failures to 503 / SSE `error`.
   services/
@@ -54,9 +57,11 @@ app/
                           names (no LLM call).
     roleplay_service.py   handle_roleplay(message, session) -> str. Persona extraction on the
                           first turn (task "persona"), then multi-turn chat. No retrieval (§8).
-    session_store.py      In-process dict of sessions (mode, persona, history capped at
-                          MAX_HISTORY = 20). Backs session continuity and /conversations.
-                          Single worker only.
+    session_store.py      In-process dict of sessions (owner hash, mode, persona, history
+                          capped at MAX_HISTORY = 20) under an RLock. Only
+                          create_session(owner) creates; every lookup takes the owner and
+                          returns None for unknown OR not-owned. Per-owner / global caps
+                          evict least-recently-updated. Single worker only.
   rag/
     chunker.py            normalize(text): NFC + whitespace cleanup; apply at ingest AND
                           query time. chunk_text(text): paragraph → danda (।) → period →
@@ -331,9 +336,24 @@ called from `/chat`.
 {"message": "question in Bengali script, Banglish or English", "session_id": null, "user_id": null}
 ```
 
-`session_id` is optional; the response returns the id to reuse on the next turn. `user_id` is
-optional and only groups Langfuse traces; no request logic reads it. Unknown fields are ignored.
+`session_id` is optional; the response returns the id to reuse on the next turn. If it is
+malformed (anything but 43 URL-safe characters, e.g. a uuid4 from before this format), unknown
+(e.g. lost in a restart: the store is in-memory) or belongs to another owner, `/chat` and
+`/chat/stream` silently start a **new** session under a fresh server-issued id and return that,
+so the front-end must always use the returned `session_id`. All these cases look identical, and
+no session is ever created from a client-chosen id. `user_id` is accepted but ignored
+(spoofable); Langfuse gets `owner_hash[:12]` and a hash of the session id instead. Unknown fields are ignored.
 An empty message returns 400.
+
+**Session ownership (no accounts).** `app/api/deps.get_owner` issues an HttpOnly, SameSite=Lax,
+Secure (`COOKIE_SECURE`) `shibir_owner` cookie and the store keeps only its SHA-256. All routes
+see only the caller's sessions; `/conversations/{id}` 404s identically for malformed, unknown and
+not-owned ids. POST/DELETE with an `Origin` outside `CORS_ALLOW_ORIGINS` get 403, unless it is the
+API's own origin (same-origin, e.g. `/docs`); CORS uses `allow_credentials=True`, so `*` origins
+are rejected at startup. **Trap:** a route that returns
+its own `Response` (`/chat/stream`, `/chat` with `stream: true`, the 204 DELETE) drops cookies set
+on the injected response, so it calls `apply_owner_cookie()`. Do not move this into
+`BaseHTTPMiddleware`; it can break tracing's ContextVars on the streaming path.
 
 **`POST /chat` response**
 
@@ -533,6 +553,8 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 | `DATABASE_URL` | `postgresql+psycopg2://…` | SQLAlchemy DSN, **not** usable with `psql`. Use `app.db.session.SessionLocal` for one-off queries. |
 | `CORS_ALLOW_ORIGINS` | local Vite (`:5173`) + `https://shibirgpt.potropollob.com` | JSON list. An explicit allow-list, not `*`. |
 | `ENABLE_DOCS` | `false` | Serves `/docs`, `/redoc`, `/openapi.json` when true. Local development only. |
+| `COOKIE_SECURE` | `true` | Secure flag on the `shibir_owner` cookie. `false` only for plain-http local dev. |
+| `MAX_SESSIONS_PER_OWNER` / `MAX_SESSIONS_TOTAL` | `50` / `10000` | Session caps; past them the least-recently-updated session is evicted. No TTL yet. |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Read by uvicorn, not `Settings`. Compose sets it to the pinned network gateway `172.28.0.1`: the host proxy reaches the container from there. |
 | `HOST` / `PORT` | `0.0.0.0` / `9200` | Not read by `run.sh` or the Dockerfile, which hard-code them (§14). |
 
@@ -629,8 +651,10 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 - **Hard-coded host and port:** `run.sh` and the Dockerfile start uvicorn on `0.0.0.0:9200`
   regardless of `HOST`/`PORT`.
 - **Single-worker sessions:** `session_store.py` is an in-process dict (§7).
-- **No API authentication or Python-level rate limiting** (the app is published on `127.0.0.1:9200` only, behind the proxy in `deploy/`, which rate-limits `/chat`), and `/conversations` exposes every session in the
-  process to any caller. See [SECURITY.md](SECURITY.md).
+- **No accounts and no Python-level rate limiting or session TTL** (the app is published on
+  `127.0.0.1:9200` only, behind the proxy in `deploy/`, which rate-limits `/chat`). Sessions are
+  isolated per anonymous owner cookie only; clearing cookies loses access, and a client that keeps
+  discarding its cookie can fill the global cap. See [SECURITY.md](SECURITY.md).
 - **Vector store:** still local Chroma. A move to pgvector or Qdrant is planned for a corpus of
   several million chunks, but not started.
 - **No lint/format tooling:** the dev dependency group contains only `pytest`.

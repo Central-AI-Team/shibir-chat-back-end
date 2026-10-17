@@ -43,7 +43,7 @@ def _completion(content: str) -> MagicMock:
     return response
 
 
-def test_chat_note_intent_routes_to_note_generation():
+def test_chat_note_intent_routes_to_note_generation(logged_in_user):
     note_result = {
         "book": "Test Book",
         "chapters": [
@@ -188,3 +188,42 @@ def test_chat_gpu_service_failure_returns_503():
 
     assert response.status_code == 503
     assert response.json()["detail"] == _LLM_UNAVAILABLE_DETAIL
+
+
+def test_chat_message_over_max_message_chars_returns_413():
+    from app.core.config import settings
+
+    with patch("app.api.router.classify_intent") as mock_classify:
+        response = client.post("/chat", json={"message": "ক" * (settings.max_message_chars + 1)})
+
+    assert response.status_code == 413
+    assert str(settings.max_message_chars) in response.json()["detail"]
+    mock_classify.assert_not_called()
+
+
+def test_chat_message_exactly_at_max_message_chars_works():
+    from app.core.config import settings
+
+    with (
+        patch("app.api.router.classify_intent", return_value="QA"),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CITATIONS),
+        patch("app.services.qa_service.generate_answer", return_value="উত্তর।"),
+    ):
+        response = client.post("/chat", json={"message": "ক" * settings.max_message_chars})
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "qa"
+
+
+def test_chat_note_over_max_note_chars_returns_413(logged_in_user):
+    from app.core.config import settings
+
+    with (
+        patch("app.api.router.classify_intent", return_value="NOTE"),
+        patch("app.api.router.generate_book_notes_from_text") as mock_note,
+    ):
+        response = client.post("/chat", json={"message": "ক" * (settings.max_note_chars + 1)})
+
+    assert response.status_code == 413
+    assert str(settings.max_note_chars) in response.json()["detail"]
+    mock_note.assert_not_called()

@@ -2,6 +2,7 @@ import enum
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -162,3 +163,63 @@ class Shaheed(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     embedded_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Accounts (app/auth/). Portable types only: the auth tests run on SQLite.
+# Created at startup by app.main.create_auth_tables() (create_all, checkfirst),
+# or manually with docs/sql/auth_tables.sql; keep the two in sync --
+# tests/test_auth_schema.py compares them.
+# ---------------------------------------------------------------------------
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True)  # uuid4 string
+    email = Column(String(254), nullable=False, unique=True)  # stripped + lowercased
+    password_hash = Column(String(255), nullable=False)  # argon2id, never logged
+    role = Column(String(10), nullable=False, default="user", server_default="user")  # user | admin
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    failed_login_count = Column(Integer, nullable=False, default=0, server_default="0")
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    password_changed_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (CheckConstraint("role IN ('user', 'admin')", name="ck_users_role"),)
+
+
+class AuthSession(Base):
+    """One login. Only sha256(token) is stored; the token lives in the cookie."""
+
+    __tablename__ = "auth_sessions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False)
+    idle_expires_at = Column(DateTime(timezone=True), nullable=False)
+    absolute_expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    user_agent = Column(String(200), nullable=True)
+    ip_prefix = Column(String(64), nullable=True)  # IPv4 /24 or IPv6 /48, never the full IP
+
+    __table_args__ = (Index("ix_auth_sessions_user_id", "user_id"),)
+
+
+class GuestUsage(Base):
+    """Guest response counters (app/auth/guest_quota.py). `key` is
+    "owner:<owner hash>" (lifetime) or "ip:<IPv4 address | IPv6 /64>" (24 h
+    window from window_start). Holds an IP address: rows idle 30 days are purged."""
+
+    __tablename__ = "guest_usage"
+
+    key = Column(String(255), primary_key=True)
+    count = Column(Integer, nullable=False, default=0, server_default="0")
+    first_seen = Column(DateTime(timezone=True), nullable=False)
+    last_seen = Column(DateTime(timezone=True), nullable=False)
+    window_start = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_guest_usage_last_seen", "last_seen"),)

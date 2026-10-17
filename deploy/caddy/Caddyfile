@@ -18,7 +18,9 @@ askshibir-back.potropollob.com {
 	# Rate limit (~30 requests/minute per IP on /chat and /chat/stream).
 	# Not built into Caddy: needs a build with github.com/mholt/caddy-ratelimit
 	# (`xcaddy build --with github.com/mholt/caddy-ratelimit`). Uncomment after.
-	# Without the plugin, keep rate limiting in nginx or leave it off.
+	# Optional: without the plugin you are still protected, because the app
+	# enforces its own limits (per IP, per owner cookie, notes per hour, a
+	# daily budget; see SECURITY.md). The plugin only rejects floods earlier.
 	#
 	# order rate_limit before reverse_proxy   <- goes in the global options block
 	# @chat path /chat /chat/stream
@@ -26,6 +28,20 @@ askshibir-back.potropollob.com {
 	# 	zone chat {
 	# 		key    {remote_host}
 	# 		events 30
+	# 		window 1m
+	# 	}
+	# }
+	#
+	# Login and registration (~10 requests/minute per IP). The app throttles
+	# these too, but every attempt that reaches Python costs one argon2id hash
+	# at ~64 MiB, so this is the one place a limit BEFORE the app matters: a
+	# flood of logins must be rejected here, not after it has filled the
+	# container's RAM. Same plugin, same caveat as above.
+	# @auth path /auth/login /auth/register
+	# rate_limit @auth {
+	# 	zone auth {
+	# 		key    {remote_host}
+	# 		events 10
 	# 		window 1m
 	# 	}
 	# }
