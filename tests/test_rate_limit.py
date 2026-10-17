@@ -253,3 +253,17 @@ def test_expired_keys_are_pruned(clock):
     clock["mono"] += 61
     limiter.hit("fresh", 5)
     assert list(limiter._hits) == ["fresh"]
+
+
+def test_sliding_window_blocked_checks_without_recording(clock):
+    limiter = rate_limiter.SlidingWindowLimiter(60)
+    for _ in range(10):  # never counts
+        assert limiter.blocked("k", 2) is None
+    assert limiter.hit("k", 2) is None
+    assert limiter.blocked("k", 2) is None
+    assert limiter.hit("k", 2) is None
+    assert limiter.blocked("k", 2) == 60
+    assert limiter.hit("k", 2) == 60
+    clock["mono"] += 61
+    assert limiter.blocked("k", 2) is None
+    assert limiter.hit("k", 2) is None

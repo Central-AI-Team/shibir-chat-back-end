@@ -49,6 +49,15 @@ class SlidingWindowLimiter:
     def hit(self, key: str, limit: int) -> int | None:
         """Record a hit and return None, or return the seconds until one is
         allowed again (Retry-After) without recording anything."""
+        return self._check(key, limit, record=True)
+
+    def blocked(self, key: str, limit: int) -> int | None:
+        """Like hit() but never records: the Retry-After seconds if `key` is
+        over the limit, else None. For limiters that count only failures
+        (login per email): check with blocked() first, hit() on failure."""
+        return self._check(key, limit, record=False)
+
+    def _check(self, key: str, limit: int, record: bool) -> int | None:
         now = _monotonic()
         with self._lock:
             if now - self._last_sweep >= self.window:
@@ -63,7 +72,9 @@ class SlidingWindowLimiter:
                 self._hits.move_to_end(key)
                 if len(hits) >= limit:
                     return max(1, math.ceil(hits[0] + self.window - now))
-            else:
+            if not record:
+                return None
+            if hits is None:
                 if len(self._hits) >= self.max_keys:
                     self._sweep(now)
                     while len(self._hits) >= self.max_keys:

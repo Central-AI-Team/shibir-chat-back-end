@@ -142,10 +142,24 @@ def test_login_requires_json_and_rejects_extra_fields(make_user):
     r = client.post("/auth/login", json={"email": "alice@example.com", "password": PASSWORD, "role": "admin"})
     assert r.status_code == 422
     assert r.headers["cache-control"] == "no-store"
+    r = client.post("/auth/login", json={"email": "alice@example.com"})
+    assert r.status_code == 422
+
+
+def test_over_long_login_values_are_a_plain_401_without_a_hash(make_user, monkeypatch):
+    """Length caps are policy, not schema (docs/auth.md): the same 401 as any
+    other failure, and a 129+ character password is refused before argon2."""
+    make_user()
+    client = _client()
+    monkeypatch.setattr(passwords, "verify_password", lambda h, p: pytest.fail("verify called"))
+    monkeypatch.setattr(passwords, "dummy_verify", lambda p: pytest.fail("dummy verify called"))
     r = client.post("/auth/login", json={"email": "alice@example.com", "password": "x" * 129})
-    assert r.status_code == 422
+    assert r.status_code == 401
+    assert r.json() == {"detail": "invalid credentials"}
+    monkeypatch.undo()
     r = client.post("/auth/login", json={"email": "a" * 250 + "@x.io", "password": PASSWORD})
-    assert r.status_code == 422
+    assert r.status_code == 401
+    assert r.json() == {"detail": "invalid credentials"}
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +296,28 @@ def test_change_password_checks_current_and_policy(make_user):
     assert r.status_code == 400
     r = client.post("/auth/change-password", json={"current_password": PASSWORD, "new_password": "short"})
     assert r.status_code == 400
+    r = client.post("/auth/change-password", json={"current_password": PASSWORD, "new_password": "x" * 129})
+    assert r.status_code == 400
+    assert r.json()["detail"] == "password must be at most 128 characters"
     assert _me(client)["authenticated"] is True
+
+
+def test_change_password_throttle_counts_wrong_current_passwords_only(make_user, mono):
+    make_user()
+    client = _client()
+    _login(client)
+    password = PASSWORD
+    for i in range(5):  # successful changes are not attempts
+        new = f"a brand new secret {i}"
+        r = client.post("/auth/change-password", json={"current_password": password, "new_password": new})
+        assert r.status_code == 200
+        password = new
+    for _ in range(5):
+        r = client.post("/auth/change-password", json={"current_password": "wrong one!!", "new_password": "whatever it is"})
+        assert r.status_code == 400
+    r = client.post("/auth/change-password", json={"current_password": password, "new_password": "whatever it is"})
+    assert r.status_code == 429
+    assert r.headers["Retry-After"] == "900"
 
 
 def test_user_routes_need_a_login():
@@ -333,6 +368,18 @@ def test_per_email_login_throttle(make_user, mono):
     assert _login(_client(ip="10.0.2.98"), email=" ALICE@example.com").status_code == 429
     mono["t"] += 901
     assert _login(_client(ip="10.0.2.97")).status_code == 200
+
+
+def test_successful_logins_do_not_count_against_the_per_email_throttle(make_user, mono):
+    make_user()
+    for i in range(8):  # more than the 5-per-15-min limit, every one from a new IP
+        assert _login(_client(ip=f"10.0.4.{i}")).status_code == 200
+    # failures still count, and a throttled login with the right password is 429
+    for i in range(5):
+        assert _login(_client(ip=f"10.0.5.{i}"), password="wrong password!!").status_code == 401
+    r = _login(_client(ip="10.0.5.99"))
+    assert r.status_code == 429
+    assert r.headers["Retry-After"] == "900"
 
 
 def test_per_ip_login_throttle(make_user, mono):
@@ -417,10 +464,14 @@ def test_register_duplicate_is_409(make_user):
         ("alice.smith@example.com", "alice.smith"),
         ("bob@example.com", "short"),
         ("bob@example.com", " " * 12),
+        ("bob@example.com", "x" * 129),  # length caps are 400 like every other policy error
+        ("a" * 250 + "@x.io", "a long enough secret"),
     ],
 )
 def test_register_validates(email, password):
-    assert _client().post("/auth/register", json={"email": email, "password": password}).status_code == 400
+    r = _client().post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 400
+    assert isinstance(r.json()["detail"], str)
 
 
 def test_register_disabled_is_404(monkeypatch):
@@ -436,6 +487,21 @@ def test_register_per_ip_limit(mono):
     r = _client().post("/auth/register", json={"email": "u9@example.com", "password": "a long enough secret"})
     assert r.status_code == 429
     assert r.headers["Retry-After"] == "3600"
+    # The browser front-end can read Retry-After cross-origin (expose_headers).
+    assert r.headers["access-control-expose-headers"] == "Retry-After"
+
+
+def test_register_policy_errors_do_not_count_against_the_per_ip_limit(mono):
+    client = _client()
+    for email, password in [
+        ("not-an-email", "a long enough secret"),
+        ("u@example.com", "short"),
+        ("u@example.com", " " * 12),
+    ]:
+        assert client.post("/auth/register", json={"email": email, "password": password}).status_code == 400
+    for i in range(3):  # the full allowance is still there
+        assert client.post("/auth/register", json={"email": f"u{i}@example.com", "password": "a long enough secret"}).status_code == 201
+    assert client.post("/auth/register", json={"email": "u9@example.com", "password": "a long enough secret"}).status_code == 429
 
 
 def test_register_global_daily_cap(monkeypatch):

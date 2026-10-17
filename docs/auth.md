@@ -45,15 +45,33 @@ with 503 instead of skipping the limit (fail closed).
 | `__Host-shibir_session` (`shibir_session` when `COOKIE_SECURE=false`) | login, register, change-password | Login session. HttpOnly, Secure, SameSite=Lax, Path=/, no Domain, Max-Age = `AUTH_SESSION_ABSOLUTE_DAYS`. |
 | `shibir_owner` | any guest request to `/chat`, `/chat/stream`, `/conversations*` | Anonymous guest identity (unchanged). |
 
-- Call the API with `fetch(url, { credentials: "include" })` on **every** request, or the browser
-  does not send or store the cookies. CORS allows credentials only for the origins in
-  `CORS_ALLOW_ORIGINS`.
+- Call the API with `fetch(url, { credentials: "include" })` on **every** request (including
+  `GET /auth/me` and the chat routes), or the browser does not send or store the cookies. CORS
+  allows credentials only for the origins in `CORS_ALLOW_ORIGINS`.
+- **Send no custom request headers.** CORS allows only `Content-Type` (`allow_headers`), so an
+  `Authorization`, `X-Requested-With` or `X-Session-Id` header fails the preflight and the request
+  never reaches the API. There is no token to send anyway: the cookie is the login state.
+- The only non-standard response header is `Retry-After` on a `429`; it is exposed to cross-origin
+  JavaScript (`expose_headers`), so `response.headers.get("Retry-After")` works.
 - Every `POST`/`DELETE` must come from an allowed `Origin` (browsers add it automatically). On
   `/auth/*`, a `POST` that carries the session cookie but **no** `Origin` header is rejected with
   403.
 - Auth request bodies must be JSON (`Content-Type: application/json`, otherwise 415), with exactly
-  the documented fields (unknown fields are 422). Email at most 254 characters, passwords at most 128.
+  the documented fields (unknown fields, or a missing one, are 422). An email longer than 254
+  characters or a password longer than 128 is a policy error, not a 422: `400` on register and
+  change-password, and on login the usual `401`.
 - Every `/auth/*` response has `Cache-Control: no-store`.
+- **There is no `session` SSE event** and no auth event on `/chat/stream`. The login state only
+  changes through the `/auth/*` responses; call `GET /auth/me` after a login, register or logout to
+  refresh the UI, or just use the body those endpoints return.
+- **Local development: same host name or same origin.** Both cookies are `SameSite=Lax`, so the
+  browser does not send them on a cross-site request, and a different host name is a different
+  site: a front end on `http://localhost:5173` calling `http://127.0.0.1:9200` logs in and then
+  looks logged out, because the cookie never comes back. Either proxy the API through the dev server
+  (a Vite `server.proxy` entry for `/chat`, `/conversations`, `/auth` and `/health`, so the front
+  end calls its own origin), or make sure both use the **same host name** (`localhost` on both
+  sides; the port may differ). In production the API and the front end are on different
+  subdomains of the same site, which Lax allows.
 - Over plain `http://` (local development) set `COOKIE_SECURE=false`, or the browser drops the
   cookies; the session cookie is then called `shibir_session`.
 
@@ -71,10 +89,10 @@ Errors use the FastAPI shape `{"detail": "..."}` unless stated otherwise. A `429
 | Status | Meaning |
 |---|---|
 | `201` | `{"id": "<uuid>", "email": "reader@example.com", "role": "user"}`. The user is logged in (session cookie set). |
-| `400` | Invalid email, or the password breaks the policy (`detail` says which rule). |
+| `400` | Invalid email (shape, or longer than 254 characters), or the password breaks the policy (`detail` says which rule). |
 | `404` | Registration is disabled (`AUTH_REGISTRATION_ENABLED=false`). |
 | `409` | That email is already registered. |
-| `429` | 3 registrations per IP per hour, or the global `AUTH_REGISTRATIONS_PER_DAY` is used up. |
+| `429` | 3 registrations per IP per hour, or the global `AUTH_REGISTRATIONS_PER_DAY` is used up. Only well-formed attempts (past the 400 checks) count. |
 
 Password policy: 10–128 characters, not only whitespace, not the same as the part of the email
 before `@`. No composition rules (no "one digit, one symbol").
@@ -88,8 +106,8 @@ before `@`. No composition rules (no "one digit, one symbol").
 | Status | Meaning |
 |---|---|
 | `200` | `{"id": "...", "email": "...", "role": "user" \| "admin"}`, and a fresh session cookie. |
-| `401` | `{"detail": "invalid credentials"}`, identical for unknown email, wrong password, disabled account and locked account. |
-| `429` | 5 attempts per email per 15 minutes, or 20 per IP per hour. |
+| `401` | `{"detail": "invalid credentials"}`, identical for unknown email, wrong password (including one longer than 128 characters), disabled account and locked account. |
+| `429` | 5 **failed** attempts per email per 15 minutes (successful logins do not count), or 20 attempts of any outcome per IP per hour. |
 
 After 10 consecutive wrong passwords, the account is locked for 30 seconds, doubling with every
 further failure up to 15 minutes. It is never locked permanently, and a successful login resets
@@ -125,7 +143,7 @@ every session of the account (all devices). `401` if not logged in.
 | `200` | `{"id", "email", "role"}`. Every session of the account is ended, and this browser gets a new session cookie. |
 | `400` | Wrong current password (`"invalid credentials"`) or a policy violation. |
 | `401` | Not logged in. |
-| `429` | Too many attempts (shares the login limits). |
+| `429` | Too many attempts (shares the login limits: wrong current passwords count against the per-account limit, every call against the per-IP one). |
 
 ## Chat for guests
 
@@ -195,9 +213,11 @@ A new endpoint must be added to the map with a level and the matching dependency
 | `USER_DAILY_MESSAGE_LIMIT` | `100` | Chat requests per user per UTC day (in-process). `0` = unlimited. |
 | `COOKIE_SECURE` | `true` | Existing setting; also decides the session cookie name and Secure flag. |
 
-Fixed in code (`app/api/auth_routes.py`, `app/auth/sessions.py`): login 5 per email per 15 min
-and 20 per IP per hour, registration 3 per IP per hour, lockout after 10 failures (30 s doubling
-to 15 min), at most 10 sessions per user.
+Fixed in code (`app/api/auth_routes.py`, `app/auth/sessions.py`): login 5 failures per email per
+15 min and 20 attempts per IP per hour, registration 3 well-formed attempts per IP per hour, lockout
+after 10 failures (30 s doubling to 15 min), at most 10 sessions per user. The reverse proxy adds
+10 requests per minute per IP on `/auth/login` and `/auth/register` in front of all of these
+(`deploy/nginx/shibirgpt-api.conf`; a commented-out equivalent in `deploy/caddy/Caddyfile`).
 
 ## Audit log
 
@@ -223,8 +243,13 @@ are never logged, and none of this goes to Langfuse. There is no request id yet.
   and logging out does not delete them (they come back on the next login, until a restart).
 - A guest's chats are moved only from the browser that logs in, and only once; guest chats are
   never merged from other browsers.
+- **`409` on register reveals whether an email is registered.** Anyone can check an address
+  by trying to sign up with it. Login does not leak this (every failure is the same 401), but
+  with open registration there is no way to hide it short of email verification ("we sent you
+  a link" for new and existing addresses alike), which does not exist yet (point 1 below).
 - Argon2id with library defaults uses about 64 MiB per hash. Many concurrent logins or sign-ups
-  can use a lot of memory; the per-IP limits are the only guard.
+  can use a lot of memory; the per-IP limits in the app and the proxy's 10 requests per minute
+  per IP on the two routes are the only guards.
 
 ## Next steps (recommended)
 

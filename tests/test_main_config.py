@@ -63,3 +63,16 @@ def test_cors_allows_only_content_type_header(make_client):
 
     bad = client.options("/chat", headers={**headers, "Access-Control-Request-Headers": "X-Custom"})
     assert bad.status_code == 400
+
+
+def test_cors_exposes_retry_after(make_client):
+    """Retry-After is not CORS-safelisted: without expose_headers a browser
+    front-end cannot read it from a 429."""
+    client = make_client(False)
+    r = client.get("/health", headers={"Origin": settings.cors_allow_origins[0]})
+    assert r.status_code == 200
+    assert r.headers["access-control-expose-headers"] == "Retry-After"
+    # Starlette sends the simple headers to every origin; what keeps a browser
+    # on a disallowed origin from reading anything is the missing allow-origin.
+    r = client.get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in r.headers

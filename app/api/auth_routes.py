@@ -23,7 +23,7 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -88,14 +88,19 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# No Field(max_length=...) here: lengths are checked in the routes
+# (email_shape_ok, passwords.policy_error) so that an over-long email or
+# password is a 400 with a readable detail, like every other policy error,
+# instead of a 422 that only the length violations would produce. The proxy's
+# body cap (64 KB) bounds what can arrive at all.
 class Credentials(_Strict):
-    email: str = Field(max_length=254)
-    password: str = Field(max_length=passwords.MAX_LENGTH)
+    email: str
+    password: str
 
 
 class PasswordChange(_Strict):
-    current_password: str = Field(max_length=passwords.MAX_LENGTH)
-    new_password: str = Field(max_length=passwords.MAX_LENGTH)
+    current_password: str
+    new_password: str
 
 
 def normalise_email(email: str) -> str:
@@ -148,16 +153,17 @@ def register(body: Credentials, request: Request) -> JSONResponse:
     if not settings.auth_registration_enabled:
         raise HTTPException(status_code=404, detail="Not Found")
     ip = _client_ip(request)
-    retry = rate_limiter.register_per_ip.hit(ip, REGISTER_PER_IP_PER_HOUR)
-    if retry is not None:
-        raise too_many_requests(rate_limiter.AUTH_RATE_LIMIT_DETAIL, retry)
     email = normalise_email(body.email)
     if not email_shape_ok(email):
         raise HTTPException(status_code=400, detail="invalid email address")
     problem = passwords.policy_error(body.password, email)
     if problem is not None:
         raise HTTPException(status_code=400, detail=problem)
-    # Global circuit breaker, counted only for well-formed attempts.
+    # Both limiters count only well-formed attempts: a person who trips the
+    # password policy a few times must not burn the 3-per-hour allowance.
+    retry = rate_limiter.register_per_ip.hit(ip, REGISTER_PER_IP_PER_HOUR)
+    if retry is not None:
+        raise too_many_requests(rate_limiter.AUTH_RATE_LIMIT_DETAIL, retry)
     retry = rate_limiter.registrations_daily.hit(settings.auth_registrations_per_day)
     if retry is not None:
         raise too_many_requests(rate_limiter.AUTH_RATE_LIMIT_DETAIL, retry)
@@ -196,16 +202,26 @@ def register(body: Credentials, request: Request) -> JSONResponse:
 def login(body: Credentials, request: Request) -> JSONResponse:
     ip = _client_ip(request)
     email = normalise_email(body.email)
+    email_key = audit.email_ref(email)
+    # The per-email limiter counts failures only (recorded in fail()), so a
+    # person who logs in from several devices never throttles themself; the
+    # per-IP limiter counts every attempt.
     retry = rate_limiter.login_per_ip.hit(ip, LOGIN_PER_IP_PER_HOUR)
     if retry is None:
-        retry = rate_limiter.login_per_email.hit(audit.email_ref(email), LOGIN_PER_EMAIL_PER_15_MIN)
+        retry = rate_limiter.login_per_email.blocked(email_key, LOGIN_PER_EMAIL_PER_15_MIN)
     if retry is not None:
         audit.event("login_failure", ip=ip, email=email, reason="throttled")
         raise too_many_requests(rate_limiter.AUTH_RATE_LIMIT_DETAIL, retry)
 
     def fail(reason: str, user_id: str | None = None) -> HTTPException:
+        rate_limiter.login_per_email.hit(email_key, LOGIN_PER_EMAIL_PER_15_MIN)
         audit.event("login_failure", ip=ip, email=email, user_id=user_id, reason=reason)
         return HTTPException(status_code=401, detail=INVALID_CREDENTIALS)
+
+    if len(body.password) > passwords.MAX_LENGTH:
+        # No stored password is longer (policy), so this cannot be right; it
+        # is a failure like any other, without spending an argon2 verify.
+        raise fail("password_too_long")
 
     try:
         with open_db() as db:
@@ -296,15 +312,17 @@ def logout_all(request: Request, user: Principal = Depends(require_user)) -> Res
 def change_password(body: PasswordChange, request: Request, user: Principal = Depends(require_user)) -> JSONResponse:
     ip = _client_ip(request)
     # A stolen session must not be able to brute-force the current password.
+    email_key = f"user:{user.user_id}"
     retry = rate_limiter.login_per_ip.hit(ip, LOGIN_PER_IP_PER_HOUR)
     if retry is None:
-        retry = rate_limiter.login_per_email.hit(f"user:{user.user_id}", LOGIN_PER_EMAIL_PER_15_MIN)
+        retry = rate_limiter.login_per_email.blocked(email_key, LOGIN_PER_EMAIL_PER_15_MIN)
     if retry is not None:
         raise too_many_requests(rate_limiter.AUTH_RATE_LIMIT_DETAIL, retry)
     try:
         with open_db() as db:
             row = db.get(User, user.user_id)
             if not passwords.verify_password(row.password_hash, body.current_password):
+                rate_limiter.login_per_email.hit(email_key, LOGIN_PER_EMAIL_PER_15_MIN)
                 audit.event("login_failure", ip=ip, user_id=row.id, reason="change_password_wrong_current")
                 raise HTTPException(status_code=400, detail=INVALID_CREDENTIALS)
             problem = passwords.policy_error(body.new_password, row.email)

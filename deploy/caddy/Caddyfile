@@ -31,6 +31,20 @@ askshibir-back.potropollob.com {
 	# 		window 1m
 	# 	}
 	# }
+	#
+	# Login and registration (~10 requests/minute per IP). The app throttles
+	# these too, but every attempt that reaches Python costs one argon2id hash
+	# at ~64 MiB, so this is the one place a limit BEFORE the app matters: a
+	# flood of logins must be rejected here, not after it has filled the
+	# container's RAM. Same plugin, same caveat as above.
+	# @auth path /auth/login /auth/register
+	# rate_limit @auth {
+	# 	zone auth {
+	# 		key    {remote_host}
+	# 		events 10
+	# 		window 1m
+	# 	}
+	# }
 
 	reverse_proxy 127.0.0.1:9200 {
 		# Caddy already sets Host, X-Forwarded-For/-Proto/-Host; X-Real-IP is added.
