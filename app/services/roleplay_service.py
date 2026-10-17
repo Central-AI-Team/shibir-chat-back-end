@@ -45,8 +45,9 @@ def handle_roleplay(message: str, session: dict) -> str:
     # most providers reject outright.
     reply = response.choices[0].message.content or ""
 
-    # `session` is the same dict object held in session_store's module-level
-    # store (get_or_create_session doesn't copy), so mutating it in place
+    # `session` is the caller's own session dict from session_store's
+    # module-level store (get_owned_session / create_session don't copy), so
+    # mutating it in place
     # here is equivalent to routing through append_history -- it's just done
     # as one capped update instead of two separate calls.
     session["history"].append({"role": "user", "content": message})

@@ -11,7 +11,7 @@ from __future__ import annotations
 from app.core import timing, tracing
 from app.core.config import settings
 from app.core.llm import complete
-from app.rag.generator import ANSWER_LANGUAGE_RULE, format_context
+from app.rag.generator import ANSWER_LANGUAGE_RULE, format_context, with_script_check
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import Citation
 
@@ -73,13 +73,16 @@ def give_suggestion(query: str) -> tuple[str, list[Citation]]:
         else:
             system, user = _SYSTEM_UNGROUNDED, _USER_UNGROUNDED.format(query=query)
 
-    response = complete("suggest", [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ])
-    # content is None on a safety-filtered/empty completion -- ChatResponse.answer
-    # is typed `str`, so a bare None here would fail Pydantic validation with an
-    # unhandled 500 instead of degrading gracefully.
-    answer = response.choices[0].message.content or ""
+    def produce() -> str:
+        response = complete("suggest", [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ])
+        # content is None on a safety-filtered/empty completion -- ChatResponse.answer
+        # is typed `str`, so a bare None here would fail Pydantic validation with an
+        # unhandled 500 instead of degrading gracefully.
+        return response.choices[0].message.content or ""
+
+    answer = with_script_check(produce)
 
     return answer, grounding

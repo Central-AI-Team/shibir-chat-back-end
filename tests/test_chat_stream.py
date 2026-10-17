@@ -77,7 +77,7 @@ def test_stream_qa_emits_sources_then_tokens_then_done():
     assert "".join(json.loads(d)["text"] for e, d in evs if e == "token") == "উত্তর।"
 
 
-def test_stream_note_emits_single_token_and_done():
+def test_stream_note_emits_single_token_and_done(logged_in_user):
     note_result = {
         "book": "Test Book",
         "chapters": [{"chapter": "Chapter 1", "pages_used": 3, "note": "নোট।"}],
@@ -233,3 +233,45 @@ def test_stream_gpu_service_failure_emits_error_event():
     events = _events(response.text)
     assert [e for e, _ in events] == ["error"]
     assert json.loads(events[0][1])["detail"] == _LLM_UNAVAILABLE_DETAIL
+
+
+def test_stream_message_over_max_message_chars_returns_413():
+    from app.core.config import settings
+
+    with patch("app.api.router.classify_intent") as mock_classify:
+        r = client.post("/chat/stream", json={"message": "ক" * (settings.max_message_chars + 1)})
+
+    # A normal HTTP error before the stream starts, not an SSE event.
+    assert r.status_code == 413
+    assert r.headers["content-type"].startswith("application/json")
+    assert str(settings.max_message_chars) in r.json()["detail"]
+    mock_classify.assert_not_called()
+
+
+def test_stream_message_exactly_at_max_message_chars_works():
+    from app.core.config import settings
+
+    with (
+        patch("app.api.router.classify_intent", return_value="QA"),
+        patch("app.api.router.retrieve_relevant_docs", return_value=_CITATIONS),
+        patch("app.api.router.stream_answer", return_value=iter(["উত্তর।"])),
+    ):
+        r = client.post("/chat/stream", json={"message": "ক" * settings.max_message_chars})
+
+    assert r.status_code == 200
+    assert [e for e, _ in _events(r.text)][-1] == "done"
+
+
+def test_stream_note_over_max_note_chars_emits_error_event(logged_in_user):
+    from app.core.config import settings
+
+    with (
+        patch("app.api.router.classify_intent", return_value="NOTE"),
+        patch("app.api.router.generate_book_notes_from_text") as mock_note,
+    ):
+        r = client.post("/chat/stream", json={"message": "ক" * (settings.max_note_chars + 1)})
+
+    events = _events(r.text)
+    assert [e for e, _ in events] == ["error"]
+    assert str(settings.max_note_chars) in json.loads(events[0][1])["detail"]
+    mock_note.assert_not_called()

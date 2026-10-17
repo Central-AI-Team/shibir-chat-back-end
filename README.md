@@ -94,7 +94,7 @@ HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
 
 # 5. Run the server on :9200
 ./run.sh
-# or: HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
+# or: HF_HUB_OFFLINE=1 uv run uvicorn app.main:app --host 127.0.0.1 --port 9200
 ```
 
 Check it:
@@ -105,7 +105,8 @@ curl -s http://127.0.0.1:9200/chat -H "Content-Type: application/json" \
   -d '{"message": "যাকাতের অর্থ কোন কোন খাতে ব্যয় করা যায়?"}'
 ```
 
-Interactive API docs are served at `http://127.0.0.1:9200/docs`.
+Interactive API docs are off by default; set `ENABLE_DOCS=true` in `.env` to serve them at
+`http://127.0.0.1:9200/docs` (local development only).
 
 ### Windows
 
@@ -113,7 +114,7 @@ Interactive API docs are served at `http://127.0.0.1:9200/docs`.
 
 ```powershell
 $env:HF_HUB_OFFLINE = "1"
-uv run uvicorn app.main:app --host 0.0.0.0 --port 9200
+uv run uvicorn app.main:app --host 127.0.0.1 --port 9200
 ```
 
 `psycopg2-binary` bundles `libpq`, and the CUDA/`uvloop` packages carry platform markers, so
@@ -176,9 +177,26 @@ Leave `GPU_SERVICE_URL` empty to use the local models.
 | `GET` | `/health` | Liveness check. Returns `{"status": "ok"}`. |
 | `POST` | `/chat` | Main entry point. Classifies the message and returns an answer. |
 | `POST` | `/chat/stream` | Same as `/chat`, as Server-Sent Events. |
-| `GET` | `/conversations` | Sessions handled by this process, most recent first. |
-| `GET` | `/conversations/{id}/messages` | Messages in one session (`404` if unknown). |
-| `DELETE` | `/conversations/{id}` | Delete a session (`204`, or `404` if unknown). |
+| `GET` | `/conversations` | The caller's own sessions in this process, most recent first. |
+| `GET` | `/conversations/{id}/messages` | Messages in one of the caller's sessions (`404` if unknown or not theirs). |
+| `DELETE` | `/conversations/{id}` | Delete one of the caller's sessions (`204`, or `404` if unknown or not theirs). |
+| `POST` | `/auth/register` | Create an account and log in (open unless `AUTH_REGISTRATION_ENABLED=false`). |
+| `POST` | `/auth/login` | Log in; sets the session cookie. |
+| `GET` | `/auth/me` | The logged-in user, or a guest's remaining free messages. |
+| `POST` | `/auth/logout`, `/auth/logout-all` | End this session, or every session of the user. |
+| `POST` | `/auth/change-password` | Change the password; ends every other session. |
+
+**Accounts and guests.** Full contract: [docs/auth.md](docs/auth.md). Without logging in, a
+browser is a guest: the first request receives an HttpOnly `shibir_owner` cookie, its sessions
+belong to that cookie, and it gets `GUEST_MESSAGE_LIMIT` (5) answers in total. After that `/chat`
+returns 401 with `"code": "guest_limit_reached"` until the user registers or logs in. Guests cannot
+request notes. A logged-in user's sessions follow the account across browsers, and a guest's chats
+move to the account on login. Nobody else can list, read, continue or delete a session. The
+browser must send cookies: call the API with `fetch(url, { credentials: "include" })`. All chat
+sessions are lost when the server restarts. For local development over plain `http://`, set
+`COOKIE_SECURE=false`, or the browser drops the cookies. Create the first admin with
+`uv run python -m scripts.create_user --email you@example.com --role admin` (the app creates its
+account tables on startup).
 
 ### `POST /chat`
 
@@ -188,8 +206,12 @@ Request:
 { "message": "your question", "session_id": null, "user_id": null }
 ```
 
-- `session_id`: omit to start a new session. Send back the returned value to continue it.
-- `user_id`: optional; used only to group traces in Langfuse.
+- `session_id`: omit to start a new session. Send back the returned value to continue it. It must
+  be an id this server issued to this browser. Any other value (malformed, unknown after a server
+  restart, or someone else's) starts a new session instead, so always use the
+  `session_id` returned by the latest response. The server never creates a session from a
+  client-chosen id.
+- `user_id`: accepted for compatibility but ignored (it is client-supplied and spoofable).
 
 Response:
 
@@ -263,11 +285,33 @@ uv run python -m scripts.load_articles --source cs-posts --publish
 HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
 ```
 
+Other loaders follow the same pattern: `scripts.load_books` (whole-book blobs),
+`scripts.load_shaheed` (martyr list) and `scripts.load_leadership` (the central president /
+secretary-general list from `data/shibir-central-president.csv`, loaded as one article). Each loader
+has default input paths; pass `--sql` / `--db` / `--csv` when your files live elsewhere (for example
+`data/archive-data/`).
+
 Each loader prints what it parsed, skipped (malformed / too short / repetitive / duplicate) and
 wrote, plus sample rows; read it before publishing. Re-running a loader is safe: rows are upserted
 on their source id and only real changes are re-embedded. `--publish` also sets the older import of
 the same source to draft. To write a new loader, follow
 [CLAUDE.md → Adding a data source](CLAUDE.md#adding-a-data-source).
+
+### Moving the corpus to another server
+
+`uv run python -m scripts.export_domains` writes one re-runnable SQL file per domain to
+`data/export/` (`books`, `tafheem`, `articles`, `shaheed`, `leadership`, `syllabus`,
+`site-directory`). Restore them in any order, then ingest:
+
+```bash
+for d in books tafheem articles shaheed leadership syllabus site-directory; do
+  docker compose exec -T db psql -U postgres -d shibir_chat < data/export/$d.sql
+done
+HF_HUB_OFFLINE=1 uv run python -m app.rag.ingest
+```
+
+`data/` is git-ignored: the files hold full book text, so copy them to the server directly.
+Exports set `embedded_at` to `NULL`, so ingest embeds everything it restored.
 
 ### Deployment
 
@@ -275,6 +319,36 @@ Production runs with Docker Compose on a VPS and deploys automatically: every pu
 rebuilds it, checks `/health` and rolls back to the previous commit if the check fails. One-time
 setup: [docs/auto-deploy.md](docs/auto-deploy.md). For scaling beyond one instance, see
 [docs/deployment.md](docs/deployment.md).
+
+**The app must never be exposed directly.** It relies on the proxy for TLS, so `docker-compose.yml`
+publishes it on `127.0.0.1:9200` only, and a TLS reverse proxy is the single public entry point
+(`https://askshibir-back.potropollob.com`, front-end origin `https://shibirgpt.potropollob.com`).
+Ready-made configs, with HTTP→HTTPS redirect, SSE-safe proxying for `/chat/stream`, a 64 KB body
+limit and per-IP rate limiting on `/chat`:
+
+- nginx: [deploy/nginx/shibirgpt-api.conf](deploy/nginx/shibirgpt-api.conf)
+- Caddy: [deploy/caddy/Caddyfile](deploy/caddy/Caddyfile) (rate limiting needs the `caddy-ratelimit` plugin)
+
+`/docs`, `/redoc` and `/openapi.json` are disabled unless `ENABLE_DOCS=true`; leave it unset in
+production. uvicorn trusts `X-Forwarded-*` only from the proxy (`FORWARDED_ALLOW_IPS`, set to the
+pinned Compose network gateway `172.28.0.1` in `docker-compose.yml`), so `request.client.host` is
+the real client IP.
+
+#### Firewall
+
+Allow only SSH, HTTP and HTTPS; port 9200 stays closed (it is also bound to loopback, so this is a
+second layer). Note that Docker-published ports bypass `ufw` rules, which is why the loopback bind
+in `docker-compose.yml` is the primary control.
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+sudo ufw status verbose   # 9200 must not be listed
+```
 
 ### Observability
 
@@ -315,7 +389,7 @@ app/
   loaders/           raw corpus readers and text cleaning for scripts/load_*.py
   db/                SQLAlchemy models and session
   schemas/           Pydantic request/response models
-scripts/             data loaders, migrations, corpus cleanup, evaluation and debugging tools
+scripts/             data loaders, corpus export, migrations, corpus cleanup, evaluation and debugging tools
 tests/               pytest suite
 docs/                auto-deploy, deployment, evaluation and tracing guides
 chroma_db/           generated vector store (not committed)

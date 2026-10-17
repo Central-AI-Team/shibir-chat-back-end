@@ -75,27 +75,26 @@ def test_delete_unknown_session_is_404():
 
 def test_list_sessions_is_safe_under_concurrent_mutation():
     """list_sessions() must not raise "dictionary changed size during
-    iteration" while other threads insert/pop sessions. Reverting the
-    _sessions.copy() snapshot in list_sessions makes this fail intermittently.
+    iteration" while other threads insert/pop sessions. Removing the _lock
+    around its iteration makes this fail intermittently.
     """
     import threading
-    import uuid
 
     from app.services import session_store
 
+    owner = "c" * 64
     stop = threading.Event()
     errors: list[Exception] = []
 
     def churn():
         while not stop.is_set():
-            sid = str(uuid.uuid4())
-            session_store.get_or_create_session(sid)
-            session_store.delete_session(sid)
+            sid, _ = session_store.create_session(owner)
+            session_store.delete_session(sid, owner)
 
     def lister():
         try:
             for _ in range(3000):
-                session_store.list_sessions()
+                session_store.list_sessions(owner)
         except Exception as e:  # noqa: BLE001 -- the point is to catch RuntimeError
             errors.append(e)
         finally:

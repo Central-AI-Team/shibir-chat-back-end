@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
-from app.db.models import Article, Book, ContentStatus, Page
+from app.db.models import Article, Book, ContentStatus, Page, Shaheed
 from app.db.session import SessionLocal
 from app.rag.chroma_client import get_collection
 from app.rag.chunker import build_document, chunk_text
@@ -67,6 +67,32 @@ def _due_articles(session):
     )
 
 
+def _due_shaheed(session):
+    return (
+        session.query(Shaheed)
+        .filter(Shaheed.status == ContentStatus.published)
+        .filter(or_(Shaheed.embedded_at.is_(None), Shaheed.updated_at > Shaheed.embedded_at))
+        .all()
+    )
+
+
+SHAHEED_BOOK = "শহীদ তালিকা"
+_BN_DIGITS = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
+
+
+def render_shaheed(s: Shaheed) -> str:
+    """Labelled fields rather than a sentence: no Bengali case suffixes to get
+    wrong on place names, and each label doubles as a retrieval keyword
+    ("শাহাদাতের স্থান", "সাংগঠনিক মান")."""
+    return (
+        f"নাম: {s.name}\n"
+        f"শাহাদাতের তারিখ: {s.shahadat_date_text}\n"
+        f"শাহাদাতের স্থান: {s.shahadat_place}\n"
+        f"সাংগঠনিক মান: {s.organizational_rank}\n"
+        f"ক্রমিক নং: {str(s.serial_no).translate(_BN_DIGITS)}"
+    )
+
+
 # Rows per Chroma delete in the sweep (one `$in` filter per batch).
 _SWEEP_BATCH = 500
 
@@ -103,13 +129,15 @@ def _sweep(session, collection, model, not_eligible, prefix: str) -> int:
 
 
 def sweep_unpublished(session, collection) -> int:
-    """Remove from Chroma every page/article that is embedded but no longer
-    published (pages: also excluded_from_rag). Returns the number of rows swept."""
+    """Remove from Chroma every page/article/shaheed that is embedded but no
+    longer published (pages: also excluded_from_rag). Returns the rows swept."""
     return _sweep(
         session, collection, Page,
         or_(Page.status != ContentStatus.published, Page.excluded_from_rag.is_(True)),
         "page",
-    ) + _sweep(session, collection, Article, Article.status != ContentStatus.published, "article")
+    ) + _sweep(session, collection, Article, Article.status != ContentStatus.published, "article") + _sweep(
+        session, collection, Shaheed, Shaheed.status != ContentStatus.published, "shaheed"
+    )
 
 
 def _drop_stale(collection, prefix: str, row_id: int) -> None:
@@ -186,7 +214,9 @@ def ingest_all() -> None:
         sweep_unpublished(session, collection)
         pages = _due_pages(session)
         articles = _due_articles(session)
-        print(f"{len(pages)} page(s), {len(articles)} article(s) need embedding.")
+        shaheed = _due_shaheed(session)
+        print(f"{len(pages)} page(s), {len(articles)} article(s), "
+              f"{len(shaheed)} shaheed record(s) need embedding.")
 
         total = _ingest(
             session, collection, pages, "page",
@@ -204,6 +234,10 @@ def ingest_all() -> None:
             # source_type ("cs-post", "pp-article", ...) rather than a flat
             # "articles", so a citation says where the article came from.
             lambda a: (a.title, "প্রবন্ধ", a.content, a.source_type or "articles", None, None),
+        )
+        total += _ingest(
+            session, collection, shaheed, "shaheed",
+            lambda r: (SHAHEED_BOOK, r.name, render_shaheed(r), "shaheed", None, "শহীদ"),
         )
         print(f"All sources ingested. Total chunks: {total}")
     finally:
