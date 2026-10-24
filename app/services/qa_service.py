@@ -129,6 +129,25 @@ def _prepare(message: str, history: list[dict] | None) -> _Prepared:
     return _Prepared(greeting, question, standalone, citations, grounding)
 
 
+def _prompt_kwargs(
+    prep: _Prepared, message: str, history: list[dict] | None, style_rules: str | None
+) -> dict:
+    """history / original_message / style_rules for the generator. Each is
+    passed only when it carries something, so a first turn with no greeting
+    and no condensation calls the generator exactly as before. The generator
+    gets the condensed standalone as the question and the user's actual
+    message (with the small-talk prefix removed) as original_message."""
+    kwargs: dict = {}
+    recent = [t for t in (history or []) if t.get("role") in ("user", "assistant")]
+    if recent:
+        kwargs["history"] = recent[-settings.qa_history_turns:]
+    if prep.standalone != prep.question:
+        kwargs["original_message"] = prep.question
+    if style_rules:
+        kwargs["style_rules"] = style_rules
+    return kwargs
+
+
 def answer_question(
     message: str, history: list[dict] | None = None, *, style_rules: str | None = None
 ) -> QueryResponse:
@@ -145,7 +164,11 @@ def answer_question(
             query=message, answer=prep.greeting or "", sources=[], response_time_ms=response_time_ms
         )
 
-    answer = generate_answer(prep.question, prep.grounding)
+    # The model answers the standalone (condensed) question; the user's own
+    # wording travels as original_message when the two differ.
+    answer = generate_answer(
+        prep.standalone, prep.grounding, **_prompt_kwargs(prep, message, history, style_rules)
+    )
     if prep.greeting:
         answer = f"{prep.greeting}\n\n{answer}"
 
@@ -174,9 +197,10 @@ def qa_stream(
         return QAStream([], iter([prep.greeting or ""]), message)
 
     deltas = stream_answer(
-        prep.question, prep.grounding,
+        prep.standalone, prep.grounding,
         trace_id=trace_id, parent_observation_id=parent_observation_id,
         **({"timing_rec": rec} if rec else {}),
+        **_prompt_kwargs(prep, message, history, style_rules),
     )
     if prep.greeting:
         # Same text as the non-streaming "<greeting>\n\n<answer>".
