@@ -149,6 +149,20 @@ wheels = [
 ]
 
 [[package]]
+name = "alembic"
+version = "1.20.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mako" },
+    { name = "sqlalchemy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/1c/00909e0fbebad2121d916fdcab044cae988146680e9ee4387ba25fef8747/alembic-1.20.1.tar.gz", hash = "sha256:83490def1f723413db5096591f7609ac52544805be93849170088ed04f5a2e0b", size = 2103576, upload-time = "2026-10-22T03:24:35.93Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/3c/8740f5b4e1bd57333e4f84265b9b6363da4f7cf70f5622dd1e2fde7a0bd5/alembic-1.20.1-py3-none-any.whl", hash = "sha256:9970712cfb81ea26c8658d378aaa5b8f6ff9146e5bb111d70497c164016cf598", size = 270355, upload-time = "2026-10-22T03:24:37.667Z" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1600,6 +1614,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b3/0c/ccb04968d47896e9eb7421b6e2e6e8cd510d8fa3e79337092dc734f25543/langfuse-4.15.4.tar.gz", hash = "sha256:b9a36194f4e968206d919313c24ea71c6ea68e21286370b01de752d20b26e7a3", size = 392296, upload-time = "2026-09-16T16:13:05.967Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/97/bd/8e0cadd69d0855646eda8d584ef4f38ca46cf271553af8ba7f93ae607626/langfuse-4.15.4-py3-none-any.whl", hash = "sha256:8e75c70b1522a722a11ab6c7d88e27534a5d0c3844a1a464ac5eb548b014e9c3", size = 706367, upload-time = "2026-09-16T16:13:07.294Z" },
+]
+
+[[package]]
+name = "mako"
+version = "1.4.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/09/e07c4b5579a79f4b16f8d4f29f6c54514ac787c4ad506b8c4f28a0e6b0bf/mako-1.4.3.tar.gz", hash = "sha256:cd6537fe88d5fec315c55c2f8529bc4ce7a9a352ad7db3eeaa6a66e2dd4ec37a", size = 412799, upload-time = "2026-09-22T20:54:31.509Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/a0/053d6af3e8f871e0073b4a36732d9e65be77a72e5434c31b94f6af78a6bb/mako-1.4.3-py3-none-any.whl", hash = "sha256:723296007c870bfd6b3f0c3230dba7198096e5269297ebf5e4eff9e7ffa39d4f", size = 80164, upload-time = "2026-09-22T20:54:33.128Z" },
 ]
 
 [[package]]
@@ -3777,6 +3803,7 @@ name = "shibir-chat-back-end"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "annotated-doc" },
     { name = "annotated-types" },
     { name = "anyio" },
@@ -3899,6 +3926,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = "==1.20.1" },
     { name = "annotated-doc", specifier = "==0.0.5" },
     { name = "annotated-types", specifier = "==0.8.0" },
     { name = "anyio", specifier = "==4.14.2" },

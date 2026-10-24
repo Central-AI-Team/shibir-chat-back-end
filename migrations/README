@@ -1,0 +1,11 @@
+Alembic migrations for the chat-history tables (conversations, messages).
+
+The content tables (categories .. shaheed) and the auth tables (users,
+auth_sessions, guest_usage) predate Alembic and are NOT managed here: the
+content schema was built by the loaders/migration scripts, the auth tables by
+app.main.create_auth_tables(). Autogenerate will still diff them against the
+models; drop any such ops from a new revision before committing it.
+
+    uv run alembic upgrade head          # scripts/deploy.sh runs this on every deploy
+    uv run alembic current
+    uv run alembic revision --autogenerate -m "describe the change"
