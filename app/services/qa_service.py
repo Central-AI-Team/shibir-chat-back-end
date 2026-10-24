@@ -79,6 +79,16 @@ class _Prepared:
         return bool(self.grounding)
 
 
+def previous_row_keys(history: list[dict] | None) -> list[str]:
+    """The pages the previous assistant turn cited (stored sources'
+    row_key), for retriever extra_row_keys. [] when the last turn was not an
+    assistant turn, cited nothing, or predates the row_key field."""
+    if not history or history[-1].get("role") != "assistant":
+        return []
+    keys = [s.get("row_key") for s in history[-1].get("sources") or []]
+    return list(dict.fromkeys(k for k in keys if k))
+
+
 def gate(citations: list[Citation]) -> list[Citation]:
     """The citations that individually clear settings.min_rerank_score, in
     rerank order. Grounded iff non-empty."""
@@ -96,9 +106,14 @@ def _prepare(message: str, history: list[dict] | None) -> _Prepared:
     # The standalone question from the intent call (primed by message), else
     # the question itself; see intent_classifier.condense().
     standalone = condense(message, history, default=question)
+    prev_keys = previous_row_keys(history)
     # The `retrieve-context` trace span (full candidate pool + rerank scores)
     # is emitted inside retrieve_stages(); nothing to record here.
-    citations = retrieve_relevant_docs(standalone)
+    # The keyword is passed only when there is something to carry over, so a
+    # first turn calls the retriever exactly as before.
+    citations = retrieve_relevant_docs(
+        standalone, **({"extra_row_keys": prev_keys} if prev_keys else {})
+    )
     grounding = gate(citations)
     best = max((c.rerank_score or 0.0 for c in citations), default=None)
     tracing.record_gate(
