@@ -175,15 +175,23 @@ def _format_note_result(result: dict) -> str:
     return "\n".join(parts)
 
 
-def _record_turn(session_id: str, intent: str, message: str, answer: str) -> None:
-    """Persist one user+assistant turn to the session history.
+def _record_turn(
+    session_id: str,
+    intent: str,
+    message: str,
+    answer: str,
+    sources: list[Citation] | None = None,
+) -> None:
+    """Persist one user+assistant turn to the session history. `sources` are
+    the citations returned with the answer; they are stored on the assistant
+    turn so GET /conversations/{id}/messages can hand them back.
 
     Skipped for ROLEPLAY: roleplay_service already appends both turns to
     session["history"] itself, so recording again here would double them.
     """
     if intent != "ROLEPLAY":
         append_history(session_id, "user", message)
-        append_history(session_id, "assistant", answer)
+        append_history(session_id, "assistant", answer, sources=sources)
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +312,7 @@ async def _chat(
         else:
             update_session(session_id, mode=intent)
 
-        _record_turn(session_id, intent, message, answer)
+        _record_turn(session_id, intent, message, answer, sources)
 
         response_time_ms = round((time.perf_counter() - start) * 1000, 2)
         return ChatResponse(
@@ -478,7 +486,7 @@ def chat_stream(
                 update_session(session_id, mode=intent, persona=None)
             else:
                 update_session(session_id, mode=intent)
-            _record_turn(session_id, intent, message, answer)
+            _record_turn(session_id, intent, message, answer, sources)
 
             response_time_ms = round((time.perf_counter() - start) * 1000, 2)
             yield _sse(
