@@ -375,3 +375,17 @@ def test_tune_threshold_breakdown_is_metrics_at_per_group():
     assert table["off_topic"]["false_answers"] == 1
     assert table["answerable_bn"] == {"n": 2, **tt._metrics_at(0.5, rows[:2])}
 
+# -- follow-up eval ---------------------------------------------------------------
+
+from scripts import eval_followups as ef  # noqa: E402
+
+
+def test_followup_eval_detects_the_history_parameter_and_loads_the_slice(tmp_path):
+    assert ef.pipeline_has_history() is True
+    p = write(tmp_path, [rec(), FU, NEG])
+    loaded = ef.load_followups(p)
+    assert [r["id"] for r in loaded] == ["fu-0001"]
+    results = [{"without": {"metrics": {5: {"recall": 0.0, "mrr": 0.0, "hit_rate": 0.0}}},
+                "with": {"metrics": {5: {"recall": 1.0, "mrr": 0.5, "hit_rate": 1.0}}}}] * 2
+    agg = ef.aggregate(results, [5])
+    assert agg["without"][5]["recall"] == 0.0 and agg["with"][5]["mrr"] == 0.5
