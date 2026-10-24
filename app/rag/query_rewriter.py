@@ -189,6 +189,14 @@ def get_fallback_count() -> int:
     return _fallback_count
 
 
+def note_fallback(reason: str) -> None:
+    """Count one fall-back to the raw query (here, or the condensation step
+    in intent_classifier) and say why."""
+    global _fallback_count
+    _fallback_count += 1
+    logger.warning(reason)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Rewrites produced elsewhere (the combined intent+rewrite call in
 # intent_classifier.py), consumed once by expand_query() below. Bounded so a
@@ -248,7 +256,5 @@ def expand_query(query: str, max_variants: int | None = None) -> tuple[str, ...]
         if bn and _is_bengali_output(bn):
             return (bn,)
 
-    global _fallback_count
-    _fallback_count += 1
-    logger.warning("query rewrite did not produce Bengali; using the raw query")
+    note_fallback("query rewrite did not produce Bengali; using the raw query")
     return (query,)

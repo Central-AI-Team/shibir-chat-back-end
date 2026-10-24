@@ -41,6 +41,7 @@ from app.rag.generator import generate_answer, stream_answer
 from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import Citation, QueryResponse
 from app.services.chitchat_service import classify_chitchat, preface
+from app.services.intent_classifier import condense
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,9 @@ def _prepare(message: str, history: list[dict] | None) -> _Prepared:
     if not question:  # pure small talk: `greeting` is the whole reply
         return _Prepared(greeting, "", message, [], [])
 
-    standalone = question
+    # The standalone question from the intent call (primed by message), else
+    # the question itself; see intent_classifier.condense().
+    standalone = condense(message, history, default=question)
     # The `retrieve-context` trace span (full candidate pool + rerank scores)
     # is emitted inside retrieve_stages(); nothing to record here.
     citations = retrieve_relevant_docs(standalone)

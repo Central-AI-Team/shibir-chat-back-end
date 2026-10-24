@@ -308,7 +308,9 @@ async def _chat(
             # classify_intent can fall back to an LLM call, so it goes through
             # the threadpool the same as the dispatch branches below.
             with timing.timed("intent_classification"):
-                intent = await run_in_threadpool(classify_intent, message, was_roleplaying)
+                intent = await run_in_threadpool(
+                    classify_intent, message, was_roleplaying, session["history"]
+                )
             timing.set_mode(intent)
 
             # NOTE/ROLEPLAY/CHITCHAT answers skip generator.py, so strip stray-script
@@ -433,7 +435,7 @@ def chat_stream(
         try:
             try:
                 with timing.timed("intent_classification"):
-                    intent = classify_intent(message, was_roleplaying)
+                    intent = classify_intent(message, was_roleplaying, session["history"])
                 timing.set_mode(intent)
 
                 if intent == "QA":
