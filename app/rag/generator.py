@@ -97,11 +97,11 @@ def _history_messages(history: list[dict] | None) -> list[dict]:
     """The last settings.qa_history_turns turns as plain chat messages
     (role + content only; stored sources and anything else are dropped)."""
     out = []
-    for turn in (history or [])[-settings.qa_history_turns:]:
+    for turn in history or []:
         role, content = turn.get("role"), (turn.get("content") or "").strip()
         if role in ("user", "assistant") and content:
             out.append({"role": role, "content": content})
-    return out
+    return out[-settings.qa_history_turns:]
 
 
 def build_messages(
