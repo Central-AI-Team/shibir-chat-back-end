@@ -167,3 +167,78 @@ def test_cli_exit_codes(tmp_path, capsys):
     assert "answerable_bn" in capsys.readouterr().out
     assert v.main([str(write(tmp_path, [rec(expected_row_keys=["page_404"])]))]) == 1
     assert v.main([str(write(tmp_path, [rec(expected_row_keys=["page_404"])])), "--no-chroma"]) == 0
+
+
+# -- drafting -------------------------------------------------------------------
+
+from scripts import draft_eval_questions as d  # noqa: E402
+
+PAGE = {"row_key": "page_1", "book": "বই", "chapter": "অধ্যায়", "category": "কুরআন ও তাফসীর",
+        "source_db": "tafheem",
+        "content": "যাকাত ইসলামের পাঁচটি স্তম্ভের একটি এবং এটি নিসাব পরিমাণ সম্পদের মালিকের উপর ফরজ। "
+                   "নিসাবের পরিমাণ সাড়ে সাত ভরি সোনা অথবা সাড়ে বায়ান্ন ভরি রুপা।"}
+
+
+def test_verbatim_reuse_is_rejected_but_paraphrase_is_kept():
+    assert d.draft_ok("যাকাত ইসলামের পাঁচটি স্তম্ভের একটি এবং এটি কাদের উপর ফরজ?", PAGE["content"]) \
+        == "reuses 6+ consecutive words of the page"
+    assert d.draft_ok("কী পরিমাণ সম্পদ থাকলে একজন মুসলমানের উপর যাকাত আবশ্যক হয়?", PAGE["content"]) is None
+
+
+def test_non_bengali_short_and_non_question_drafts_are_dropped():
+    assert d.draft_ok("What is the nisab of zakat for gold?", PAGE["content"]) == "not Bengali"
+    assert d.draft_ok("যাকাত কী?", PAGE["content"]).startswith("length")
+    assert d.draft_ok("যাকাতের নিসাব কত তা এই পৃষ্ঠায় বলা আছে।", PAGE["content"]) == "not a question"
+
+
+def test_record_shape_and_id_sequence():
+    existing = [{"id": "bn-0007"}, {"id": "neg-0100"}, {"id": "bn-0003"}]
+    assert d.next_index(existing) == 8 and d.next_index([]) == 1
+    r = d.make_record(8, PAGE, "  কী পরিমাণ সম্পদে যাকাত  ফরজ হয়?  ", "নিসাবের পরিমাণ")
+    assert r["id"] == "bn-0008" and r["slice"] == "answerable_bn" and r["review"] == "pending"
+    assert r["expected_row_keys"] == ["page_1"] and r["source_db"] == "tafheem"
+    assert r["question"] == "কী পরিমাণ সম্পদে যাকাত ফরজ হয়?"
+    assert set(r) == set(v.FIELDS)
+
+
+def test_interleave_spreads_over_category_and_source():
+    pages = [dict(PAGE, row_key=f"page_{i}", category=c, source_db=s)
+             for i, (c, s) in enumerate([("A", "x")] * 3 + [("B", "y")] * 2 + [("A", "z")])]
+    order = [(p["category"], p["source_db"]) for p in d.interleave(pages)]
+    assert order[:3] == [("A", "x"), ("B", "y"), ("A", "z")]
+
+
+def test_estimate_and_dry_run_make_no_call(tmp_path, monkeypatch, capsys):
+    sample = tmp_path / "s.json"
+    sample.write_text(json.dumps([PAGE] * 3, ensure_ascii=False), encoding="utf-8")
+    out = tmp_path / "seed.json"
+    called = []
+    monkeypatch.setattr(d, "complete", lambda *a, **k: called.append(1))
+    assert d.main(["--sample", str(sample), "--out", str(out)]) == 0
+    assert "re-run with --yes" in capsys.readouterr().out and not called and not out.exists()
+    est = d.estimate([PAGE])
+    assert est["pages"] == 1 and est["usd"] > 0
+
+
+def test_yes_writes_pending_records_and_skips_drafted_pages(tmp_path, monkeypatch):
+    sample = tmp_path / "s.json"
+    sample.write_text(json.dumps([PAGE, dict(PAGE, row_key="page_2")], ensure_ascii=False), encoding="utf-8")
+    out = tmp_path / "seed.json"
+    out.write_text(json.dumps([d.make_record(1, dict(PAGE, row_key="page_2"), "আগের একটি প্রশ্ন কি আছে?", "")]))
+    reply = {"questions": [
+        {"question": "কী পরিমাণ সম্পদ থাকলে একজন মুসলমানের উপর যাকাত আবশ্যক হয়?", "answer_in_page": "নিসাব"},
+        {"question": "যাকাত ইসলামের পাঁচটি স্তম্ভের একটি এবং এটি কী?", "answer_in_page": "x"},  # verbatim
+    ]}
+    from types import SimpleNamespace
+    calls = []
+
+    def fake_complete(task, messages, **kw):
+        calls.append(task)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(reply, ensure_ascii=False)))])
+
+    monkeypatch.setattr(d, "complete", fake_complete)
+    assert d.main(["--sample", str(sample), "--out", str(out), "--yes"]) == 0
+    assert calls == ["eval_draft"]  # page_2 already drafted -> one call
+    records = json.loads(out.read_text(encoding="utf-8"))
+    assert [r["id"] for r in records] == ["bn-0001", "bn-0002"]
+    assert records[1]["expected_row_keys"] == ["page_1"] and records[1]["review"] == "pending"
