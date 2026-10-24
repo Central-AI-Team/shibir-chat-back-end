@@ -1,7 +1,8 @@
 """HTTP layer.
 
 Routes:
-  GET    /health
+  GET    /health                          liveness: the process answers
+  GET    /ready                           readiness: Postgres and Chroma answer
   POST   /chat                            classify intent -> NOTE / ROLEPLAY /
                                           SUGGESTION / QA and dispatch
   POST   /chat/stream                     same dispatch, Server-Sent Events;
@@ -39,12 +40,14 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import re
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import APIError
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
@@ -95,6 +98,7 @@ from app.services.session_store import (
 from app.services.suggestion_service import give_suggestion
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _LLM_UNAVAILABLE_DETAIL = "উত্তর তৈরির সার্ভিস সাময়িকভাবে অনুপলব্ধ। কিছুক্ষণ পর আবার চেষ্টা করুন।"
 # One body for "unknown" AND "not yours" -- they must be indistinguishable.
@@ -204,6 +208,43 @@ def _record_turn(
 @router.get("/health", dependencies=[Depends(public_route)])
 def health() -> dict:
     return {"status": "ok"}
+
+
+def _ready_checks() -> dict[str, str]:
+    """Each dependency is probed even if an earlier one failed, so the body
+    names every broken check. Exception text is not returned (it can carry
+    hostnames / DSNs); it is logged."""
+    from app.db.session import engine
+    from app.rag.chroma_client import get_collection
+
+    checks = {}
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        checks["postgres"] = "ok"
+    except Exception:
+        logger.warning("readiness: postgres check failed", exc_info=True)
+        checks["postgres"] = "failed"
+    try:
+        get_collection().count()
+        checks["chroma"] = "ok"
+    except Exception:
+        logger.warning("readiness: chroma check failed", exc_info=True)
+        checks["chroma"] = "failed"
+    return checks
+
+
+@router.get("/ready", dependencies=[Depends(public_route)])
+def ready() -> Response:
+    """Readiness, for deploy.sh and probes: Postgres answers SELECT 1 and the
+    Chroma collection opens and counts. /health stays a bare liveness check.
+    No models are loaded and no LLM is called. 503 names the failed check(s)."""
+    checks = _ready_checks()
+    ok = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "ok" if ok else "unavailable", "checks": checks},
+    )
 
 
 # ---------------------------------------------------------------------------

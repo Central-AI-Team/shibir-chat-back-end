@@ -18,6 +18,7 @@ LEVELS = ("public", "guest_ok", "user", "admin")
 
 ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("GET", "/health"): "public",
+    ("GET", "/ready"): "public",
     ("POST", "/chat"): "guest_ok",
     ("POST", "/chat/stream"): "guest_ok",
     ("GET", "/conversations"): "guest_ok",
