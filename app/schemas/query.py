@@ -67,3 +67,7 @@ class ConversationSummary(BaseModel):
 class ConversationMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
+    # Assistant turns only: the citations that were returned with the answer,
+    # so reopening a conversation restores them. [] for user turns, for modes
+    # without retrieval (note, roleplay) and for answers that failed the gate.
+    sources: list[Citation] = []

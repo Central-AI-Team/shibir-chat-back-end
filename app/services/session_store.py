@@ -103,12 +103,24 @@ def update_session(session_id: str, **fields) -> dict | None:
         return session
 
 
-def append_history(session_id: str, role: str, content: str) -> dict | None:
+def append_history(
+    session_id: str, role: str, content: str, sources: list | None = None
+) -> dict | None:
+    """Append one turn. `sources` (assistant turns only) is the citation list
+    returned with the answer, kept so GET /conversations/{id}/messages can
+    restore them. Citation models are stored as plain dicts so the history
+    stays JSON-shaped; a missing key means no sources. Readers that build LLM
+    messages (chitchat_service, roleplay_service) only take role/content."""
     with _lock:
         session = _sessions.get(session_id)
         if session is None:
             return None
-        session["history"].append({"role": role, "content": content})
+        turn: dict = {"role": role, "content": content}
+        if sources:
+            turn["sources"] = [
+                s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in sources
+            ]
+        session["history"].append(turn)
         session["history"] = session["history"][-MAX_HISTORY:]
         session["updated_at"] = _now()
         return session
@@ -142,8 +154,8 @@ def list_sessions(owner: str) -> list[dict]:
 
 
 def get_history(session_id: str, owner: str) -> list[dict] | None:
-    """The [{role, content}] turns of an owned session, or None (unknown or not
-    yours). Does not create anything."""
+    """The [{role, content, sources?}] turns of an owned session, or None
+    (unknown or not yours). Does not create anything."""
     with _lock:
         session = get_owned_session(session_id, owner)
         return None if session is None else list(session["history"])
