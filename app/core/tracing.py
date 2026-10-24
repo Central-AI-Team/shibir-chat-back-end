@@ -306,9 +306,12 @@ def finalize_request_trace(
     if ctx is None:
         return
     root = ctx["root"]
+    metadata = {"response_time_ms": response_time_ms, "mode": mode}
+    if "citation_valid" in ctx:
+        metadata["citation_valid"] = ctx["citation_valid"]
     root.update(
         output={"answer": answer, "sources": _sources_view(sources), "mode": mode},
-        metadata={"response_time_ms": response_time_ms, "mode": mode},
+        metadata=metadata,
         level="ERROR" if error else "DEFAULT",
     )
     for key in ("attr_cm", "root_cm"):
@@ -435,6 +438,16 @@ def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve-
             ],
         },
     ).end()
+
+
+@_safe
+def record_citation_validity(valid: bool) -> None:
+    """Remember whether the answer's [n] labels were all within the sources
+    (app/rag/generator.citation_labels_valid). Written into the root span's
+    metadata as ``citation_valid`` by finalize_request_trace(); no new span."""
+    ctx = _current_ctx.get()
+    if ctx is not None:
+        ctx["citation_valid"] = valid
 
 
 @_safe

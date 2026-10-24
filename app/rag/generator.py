@@ -16,9 +16,10 @@ through -- unaffected by settings.model_by_task either way.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 
-from app.core import timing
+from app.core import timing, tracing
 from app.core.config import settings
 from app.core.llm import complete, get_client, get_model
 from app.rag.script_check import count_stray_tokens, strip_stray
@@ -176,6 +177,29 @@ def _generate_once(
     return response.choices[0].message.content or ""
 
 
+_CITATION_LABEL_RE = re.compile(r"\[\s*([0-9০-৯]+)\s*\]")
+_BN_TO_ASCII = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+
+
+def citation_labels_valid(answer: str, n_sources: int) -> bool:
+    """True when every [n] in the answer (Bengali or ASCII digits) satisfies
+    1 <= n <= n_sources; with no sources, true only when there is no [n] at
+    all. A deterministic, per-request quality signal (roadmap §3 "citation
+    validity"): it never changes the answer, it is logged and traced."""
+    labels = [int(m.translate(_BN_TO_ASCII)) for m in _CITATION_LABEL_RE.findall(answer or "")]
+    return all(1 <= n <= n_sources for n in labels)
+
+
+def _check_citations(answer: str, citations: list[Citation]) -> None:
+    valid = citation_labels_valid(answer, len(citations))
+    if not valid:
+        logger.warning(
+            "answer cites a label outside 1..%d (or cites with no sources): %s",
+            len(citations), _CITATION_LABEL_RE.findall(answer or ""),
+        )
+    tracing.record_citation_validity(valid)
+
+
 def with_script_check(produce: Callable[[], str]) -> str:
     """Run produce(); if the text has stray-script letters, regenerate up to
     settings.answer_script_retries times (keeping the cleanest), then strip
@@ -219,9 +243,11 @@ def generate_answer(
         return _generate_once(
             query, citations, model=model, client=client, extra_params=extra_params, **prompt
         )
-    return with_script_check(
+    answer = with_script_check(
         lambda: _generate_once(query, citations, extra_params=extra_params, **prompt)
     )
+    _check_citations(answer, citations)  # observe only; the answer is returned as is
+    return answer
 
 
 def stream_answer(
