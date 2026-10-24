@@ -184,16 +184,19 @@ def _record_turn(
     message: str,
     answer: str,
     sources: list[Citation] | None = None,
+    standalone_query: str | None = None,
 ) -> None:
     """Persist one user+assistant turn to the session history. `sources` are
     the citations returned with the answer; they are stored on the assistant
     turn so GET /conversations/{id}/messages can hand them back.
+    `standalone_query` (QA) is the condensed question the turn was retrieved
+    with, stored on the user turn.
 
     Skipped for ROLEPLAY: roleplay_service already appends both turns through
     append_history() itself, so recording again here would double them.
     """
     if intent != "ROLEPLAY":
-        append_history(session_id, "user", message)
+        append_history(session_id, "user", message, standalone_query=standalone_query)
         append_history(session_id, "assistant", answer, sources=sources)
 
 
@@ -302,6 +305,7 @@ async def _chat(
     intent = "QA"
     answer = ""
     sources: list[Citation] = []
+    standalone: str | None = None
     trace_error = False
     try:
         try:
@@ -337,6 +341,7 @@ async def _chat(
             else:  # QA
                 qa_response = await run_in_threadpool(answer_question, message, session["history"])
                 answer, sources = qa_response.answer, qa_response.sources
+                standalone = qa_response.query
         except (APIError, GPUServiceError, *NETWORK_ERRORS) as e:
             # An upstream dependency failed: the LLM call (quota, bad key,
             # outage, ...) or the external GPU embed/rerank service. Surface
@@ -354,7 +359,7 @@ async def _chat(
         else:
             update_session(session_id, mode=intent)
 
-        _record_turn(session_id, intent, message, answer, sources)
+        _record_turn(session_id, intent, message, answer, sources, standalone_query=standalone)
 
         response_time_ms = round((time.perf_counter() - start) * 1000, 2)
         return ChatResponse(
@@ -431,6 +436,7 @@ def chat_stream(
         intent = "QA"
         answer = ""
         sources = []
+        standalone = None
         trace_error = False
         try:
             try:
@@ -441,7 +447,7 @@ def chat_stream(
                 if intent == "QA":
                     # qa_service.qa_stream is the single QA implementation (the
                     # gate and small-talk split used to be duplicated here).
-                    sources, deltas, _standalone = qa_stream(
+                    sources, deltas, standalone = qa_stream(
                         message, session["history"],
                         trace_id=trace_id, parent_observation_id=parent_observation_id,
                     )
@@ -491,7 +497,7 @@ def chat_stream(
                 update_session(session_id, mode=intent, persona=None)
             else:
                 update_session(session_id, mode=intent)
-            _record_turn(session_id, intent, message, answer, sources)
+            _record_turn(session_id, intent, message, answer, sources, standalone_query=standalone)
 
             response_time_ms = round((time.perf_counter() - start) * 1000, 2)
             yield _sse(

@@ -99,6 +99,7 @@ def retrieve_stages(
     max_variants: int | None = None,
     hybrid: bool | None = None,
     extra_row_keys: list[str] | None = None,
+    standalone_query: str | None = None,
 ) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
     """Run retrieval and return (candidates, final).
 
@@ -127,7 +128,8 @@ def retrieve_stages(
     per-page cap -- see _retrieve_hybrid().
 
     extra_row_keys=None (default) changes nothing; see module docstring,
-    point 10.
+    point 10. standalone_query is for the trace only: the condensed question
+    `query` already is, recorded on the `expand-query` span when given.
     """
     top_k = top_k or settings.top_k
     fetch_k = fetch_k or settings.fetch_k
@@ -139,7 +141,7 @@ def retrieve_stages(
     else:
         timing.mark("query_rewrite", "disabled")
         queries = (normalize(query),) if normalize(query) else (query,)
-    tracing.record_rewrite(queries)
+    tracing.record_rewrite(queries, standalone_query=standalone_query)
     if settings.hybrid_enabled if hybrid is None else hybrid:
         return _retrieve_hybrid(
             query, queries, fetch_k, rerank_top_n, collection_name, extra_row_keys
@@ -208,10 +210,11 @@ def retrieve_relevant_docs(
     fetch_k: int | None = None,
     collection_name: str | None = None,
     extra_row_keys: list[str] | None = None,
+    standalone_query: str | None = None,
 ) -> list[Citation]:
     _, final = retrieve_stages(
         query, top_k=top_k, fetch_k=fetch_k, collection_name=collection_name,
-        extra_row_keys=extra_row_keys,
+        extra_row_keys=extra_row_keys, standalone_query=standalone_query,
     )
     return [
         Citation(

@@ -111,9 +111,12 @@ def _prepare(message: str, history: list[dict] | None) -> _Prepared:
     # is emitted inside retrieve_stages(); nothing to record here.
     # The keyword is passed only when there is something to carry over, so a
     # first turn calls the retriever exactly as before.
-    citations = retrieve_relevant_docs(
-        standalone, **({"extra_row_keys": prev_keys} if prev_keys else {})
-    )
+    extra: dict = {}
+    if prev_keys:
+        extra["extra_row_keys"] = prev_keys
+    if standalone != question:
+        extra["standalone_query"] = standalone  # trace only (expand-query span)
+    citations = retrieve_relevant_docs(standalone, **extra)
     grounding = gate(citations)
     best = max((c.rerank_score or 0.0 for c in citations), default=None)
     tracing.record_gate(
