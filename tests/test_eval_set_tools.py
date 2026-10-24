@@ -309,3 +309,69 @@ def test_split_cli_writes_both_files(tmp_path, capsys):
     empty = tmp_path / "empty.json"
     empty.write_text("[]")
     assert sp.main(["--seed-file", str(empty), "--train", str(train), "--test", str(test)]) == 1
+
+
+# -- eval script breakdowns -------------------------------------------------------
+
+from scripts import eval_retrieval as er, tune_threshold as tt  # noqa: E402
+
+
+def test_both_eval_loaders_read_v1_and_v2(tmp_path):
+    v2 = write(tmp_path, [rec(), NEG])
+    loaded = er._load_questions(v2)
+    assert loaded[0]["query"] == rec()["question"] and loaded[0]["relevant_ids"] == ["page_1"]
+    assert loaded[0]["slice"] == "answerable_bn" and loaded[1]["slice"] == "unanswerable_on_theme"
+    assert tt._load_questions(v2)[0]["category"] == "কুরআন ও তাফসীর"
+    v1 = tmp_path / "v1.json"
+    v1.write_text(json.dumps([{"query": "যাকাত কী?", "answerable": True, "relevant_ids": ["page_1"], "lang": "bn"}]))
+    assert er._load_questions(v1)[0]["slice"] == "legacy"
+    assert tt._load_questions(v1)[0]["slice"] == "legacy"
+
+
+def _record(slice_, cat, answerable, gold, ranked, top):
+    return {
+        "slice": slice_, "category": cat, "answerable": answerable, "relevant_ids": gold,
+        "scorable": bool(answerable and gold), "top_rerank_score": top,
+        "metrics": {"final": {5: er._score_one(ranked, gold, 5)}},
+    }
+
+
+def test_retrieval_breakdown_groups_without_changing_the_metric(monkeypatch):
+    monkeypatch.setattr(er.settings, "min_rerank_score", 0.5)
+    records = [
+        _record("answerable_bn", "A", True, ["page_1"], ["page_1", "page_9"], 0.9),   # hit, MRR 1
+        _record("answerable_bn", "A", True, ["page_2"], ["page_9", "page_2"], 0.7),   # hit, MRR .5
+        _record("answerable_bn", "B", True, ["page_3"], ["page_9"], 0.2),             # miss, false refusal
+        _record("off_topic", None, False, [], ["page_9"], 0.6),                       # false answer
+        _record("unanswerable_on_theme", None, False, [], [], None),                  # true refusal
+    ]
+    by_slice = er._breakdown(records, "slice", "final", 5)
+    bn = by_slice["answerable_bn"]
+    assert bn["n"] == 3 and bn["n_scored"] == 3
+    assert bn["recall"] == pytest.approx(2 / 3) and bn["mrr"] == pytest.approx(0.5)
+    assert bn["false_refusals"] == 1 and bn["false_answers"] == 0 and bn["gate_recall"] == pytest.approx(2 / 3)
+    assert by_slice["off_topic"]["false_answers"] == 1 and by_slice["off_topic"]["recall"] is None
+    assert by_slice["off_topic"]["gate_precision"] == 0.0  # one cleared, none of them answerable
+    assert by_slice["unanswerable_on_theme"]["gate_precision"] is None  # nothing cleared the gate
+    by_cat = er._breakdown(records, "category", "final", 5)
+    assert by_cat["A"]["recall"] == 1.0 and by_cat["B"]["recall"] == 0.0
+    # the whole-set gate numbers match tune_threshold's confusion at the same threshold
+    tt_rows = [{"answerable": r["answerable"], "top_score": r["top_rerank_score"], "top_is_gold": None}
+               for r in records]
+    whole = er._gate_counts(records)
+    m = tt._metrics_at(0.5, tt_rows)
+    assert (whole["false_refusals"], whole["false_answers"]) == (m["false_refusals"], m["false_answers"])
+    assert whole["gate_precision"] == pytest.approx(m["precision"], abs=1e-4)  # tune_threshold rounds to 4 dp
+
+
+def test_tune_threshold_breakdown_is_metrics_at_per_group():
+    rows = [
+        {"slice": "answerable_bn", "category": "A", "answerable": True, "top_score": 0.9, "top_is_gold": True},
+        {"slice": "answerable_bn", "category": "A", "answerable": True, "top_score": 0.3, "top_is_gold": False},
+        {"slice": "off_topic", "category": None, "answerable": False, "top_score": 0.8, "top_is_gold": None},
+    ]
+    table = tt._breakdown_at(0.5, rows, "slice")
+    assert table["answerable_bn"]["n"] == 2 and table["answerable_bn"]["false_refusals"] == 1
+    assert table["off_topic"]["false_answers"] == 1
+    assert table["answerable_bn"] == {"n": 2, **tt._metrics_at(0.5, rows[:2])}
+
