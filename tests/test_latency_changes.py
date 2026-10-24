@@ -97,9 +97,15 @@ def test_greetings_never_reach_the_llm(text):
     ("ঈমান বাড়াতে কোন বই পড়া উচিত?", "SUGGESTION"),
 ])
 def test_clear_patterns_route_by_regex(text, expected):
-    with patch.object(ic, "complete") as complete:
+    with patch.object(ic, "complete", return_value=_resp("{}")) as complete:
         assert ic.classify_intent(text, False) == expected
-    complete.assert_not_called()
+    if expected == "ROLEPLAY":
+        # Mentor mode (docs/roleplay-v2.md): the intent is still decided by
+        # the regex, but the entry turn makes the one combined call for
+        # role_id / persona_ok / level. The intent itself never came from it.
+        complete.assert_called_once()
+    else:
+        complete.assert_not_called()
 
 
 def test_plain_bengali_question_is_not_hijacked_by_regex():

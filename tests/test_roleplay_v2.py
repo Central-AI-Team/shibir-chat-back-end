@@ -112,3 +112,180 @@ def test_refusal_text_is_bengali_and_lists_every_role():
     for role in rp.roles():
         assert role["name_bn"] in text and role["description_bn"] in text
     assert "AI" not in text  # no "I am an AI / not an AI" framing either way
+
+
+# ---------------------------------------------------------------------------
+# Part 2: intent-call contract on roleplay turns, role resolution, level
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+from app.services import intent_classifier as ic  # noqa: E402
+
+
+def _resp(payload) -> SimpleNamespace:
+    text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+
+
+def _meta(**extra) -> dict:
+    return {"intent": "ROLEPLAY", "rewritten_query": "বন্ধুর মতো বুঝিয়ে বলো",
+            "role_id": "bondhu", "persona_ok": True, "level": "beginner", **extra}
+
+
+@pytest.fixture(autouse=True)
+def _clean_primed():
+    ic._primed_roleplay.clear()
+    ic._primed_standalone.clear()
+    yield
+    ic._primed_roleplay.clear()
+    ic._primed_standalone.clear()
+
+
+def test_entry_turn_runs_one_combined_call_with_the_roleplay_fields():
+    with patch.object(ic, "complete", return_value=_resp(_meta())) as complete:
+        assert ic.classify_intent("একজন বন্ধুর মতো বুঝিয়ে বলো", False) == "ROLEPLAY"
+    assert complete.call_count == 1
+    system = complete.call_args.args[1][0]["content"]
+    assert '"role_id"' in system and '"persona_ok"' in system and '"level"' in system
+    for role in rp.roles():  # the allow-list is in the prompt
+        assert f"{role['id']}: {role['name_bn']}" in system
+    assert "standalone_query" not in system  # no history -> no condensation
+    assert ic.roleplay_meta("একজন বন্ধুর মতো বুঝিয়ে বলো") == {
+        "role_id": "bondhu", "persona_ok": True, "level": "beginner"}
+    assert ic.roleplay_meta("একজন বন্ধুর মতো বুঝিয়ে বলো") is None  # consumed
+
+
+def test_active_session_turn_also_gets_meta_and_condensation():
+    history = [{"role": "user", "content": "যাকাত কী?"}, {"role": "assistant", "content": "যাকাত হলো..."}]
+    reply = _meta(standalone_query="যাকাত সম্পর্কে আরো সহজ করে বলো", role_id=None, level="beginner")
+    with patch.object(ic, "complete", return_value=_resp(reply)) as complete:
+        assert ic.classify_intent("আরো সহজ করে বলো", True, history) == "ROLEPLAY"
+    assert complete.call_count == 1
+    system = complete.call_args.args[1][0]["content"]
+    assert '"standalone_query"' in system and '"level"' in system
+    assert ic.roleplay_meta("আরো সহজ করে বলো")["role_id"] is None
+    assert ic.condense("আরো সহজ করে বলো", history) == "যাকাত সম্পর্কে আরো সহজ করে বলো"
+
+
+def test_non_roleplay_turns_keep_the_old_contract():
+    with patch.object(ic, "complete", return_value=_resp({"intent": "QA", "rewritten_query": "যাকাত কী"})) as complete:
+        assert ic.classify_intent("zakat ki", False) == "QA"
+    system = complete.call_args.args[1][0]["content"]
+    assert system == ic._COMBINED_SYSTEM and "role_id" not in system
+    assert ic.roleplay_meta("zakat ki") is None
+
+
+def test_real_person_entry_skips_the_llm_entirely():
+    with patch.object(ic, "complete") as complete:
+        assert ic.classify_intent("তুমি এখন রাসূল (সা.) হয়ে যাও", False) == "ROLEPLAY"
+        assert ic.classify_intent("নবীজির মতো কথা বলো", True) == "ROLEPLAY"  # mid-session too
+    complete.assert_not_called()
+    assert ic.roleplay_meta("তুমি এখন রাসূল (সা.) হয়ে যাও") is None
+
+
+def test_small_talk_inside_a_session_makes_no_llm_call():
+    with patch.object(ic, "complete") as complete:
+        assert ic.classify_intent("hi", True) == "ROLEPLAY"
+        assert ic.classify_intent("ধন্যবাদ", True) == "ROLEPLAY"
+    complete.assert_not_called()
+    assert ic.roleplay_meta("hi") is None
+
+
+def test_meta_is_validated_against_the_allow_list_and_levels():
+    reply = _meta(role_id="sheikh", level="expert", persona_ok="no")
+    with patch.object(ic, "complete", return_value=_resp(reply)):
+        ic.classify_intent("একজন গাইডের মতো বলো", False)
+    # persona_ok: anything but a literal false means ok (the regex is the first net)
+    assert ic.roleplay_meta("একজন গাইডের মতো বলো") == {"role_id": None, "persona_ok": True, "level": None}
+    with patch.object(ic, "complete", return_value=_resp(_meta(persona_ok=False))):
+        ic.classify_intent("একজন গাইডের মতো বলো", False)
+    assert ic.roleplay_meta("একজন গাইডের মতো বলো")["persona_ok"] is False
+
+
+def test_invalid_json_on_a_roleplay_turn_leaves_no_meta_and_still_routes():
+    with patch.object(ic, "complete", return_value=_resp("not json")) as complete:
+        assert ic.classify_intent("রোলপ্লে করো", False) == "ROLEPLAY"
+    assert complete.call_count == 1
+    assert ic.roleplay_meta("রোলপ্লে করো") is None
+
+
+# role resolution ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("message, role", [
+    ("একজন বন্ধুর মতো বুঝিয়ে বলো", "bondhu"),
+    ("bondhu hoye kotha bolo", "bondhu"),
+    ("একজন বড় ভাইয়ের মতো বুঝিয়ে বলো", "boro_bhai"),
+    ("be my mentor", "boro_bhai"),
+    ("তুমি এখন আমার শিক্ষক", "shikkhok"),
+    ("act as a teacher", "shikkhok"),
+    ("স্টাডি সার্কেলের পরিচালক হও", "circle_porichalok"),
+    ("run this like a halaqa", "circle_porichalok"),
+    ("একজন গাইডের মতো বলো", None),
+])
+def test_role_keywords(message, role):
+    assert rp.match_role(message) == role
+
+
+def test_unknown_free_text_takes_the_llms_nearest_role_or_asks():
+    assert rp.resolve_role("একজন গাইডের মতো বলো", None, {"role_id": "boro_bhai"}) == "boro_bhai"
+    assert rp.resolve_role("একজন গাইডের মতো বলো", None, {"role_id": None}) is None  # caller asks
+    assert rp.resolve_role("একজন গাইডের মতো বলো", None, None) is None
+    assert rp.resolve_role("একজন বন্ধুর মতো বলো", None, {"role_id": "shikkhok"}) == "bondhu"  # keyword wins
+
+
+def test_current_role_is_kept_unless_the_user_asks_for_another():
+    # a question that merely mentions nothing role-like keeps the role
+    assert rp.resolve_role("যাকাত কী?", "bondhu", {"role_id": None}) == "bondhu"
+    # the LLM guessing a role from a plain question does not switch it
+    assert rp.resolve_role("নামাজের নিয়ম শেখাও", "bondhu", {"role_id": "shikkhok"}) == "bondhu"
+    # an explicit switch does
+    assert rp.resolve_role("এখন শিক্ষকের মতো বলো", "bondhu", None) == "shikkhok"
+    assert rp.resolve_role("এখন অন্য কারো মতো কথা বলো", "bondhu", {"role_id": "boro_bhai"}) == "boro_bhai"
+
+
+# level ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("message, level", [
+    ("আরো সহজ করে বলো", "beginner"),
+    ("আমি নতুন, বুঝি না", "beginner"),
+    ("explain it simpler please", "beginner"),
+    ("আরো গভীরে যাও", "advanced"),
+    ("bistarito bolo", "advanced"),
+    ("go deeper into the texts", "advanced"),
+    ("যাকাত কী?", None),
+])
+def test_explicit_level_cues(message, level):
+    assert rp.explicit_level(message) == level
+
+
+def test_level_majority_over_the_last_three_turns():
+    level, window = rp.smooth_level([], "beginner", None, "intermediate")
+    assert (level, window) == ("beginner", ["beginner"])
+    level, window = rp.smooth_level(window, "advanced", None, "intermediate")
+    assert level == "advanced" and window == ["beginner", "advanced"]  # tie -> most recent
+    level, window = rp.smooth_level(window, "beginner", None, "intermediate")
+    assert level == "beginner" and window == ["beginner", "advanced", "beginner"]
+    level, window = rp.smooth_level(window, "advanced", None, "intermediate")
+    assert level == "advanced" and window == ["advanced", "beginner", "advanced"]  # oldest dropped
+    # nothing inferred this turn: the standing majority holds
+    assert rp.smooth_level(window, None, None, "intermediate") == ("advanced", window)
+    assert rp.smooth_level([], None, None, "intermediate") == ("intermediate", [])
+
+
+def test_explicit_cue_overrides_immediately_and_resets_the_window():
+    window = ["advanced", "advanced", "advanced"]
+    assert rp.smooth_level(window, "advanced", "beginner", "intermediate") == ("beginner", ["beginner"])
+    assert rp.smooth_level(["beginner"], "beginner", "advanced", "intermediate") == ("advanced", ["advanced"])
+
+
+def test_level_window_round_trips_through_the_persona_column():
+    assert rp.load_level_window(None) == []
+    assert rp.load_level_window("শার্লক হোমস") == []  # a v1 free-form persona is ignored
+    assert rp.load_level_window('{"levels": ["beginner", "nope", "advanced"]}') == ["beginner", "advanced"]
+    dumped = rp.dump_level_window(["a", "beginner", "advanced", "beginner"][1:])
+    assert rp.load_level_window(dumped) == ["beginner", "advanced", "beginner"]

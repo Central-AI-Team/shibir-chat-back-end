@@ -150,3 +150,110 @@ def refusal_text() -> str:
         lines.append(f"• {role['name_bn']} -- {role['description_bn']}")
     lines.append("কোন ভঙ্গিতে কথা বলব, বলুন।")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Part 2: role resolution and the reading level.
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+from collections import Counter  # noqa: E402
+
+LEVELS = ("beginner", "intermediate", "advanced")
+LEVEL_WINDOW = 3  # turns in the majority vote
+
+# Role keywords resolve without the LLM; anything else goes through the
+# intent call's role_id (nearest role) and, failing that, the "which role?"
+# reply. Order = allow-list order; first match wins.
+ROLE_PATTERNS: dict[str, str] = {
+    "bondhu": r"বন্ধু|সহপাঠী|দোস্ত|\bbondhu\b|\bdost\b|\bfriend\b|\bclassmate\b|\bbuddy\b",
+    "boro_bhai": r"বড়\s*ভাই|বড়\s*ভাই|দায়িত্বশীল|\bboro\s*bhai\b|\bbhaiya\b|\bmentor\b|\bbig\s*brother\b",
+    "shikkhok": r"শিক্ষক|টিচার|উস্তাদ|ওস্তাদ|\bshikkhok\b|\bteacher\b|\bustad\b|\bustaz\b|\btutor\b",
+    "circle_porichalok": r"সার্কেল|পরিচালক|হালকা|\bcircle\b|\bhalaqa\b|\bstudy\s*group\b|\bporichalok\b",
+}
+_ROLE_RES = {rid: re.compile(p, re.IGNORECASE) for rid, p in ROLE_PATTERNS.items()}
+
+# Explicit level cues override the inferred level for the turn and reset the
+# smoothing window (docs/roleplay-v2.md §3).
+BEGINNER_CUES = re.compile(
+    r"সহজ\s*(?:করে|ভাবে|ভাষায়)|আরো\s*সহজ|আরও\s*সহজ|সহজ\s*করো|আমি\s*নতুন|নতুন\s*শিখছি|বুঝি\s*না|"
+    r"বুঝতে\s*পারছি\s*না|বাচ্চাদের\s*মতো|\bsohoj\b|\bsimpl(?:e|er|y)\b|\beasier\b|\beasy\b|\bbasic\b|"
+    r"\bbeginner\b|\bnotun\b|\bami\s*notun\b|\beli5\b",
+    re.IGNORECASE,
+)
+ADVANCED_CUES = re.compile(
+    r"গভীরে|আরো\s*গভীর|আরও\s*গভীর|গভীরভাবে|বিশদ|বিশদভাবে|বিস্তারিতভাবে|আরো\s*বিস্তারিত|আরও\s*বিস্তারিত|"
+    r"তাত্ত্বিক|মূল\s*পাঠ|\bgobhir\b|\bbistarito\b|\bdeep(?:er)?\b|\bin\s*depth\b|\badvanced\b|"
+    r"\bdetail(?:s|ed)?\b|\bscholarly\b",
+    re.IGNORECASE,
+)
+
+
+def match_role(message: str) -> str | None:
+    """The first allow-listed role whose keywords appear in the message."""
+    for role_id, pattern in _ROLE_RES.items():
+        if pattern.search(message):
+            return role_id
+    return None
+
+
+def resolve_role(message: str, current: str | None, meta: dict | None) -> str | None:
+    """Which role this turn speaks in.
+
+    No current role (entering): a keyword match, else the intent call's
+    role_id, else None (the caller asks which role). With a current role: it is
+    kept unless the message asks for a different one (keyword match, or the
+    intent call named one and the message carries impersonation framing).
+    """
+    wanted = match_role(message)
+    if wanted is None and meta and meta.get("role_id"):
+        if current is None or _IMPERSONATION_RE.search(message):
+            wanted = meta["role_id"]
+    if current is None:
+        return wanted
+    return wanted or current
+
+
+def explicit_level(message: str) -> str | None:
+    """"আরো সহজ করে বলো" -> beginner, "আরো গভীরে যাও" -> advanced, else None."""
+    if BEGINNER_CUES.search(message):
+        return "beginner"
+    if ADVANCED_CUES.search(message):
+        return "advanced"
+    return None
+
+
+def load_level_window(persona: str | None) -> list[str]:
+    """The last inferred levels, kept as JSON in conversations.persona (free
+    since free-form personas are gone; cleared on exit like before)."""
+    try:
+        data = json.loads(persona) if persona else {}
+        window = data.get("levels", []) if isinstance(data, dict) else []
+        return [lv for lv in window if lv in LEVELS][-LEVEL_WINDOW:]
+    except (ValueError, TypeError):
+        return []
+
+
+def dump_level_window(window: list[str]) -> str:
+    return json.dumps({"levels": window[-LEVEL_WINDOW:]})
+
+
+def smooth_level(
+    window: list[str], inferred: str | None, explicit: str | None, fallback: str
+) -> tuple[str, list[str]]:
+    """(level for this turn, new window). An explicit cue wins and resets the
+    window to itself; otherwise the inferred level joins the window and the
+    majority of the last LEVEL_WINDOW decides (ties: the most recent); with
+    nothing inferred the previous majority, else `fallback`, stands."""
+    if explicit in LEVELS:
+        return explicit, [explicit]
+    if inferred in LEVELS:
+        window = (window + [inferred])[-LEVEL_WINDOW:]
+    if not window:
+        return fallback, []
+    counts = Counter(window)
+    best = max(counts.values())
+    for lv in reversed(window):  # most recent among the tied
+        if counts[lv] == best:
+            return lv, window
+    return fallback, window  # unreachable

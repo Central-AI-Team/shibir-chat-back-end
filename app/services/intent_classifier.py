@@ -12,6 +12,14 @@ message rewritten as a Bengali question that needs no history ("আরো বল
 the previous question, asked for more detail). It is primed per message and
 read once by condense(), which qa_service calls before retrieval. One LLM
 call, as before; the two-call fallback path never condenses.
+
+Mentor mode (docs/roleplay-v2.md): on a roleplay turn (the entry regex
+matched, or the session is already in ROLEPLAY) the same call also returns
+"role_id" (allow-list or null), "persona_ok" (false = the user asked for a
+real person) and "level" (beginner | intermediate | advanced). They are
+primed per message and read once by roleplay_meta() from roleplay_service.
+The real-person refusal (roleplay_service.is_impersonation_request) runs
+BEFORE this call and skips it; persona_ok is the second net.
 """
 
 from __future__ import annotations
@@ -34,6 +42,7 @@ from app.rag.query_rewriter import (
     prime_rewrite,
 )
 from app.services.chitchat_service import classify_chitchat
+from app.services.roleplay_service import is_impersonation_request, roles
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +56,16 @@ _NOTE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Mentor mode (docs/roleplay-v2.md) added the "<someone>-এর মতো (করে) বুঝিয়ে /
+# কথা বলো" family: "একজন বড় ভাইয়ের মতো বুঝিয়ে বলো" is the canonical way to pick
+# a role, and "X হয়ে যাও" alone missed it.
 _ROLEPLAY_RE = re.compile(
     r"(?:রোল\s*প্লে|রোলপ্লে|তুমি\s+এখন\s+.+\s+হয়ে\s+যাও|তুমি\s+.+\s+হও|অভিনয়\s*(?:করো|করুন|কর)|"
     r"চরিত্রে\s*(?:অভিনয়|থেকে)|ভূমিকায়\s+(?:থেকে|আমার|আমাকে|কথা|অভিনয়)|ভান\s*করো|"
     r"(?:ধরো|ধরুন)\s+তুমি|"
+    r"(?:মতো|মত)\s*(?:করে\s*)?(?:কথা\s*বল|বুঝিয়ে|বুঝাও|বোঝাও|উত্তর\s*দ|শেখাও|বল[ো]?\b)|"
+    r"\bmoto\s*(?:kore\s*)?(?:kotha\s*bolo|bujhiye|bolo)\b|\bhoye\s*(?:jao|kotha\s*bolo)\b|"
+    r"\b(?:talk|speak|explain|answer)\s+(?:to\s+me\s+)?(?:like|as)\s+(?:a|an|my)\b|"
     r"role\s*play|roleplay|act\s*(?:as|like)|abhinoy\s*koro|pretend\s*(?:to\s*be|you\s*are))",
     re.IGNORECASE,
 )
@@ -178,6 +193,38 @@ _COMBINED_SYSTEM_WITH_HISTORY = _COMBINED_BODY + "\n\n" + _CONDENSE_RULES + """
 শুধুমাত্র একটি JSON অবজেক্ট দিয়ে উত্তর দাও, অন্য কিছু লিখো না:
 {"intent": "NOTE|ROLEPLAY|SUGGESTION|CHITCHAT|QA", "rewritten_query": "<বাংলা রূপান্তর>", "standalone_query": "<স্বয়ংসম্পূর্ণ বাংলা প্রশ্ন>"}"""
 
+_LEVELS = ("beginner", "intermediate", "advanced")
+
+# Mentor-mode fields (docs/roleplay-v2.md §1, §3), added to the combined call
+# on roleplay turns only. The roles are listed from settings so the model can
+# only pick an allow-listed id.
+_ROLEPLAY_META_RULES = """এটি একটি "ভূমিকা" (mentor mode) কথোপকথন। অতিরিক্ত তিনটি ক্ষেত্র দাও:
+- "role_id": ব্যবহারকারী নিচের কোন ভূমিকায় কথা শুনতে চাইছে, তার id; কোনোটি না মিললে null।
+  বার্তায় ভূমিকা বদলানোর কথা না থাকলে null দাও (বর্তমান ভূমিকা বজায় থাকবে)।
+{roles}
+- "persona_ok": ব্যবহারকারী যদি কোনো বাস্তব ব্যক্তির হয়ে কথা বলতে বলে -- নবী-রাসূল, সাহাবী,
+  আলেম, নেতা, রাজনীতিবিদ বা অন্য কোনো সত্যিকারের/ঐতিহাসিক মানুষ -- তাহলে false; শুধু ওপরের
+  ভূমিকাগুলোর মতো একটি সাধারণ ভূমিকা চাইলে বা কোনো ভূমিকার কথা না থাকলে true।
+- "level": বার্তার শব্দচয়ন, প্রশ্নের জটিলতা ও স্পষ্ট ইঙ্গিত ("আমি নতুন", "আরো সহজ করে",
+  "আরো গভীরে") দেখে ব্যবহারকারীর স্তর: "beginner", "intermediate" বা "advanced"।"""
+
+
+def _roles_block() -> str:
+    return "\n".join(f"  {r['id']}: {r['name_bn']} -- {r['description_bn']}" for r in roles())
+
+
+def _combined_system(history: list[dict] | None, roleplay: bool) -> str:
+    if not roleplay:
+        return _COMBINED_SYSTEM_WITH_HISTORY if history else _COMBINED_SYSTEM
+    fields = ['"intent": "NOTE|ROLEPLAY|SUGGESTION|CHITCHAT|QA"', '"rewritten_query": "<বাংলা রূপান্তর>"']
+    parts = [_COMBINED_BODY]
+    if history:
+        parts.append(_CONDENSE_RULES)
+        fields.append('"standalone_query": "<স্বয়ংসম্পূর্ণ বাংলা প্রশ্ন>"')
+    parts.append(_ROLEPLAY_META_RULES.format(roles=_roles_block()))
+    fields += ['"role_id": "<id>|null"', '"persona_ok": true|false', '"level": "beginner|intermediate|advanced"']
+    return "\n\n".join(parts) + "\n\nশুধুমাত্র একটি JSON অবজেক্ট দিয়ে উত্তর দাও, অন্য কিছু লিখো না:\n{" + ", ".join(fields) + "}"
+
 _ASSISTANT_EXCERPT_CHARS = 300
 
 
@@ -206,11 +253,14 @@ def _history_block(history: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _condense_user_message(message: str, history: list[dict]) -> str:
+def _condense_user_message(message: str, history: list[dict], roleplay: bool = False) -> str:
+    keys = '"intent": ..., "rewritten_query": ..., "standalone_query": ...'
+    if roleplay:
+        keys += ', "role_id": ..., "persona_ok": ..., "level": ...'
     return (
         "পূর্বের কথোপকথন (সর্বশেষ আগে):\n" + _history_block(history)
         + f"\n\nনতুন বার্তা: {message}\n\n"
-        + 'JSON: {"intent": ..., "rewritten_query": ..., "standalone_query": ...}'
+        + "JSON: {" + keys + "}"
     )
 
 
@@ -229,6 +279,29 @@ def _prime_standalone(message: str, standalone: str) -> None:
         _primed_standalone[key] = value
         while len(_primed_standalone) > _PRIMED_MAX:
             del _primed_standalone[next(iter(_primed_standalone))]
+
+
+# Mentor-mode fields from the combined call, consumed once by roleplay_meta().
+_primed_roleplay: dict[str, dict] = {}
+
+
+def _prime_roleplay(message: str, meta: dict) -> None:
+    key = normalize(message)
+    if not key:
+        return
+    with _primed_lock:
+        _primed_roleplay[key] = meta
+        while len(_primed_roleplay) > _PRIMED_MAX:
+            del _primed_roleplay[next(iter(_primed_roleplay))]
+
+
+def roleplay_meta(message: str) -> dict | None:
+    """{"role_id": str | None, "persona_ok": bool, "level": str | None} the
+    intent call produced for this roleplay turn, read once; None when no call
+    ran (the refusal regex short-circuited, the JSON was invalid, or the turn
+    was not a roleplay turn)."""
+    with _primed_lock:
+        return _primed_roleplay.pop(normalize(message), None)
 
 
 def condense(message: str, history: list[dict] | None, default: str | None = None) -> str:
@@ -261,32 +334,46 @@ def _parse_json(raw: str) -> dict | None:
     return None
 
 
-def _combined_call(message: str, history: list[dict] | None) -> dict | None:
+def _combined_call(message: str, history: list[dict] | None, roleplay: bool = False) -> dict | None:
+    system = _combined_system(history, roleplay)
     if history:
         messages = [
-            {"role": "system", "content": _COMBINED_SYSTEM_WITH_HISTORY},
-            {"role": "user", "content": _condense_user_message(message, history)},
+            {"role": "system", "content": system},
+            {"role": "user", "content": _condense_user_message(message, history, roleplay)},
         ]
     else:
-        messages = [{"role": "system", "content": _COMBINED_SYSTEM}, {"role": "user", "content": message}]
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": message}]
     response = complete(
         "intent", messages, token_budget=1500, response_format={"type": "json_object"}
     )
-    data = _parse_json(response.choices[0].message.content or "")
+    content = response.choices[0].message.content
+    data = _parse_json(content) if isinstance(content, str) else None
     if not data:
         return None
     intent = str(data.get("intent", "")).strip().upper()
     rewritten = str(data.get("rewritten_query", "")).strip()
     if intent not in _VALID_INTENTS or not rewritten:
         return None
-    return {
+    out = {
         "intent": intent,
         "rewritten_query": rewritten,
         "standalone_query": str(data.get("standalone_query", "")).strip(),
     }
+    if roleplay:
+        role_id = data.get("role_id")
+        role_id = str(role_id).strip() if role_id else None
+        level = str(data.get("level") or "").strip().lower()
+        out["roleplay"] = {
+            "role_id": role_id if any(r["id"] == role_id for r in roles()) else None,
+            "persona_ok": data.get("persona_ok") is not False,  # missing -> true
+            "level": level if level in _LEVELS else None,
+        }
+    return out
 
 
-def _classify_and_rewrite(message: str, history: list[dict] | None = None) -> str | None:
+def _classify_and_rewrite(
+    message: str, history: list[dict] | None = None, roleplay: bool = False
+) -> str | None:
     """ONE LLM call for intent + Bengali rewrite (+ condensation when
     `history` is given). Returns the intent, or None if the reply is not valid
     JSON with a valid intent and a non-empty rewrite (the caller then falls
@@ -296,22 +383,52 @@ def _classify_and_rewrite(message: str, history: list[dict] | None = None) -> st
     standalone_query is validated like the rewrite (>= 80 % Bengali); a bad
     one gets the whole call retried once, then condense() falls back to the
     raw message and the rewriter's fallback counter is incremented."""
-    data = _combined_call(message, history)
+    data = _combined_call(message, history, roleplay)
     if data is None:
         return None
     if history and not _is_bengali_output(data["standalone_query"]):
-        retry = _combined_call(message, history)
+        retry = _combined_call(message, history, roleplay)
         if retry is not None and _is_bengali_output(retry["standalone_query"]):
             data = retry
         else:
             data["standalone_query"] = ""
             note_fallback("condensation did not produce Bengali; retrieving with the raw message")
     intent = data["intent"]
-    if intent in ("QA", "SUGGESTION"):
+    if roleplay:
+        # A roleplay turn's answer goes through qa_stream, so it needs the
+        # rewrite/standalone too, whatever intent the model named.
+        prime_rewrite(message, data["rewritten_query"])
+        if data["standalone_query"]:
+            _prime_standalone(message, data["standalone_query"])
+        _prime_roleplay(message, data["roleplay"])
+    elif intent in ("QA", "SUGGESTION"):
         prime_rewrite(message, data["rewritten_query"])  # retrieval's expand_query() reuses it
         if data["standalone_query"]:
             _prime_standalone(message, data["standalone_query"])  # qa_service.condense() reads it
     return intent
+
+
+def _roleplay_turn(message: str, history: list[dict] | None, *, entering: bool, method: str) -> str:
+    """A turn whose intent is already ROLEPLAY (entry regex or active
+    session): run the combined call for role_id / persona_ok / level (and
+    condensation), unless the real-person regex refuses first -- then no LLM
+    is called and roleplay_service refuses from the same check."""
+    chitchat = classify_chitchat(message)
+    if is_impersonation_request(message, entering=entering):
+        timing.mark("intent_classification", f"{method}; real-person request, no LLM")
+    elif not entering and chitchat is not None and not chitchat[1]:
+        # Pure small talk inside a mentor session ("hi", "ধন্যবাদ"): nothing
+        # to infer a level from and no role to pick; the role and level stand.
+        timing.mark("intent_classification", f"{method}; small talk, no LLM")
+    elif settings.combine_intent_rewrite:
+        timing.mark("intent_classification", f"{method}; roleplay meta via combined call")
+        condense_now = bool(history) and not should_skip_condense(message, history)
+        if _classify_and_rewrite(message, history if condense_now else None, roleplay=True) is None:
+            logger.info("combined_intent_rewrite_invalid_json on a roleplay turn; no role/level this turn")
+    else:
+        timing.mark("intent_classification", method)
+    tracing.record_intent("ROLEPLAY", method=method)
+    return "ROLEPLAY"
 
 
 def classify_intent(
@@ -326,12 +443,12 @@ def classify_intent(
     if has_active_roleplay_session and not _ROLEPLAY_EXIT_RE.search(normalized):
         # An ongoing roleplay conversation shouldn't get reclassified as QA
         # (or anything else) on every follow-up turn.
-        timing.mark("intent_classification", "session")
-        tracing.record_intent("ROLEPLAY", method="session")
-        return "ROLEPLAY"
+        return _roleplay_turn(normalized, history, entering=False, method="session")
 
     for intent, pattern in _INTENT_PATTERNS:
         if pattern.search(normalized):
+            if intent == "ROLEPLAY":
+                return _roleplay_turn(normalized, history, entering=True, method="regex")
             timing.mark("intent_classification", "regex")
             tracing.record_intent(intent, method="regex")
             return intent
@@ -358,5 +475,10 @@ def classify_intent(
         timing.mark("intent_classification", "llm fallback")
     if result is None:
         result = _classify_with_llm(normalized)
+    if result == "ROLEPLAY":
+        # The plain classifier named it (no regex hit): still a roleplay
+        # entry, so get role_id / persona_ok / level the same way. One extra
+        # call, on this rare path only.
+        return _roleplay_turn(normalized, history, entering=True, method="llm")
     tracing.record_intent(result, method="llm")
     return result
