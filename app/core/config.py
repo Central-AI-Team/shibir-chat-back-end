@@ -278,6 +278,10 @@ class Settings(BaseSettings):
     # Postgres (2026-10-24): a global cap made sense for a dict, not a table.
     guest_conversation_cap: int = 50
     user_conversation_cap: int = 500
+    # scripts/purge_history.py hard-deletes guest conversations (no user_id) not
+    # updated for this many days, and soft-deleted conversations of any owner
+    # that old. A guest who clears cookies can never reach them again anyway.
+    guest_history_retention_days: int = 30
     # Message length caps (characters, after strip), enforced in router.py with
     # a 413. The general one bounds what reaches the intent/rewrite/answer LLM
     # calls. NOTE never sends the message to an LLM -- note_service only
