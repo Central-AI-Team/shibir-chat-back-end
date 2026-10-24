@@ -57,11 +57,15 @@ app/
                           names (no LLM call).
     roleplay_service.py   handle_roleplay(message, session) -> str. Persona extraction on the
                           first turn (task "persona"), then multi-turn chat. No retrieval (§8).
-    session_store.py      In-process dict of sessions (owner hash, mode, persona, history
-                          capped at MAX_HISTORY = 20) under an RLock. Only
-                          create_session(owner) creates; every lookup takes the owner and
-                          returns None for unknown OR not-owned. Per-owner / global caps
-                          evict least-recently-updated. Single worker only.
+    session_store.py      Sessions on Postgres (tables conversations / messages, §3). Same
+                          public functions as the old dict. Only create_session(owner,
+                          user_id=None) creates; every lookup takes the owner and is
+                          `id = :id AND owner_key = :owner AND deleted_at IS NULL`, so
+                          unknown, deleted and not-owned all return None. MAX_HISTORY = 20 is
+                          the READ window; every turn is stored. Per-owner caps
+                          (GUEST_/USER_CONVERSATION_CAP) soft-delete the least-recently-
+                          updated. Returned dicts are snapshots and carry "id". Shared by
+                          all workers.
   rag/
     chunker.py            normalize(text): NFC + whitespace cleanup; apply at ingest AND
                           query time. chunk_text(text): paragraph → danda (।) → period →
@@ -126,6 +130,9 @@ scripts/                  Migrations, corpus cleanup, evaluation and debugging t
   load_tafheem.py                 data/tafheemul_quran.db -> pages, one per ayah (§9).
   load_articles.py                data/{pp-articles,cs-posts}-*.sql -> articles (§9).
   load_leadership.py              data/shibir-central-president.csv -> one article (§9).
+  purge_history.py                Dry-run-by-default retention job: hard-deletes guest
+                                  conversations and soft-deleted ones older than
+                                  GUEST_HISTORY_RETENTION_DAYS (§3).
   clean_database.py               Dry-run-by-default cleanup: empty books/chapters, duplicate
                                   categories, indexes. Backs up first (§3).
   export_domains.py               Postgres -> data/export/{books,tafheem,articles,shaheed,leadership}.sql,
@@ -135,6 +142,9 @@ scripts/                  Migrations, corpus cleanup, evaluation and debugging t
 notebooks/                Local, git-ignored analysis notebooks over data/export/*.sql (one per
                           file, plus _sqlexport.py with the SQL parsers). They copy corpus text;
                           never commit them.
+migrations/               Alembic (env.py reads settings.database_url; target Base.metadata).
+                          Only the chat-history tables are managed here; the content and auth
+                          tables predate it. `uv run alembic upgrade head`; deploy.sh runs it.
 tests/                    pytest suite; no network or real models by default (§11).
 docs/                     auto-deploy.md, deployment.md, evaluation.md, tracing.md.
 chroma_db/                Generated vector store, git-ignored. Deleting it is only half of
@@ -158,6 +168,14 @@ idempotent. The running app does not read them.
   merges duplicate categories and adds the indexes. It never deletes a row that has a page, aborts if
   page/article counts change, and lists duplicate book titles without touching them. Run it before
   `export_domains`.
+- **Chat history** is the two Alembic-managed tables `conversations` (id = the 43-char session
+  id, `owner_key`, nullable `user_id` -> users ON DELETE CASCADE, `title`, `mode`, `persona`,
+  `role_id` / `level` reserved for the roleplay rebuild, `created_at`, `updated_at`,
+  `deleted_at`) and `messages` (`conversation_id` ON DELETE CASCADE, `role`, `content`,
+  `sources` JSONB, and the evaluation columns `mode`, `standalone_query`, `rerank_top`,
+  `grounded`, `response_time_ms`, `trace_id`, all NULL until the code that fills them lands).
+  Index `conversations_owner_recent (owner_key, updated_at DESC) WHERE deleted_at IS NULL` is
+  the sidebar query. Written only by `app/services/session_store.py` (§7).
 - `embedded_at` records the last successful embed. `NULL` means never embedded;
   `updated_at > embedded_at` means stale.
 - `Page.excluded_from_rag` / `Page.exclusion_reason` (added by `scripts/clean_corpus.py`) are a
@@ -320,11 +338,12 @@ Contract this back-end relies on (do not regress):
 
 | Method | Path | Result |
 |---|---|---|
-| `GET` | `/health` | `{"status": "ok"}` |
+| `GET` | `/health` | `{"status": "ok"}` (liveness; checks nothing) |
+| `GET` | `/ready` | `{"status", "checks": {"postgres", "chroma"}}`; 503 when a check fails |
 | `POST` | `/chat` | `ChatResponse` |
 | `POST` | `/chat/stream` | Server-Sent Events |
-| `GET` | `/conversations` | `[ConversationSummary]`, most recent activity first |
-| `GET` | `/conversations/{session_id}/messages` | `[{"role": "user" \| "assistant", "content"}]`, or 404 |
+| `GET` | `/conversations` | `[ConversationSummary]` (`id`, `title`, `message_count`, `mode`, `created_at`, `updated_at`), most recent activity first |
+| `GET` | `/conversations/{session_id}/messages` | last 20 `[{"role": "user" \| "assistant", "content", "sources"}]`, or 404 |
 | `DELETE` | `/conversations/{session_id}` | 204, or 404 |
 
 The old `/ask`, `/note` and `/note-by-text` routes were removed. Their service functions are still
@@ -337,8 +356,8 @@ called from `/chat`.
 ```
 
 `session_id` is optional; the response returns the id to reuse on the next turn. If it is
-malformed (anything but 43 URL-safe characters, e.g. a uuid4 from before this format), unknown
-(e.g. lost in a restart: the store is in-memory) or belongs to another owner, `/chat` and
+malformed (anything but 43 URL-safe characters, e.g. a uuid4 from before this format), unknown,
+deleted, or belongs to another owner, `/chat` and
 `/chat/stream` silently start a **new** session under a fresh server-issued id and return that,
 so the front-end must always use the returned `session_id`. All these cases look identical, and
 no session is ever created from a client-chosen id. `user_id` is accepted but ignored
@@ -386,10 +405,12 @@ upstream failure emits a single `error` event instead.
 
 The front-end (`shibir-chat-front-end`) depends on these shapes. Keep changes backward-compatible.
 
-**Sessions are single-worker.** `/conversations` and session continuity read
-`app.services.session_store`, a module-level dict. Sessions are lost on restart and invisible to
-other workers or pods. A shared store (Redis or a table) is required before running more than one
-worker.
+**Sessions are in Postgres** (`conversations` / `messages`, Alembic-managed, §3). They survive
+restarts and are shared by every worker and pod (the in-process `rate_limiter` still counts per
+worker, so its limits loosen by the worker count). `DELETE /conversations/{id}` and the per-owner
+cap set `deleted_at`; `scripts/purge_history.py` hard-deletes guest and soft-deleted
+conversations older than `GUEST_HISTORY_RETENTION_DAYS`. A guest's conversations move to the
+account (`owner_key`, `user_id`) inside the login/register transaction.
 
 ## 8. Roleplay and suggestion
 
@@ -554,7 +575,8 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 | `CORS_ALLOW_ORIGINS` | local Vite (`:5173`) + `https://shibirgpt.potropollob.com` | JSON list. An explicit allow-list, not `*`. |
 | `ENABLE_DOCS` | `false` | Serves `/docs`, `/redoc`, `/openapi.json` when true. Local development only. |
 | `COOKIE_SECURE` | `true` | Secure flag on the `shibir_owner` cookie. `false` only for plain-http local dev. |
-| `MAX_SESSIONS_PER_OWNER` / `MAX_SESSIONS_TOTAL` | `50` / `10000` | Session caps; past them the least-recently-updated session is evicted. No TTL yet. |
+| `GUEST_CONVERSATION_CAP` / `USER_CONVERSATION_CAP` | `50` / `500` | Live conversations per owner; past the cap the least-recently-updated is soft-deleted. Replaced `MAX_SESSIONS_PER_OWNER` / `MAX_SESSIONS_TOTAL` (2026-10-24). |
+| `GUEST_HISTORY_RETENTION_DAYS` | `30` | `scripts.purge_history` hard-deletes guest conversations idle this long, and soft-deleted ones this old. |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Read by uvicorn, not `Settings`. Compose sets it to the pinned network gateway `172.28.0.1`: the host proxy reaches the container from there. |
 | `HOST` / `PORT` | `0.0.0.0` / `9200` | Not read by `run.sh` or the Dockerfile, which hard-code them (§14). |
 
@@ -624,8 +646,9 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 - **Measure quality:** see [docs/evaluation.md](docs/evaluation.md).
 - **Deploy:** automatic. A push to `main` runs `.github/workflows/deploy.yml`, which SSHes to the
   VPS with a forced-command key that can only run `scripts/deploy.sh`: reset to `origin/main`,
-  `docker compose up -d --build`, poll `/health` for 180 s, and on failure roll back to the
-  previous commit and exit 1. Rollback is code only (no migrations exist). One-time setup:
+  `docker compose up -d --build`, `docker compose exec -T app uv run alembic upgrade head`, poll
+  `/health` for 180 s, and on failure roll back to the previous commit and exit 1. Rollback is
+  code only: migrations are not downgraded, so keep revisions additive. One-time setup:
   [docs/auto-deploy.md](docs/auto-deploy.md). The old systemd unit `shibirgpt.service`
   (`run.sh` on the host) must stay disabled, or it fights the container for port 9200. Scaling
   guidance: [docs/deployment.md](docs/deployment.md).
@@ -645,16 +668,16 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
   letter in the 2026-10-11 test. Fix by buffering sentences or cleaning the stream on the client.
 - **Heavy dependencies in GPU mode:** torch, sentence-transformers and the `nvidia-*` packages are
   still required even when `GPU_SERVICE_URL` is set. Moving them to an optional extra is planned.
-- **Shallow deploy health check:** auto-deploy (§12) gates on `/health`, which loads no models
-  and checks neither Postgres nor Chroma, so a broken database, model or OpenAI setup still
-  passes and is not rolled back. A `/ready` endpoint is planned.
+- **Shallow deploy health check:** auto-deploy (§12) still gates on `/health`, which checks
+  nothing. `GET /ready` checks Postgres and Chroma (not models or OpenAI); set `HEALTH_URL` to
+  it on the VPS to gate deploys on both.
 - **Hard-coded host and port:** `run.sh` and the Dockerfile start uvicorn on `0.0.0.0:9200`
   regardless of `HOST`/`PORT`.
-- **Single-worker sessions:** `session_store.py` is an in-process dict (§7).
-- **No accounts and no Python-level rate limiting or session TTL** (the app is published on
-  `127.0.0.1:9200` only, behind the proxy in `deploy/`, which rate-limits `/chat`). Sessions are
-  isolated per anonymous owner cookie only; clearing cookies loses access, and a client that keeps
-  discarding its cookie can fill the global cap. See [SECURITY.md](SECURITY.md).
+- **No TTL on live user conversations and no scheduled purge:** `scripts/purge_history.py`
+  exists but nothing runs it yet (cron on the VPS is the plan). A guest that keeps discarding its
+  cookie can create unbounded owners, each capped at `GUEST_CONVERSATION_CAP`, until the purge
+  runs. Sessions are isolated per anonymous owner cookie only; clearing cookies loses access.
+  See [SECURITY.md](SECURITY.md).
 - **Vector store:** still local Chroma. A move to pgvector or Qdrant is planned for a corpus of
   several million chunks, but not started.
 - **No lint/format tooling:** the dev dependency group contains only `pytest`.

@@ -5,9 +5,12 @@ Every push to `main` (normally a merged release PR from `dev`) updates the VPS a
 1. `.github/workflows/deploy.yml` opens an SSH connection to the VPS with a dedicated key.
 2. That key may only run [`scripts/deploy.sh`](../scripts/deploy.sh) (a forced command in
    `authorized_keys`). The script resets the checkout to `origin/main`, runs
-   `docker compose up -d --build`, and polls `http://localhost:9200/health`.
-3. If the build fails or `/health` doesn't respond within 180 s, the script resets to the
-   previous commit, rebuilds it, and exits 1, so the Actions run fails and you are notified.
+   `docker compose up -d --build`, applies schema migrations with
+   `docker compose exec -T app uv run alembic upgrade head`, and polls
+   `http://localhost:9200/health`.
+3. If the build or the migration fails, or `/health` doesn't respond within 180 s, the script
+   resets to the previous commit, rebuilds it, and exits 1, so the Actions run fails and you are
+   notified.
 
 Deploys never overlap: Actions queues them (`concurrency: deploy-production`) and the script
 holds a `flock`. You can also run a deploy by hand on the VPS: `scripts/deploy.sh`.
@@ -92,15 +95,18 @@ deployed, the health check and the final `deployed <commit>` line. After that, e
 ## Notes
 
 - **Rollback restores code only.** It can't undo database changes, so a release that changes the
-  schema or data must be backward-compatible with the previous code. There are no migrations in
-  this repo yet; adding them would need a step in `deploy.sh`.
+  schema or data must be backward-compatible with the previous code. Migrations live in
+  `migrations/` (Alembic) and `deploy.sh` applies them before the health check; a rollback does
+  not downgrade them, so keep every revision additive (new tables or nullable columns).
 - **After a rollback the VPS runs an older commit than `main`.** Fix forward with a new commit
   to `main`, or re-run the workflow once the cause (for example a missing `.env` variable) is fixed.
 - **Rebuilds reuse the Docker layer cache.** Dependencies are reinstalled only when
   `pyproject.toml` or `uv.lock` change, so most deploys take seconds to a few minutes. The
   script runs `docker image prune -f` after a successful deploy to remove dangling images.
 - **The health check only proves the app started.** `/health` loads no models (they load lazily
-  on the first request), so a broken model, database or OpenAI setup can still pass it. Smoke-test
+  on the first request), so a broken model, database or OpenAI setup can still pass it.
+  `GET /ready` additionally checks Postgres (`SELECT 1`) and the Chroma collection and returns
+  503 naming the failed check; point `HEALTH_URL` at it to gate deploys on both. Smoke-test
   `/chat` after deploys that touch retrieval or generation (see CLAUDE.md §12).
 - **CI is not re-checked at deploy time.** Merges to `main` arrive through PRs that passed CI,
   but a manual "Run workflow" or a direct push deploys `main` as it is.
