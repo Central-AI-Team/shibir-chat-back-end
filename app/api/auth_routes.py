@@ -126,15 +126,23 @@ def _unavailable(_: SQLAlchemyError) -> HTTPException:
 
 def _start_session(db, user: User, request: Request) -> tuple[str, int]:
     """Revoke any session the browser brought along (never reuse it), create a
-    fresh one and commit. Returns (token, moved guest chat sessions)."""
+    fresh one, move the guest's chats to the account and commit it all
+    together. Returns (token, moved guest chat sessions)."""
     incoming = auth_sessions.request_token(request)
     if incoming is not None:
         auth_sessions.revoke_token(db, incoming)
     token = auth_sessions.create(db, user, request)
-    db.commit()
-    # Only the guest identified by the owner cookie on THIS request is migrated.
+    # Only the guest identified by the owner cookie on THIS request is migrated:
+    # UPDATE conversations SET owner_key = <user key>, user_id = <id> WHERE
+    # owner_key = <guest key>, in the login transaction, so a failed commit
+    # moves nothing.
     guest_owner = peek_owner(request)
-    moved = reassign_owner(guest_owner, user_owner_key(user.id)) if guest_owner else 0
+    moved = (
+        reassign_owner(guest_owner, user_owner_key(user.id), user_id=user.id, db=db)
+        if guest_owner
+        else 0
+    )
+    db.commit()
     return token, moved
 
 

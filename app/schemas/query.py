@@ -59,7 +59,10 @@ class ConversationSummary(BaseModel):
 
     id: str
     title: str
-    message_count: int
+    message_count: int  # every stored turn, not just the read window
+    # The intent of the last turn ("QA", "ROLEPLAY", ...), as stored on the
+    # conversation. Optional so older clients and fixtures without it still parse.
+    mode: str | None = None
     created_at: datetime
     updated_at: datetime
 

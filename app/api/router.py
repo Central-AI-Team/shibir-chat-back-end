@@ -18,10 +18,10 @@ their underlying service functions (answer_question, generate_chapter_note,
 generate_book_notes_from_text) are unchanged and are still called from here,
 just not exposed as separate routes.
 
-The /conversations endpoints read app.services.session_store, which is an
-in-process dict -- see that module's docstring: they only see sessions this
-worker handled and lose everything on restart. Good enough for the current
-single-worker deployment; a shared store (Redis / DB) is the upgrade path.
+The /conversations endpoints read app.services.session_store, which is backed
+by the Postgres tables conversations / messages -- see that module's docstring
+for the ownership rule and the read window. Sessions survive restarts and are
+shared across workers.
 
 Access control: every route declares a level in app/auth/policy.py. Chat and
 conversation routes resolve the caller's principal (app/api/deps.py) -- a
@@ -152,18 +152,20 @@ def _guest_fields(principal: Principal, reservation: guest_quota.Reservation | N
     return {"guest_remaining": reservation.remaining, "guest_limit": settings.guest_message_limit}
 
 
-def _resolve_session(session_id: str | None, owner: str) -> tuple[str, dict]:
-    """The owner's session if the id exists AND is theirs; otherwise (no id,
-    malformed, unknown, someone else's) a NEW session under a fresh server-issued id,
-    which the response returns. Unknown and not-owned look identical, so ids
-    cannot be probed, and the client's id is never reused. Why not 404: the
-    store is in-memory, so every restart/deploy made each open chat 404 until
-    the front-end dropped its id; this restores main's silent fresh start."""
+def _resolve_session(session_id: str | None, principal: Principal) -> tuple[str, dict]:
+    """The caller's session if the id exists AND is theirs; otherwise (no id,
+    malformed, unknown, deleted, someone else's) a NEW session under a fresh
+    server-issued id, which the response returns. Unknown and not-owned look
+    identical, so ids cannot be probed, and the client's id is never reused.
+    Why not 404: when the store was in-memory every restart made each open
+    chat 404 until the front-end dropped its id; the silent fresh start stays
+    because the front-end relies on it. A logged-in caller's user_id is stored
+    on the row and selects the user cap."""
     if session_id is not None and _SESSION_ID_RE.fullmatch(session_id):
-        session = get_owned_session(session_id, owner)
+        session = get_owned_session(session_id, principal.owner_key)
         if session is not None:
             return session_id, session
-    return create_session(owner)
+    return create_session(principal.owner_key, user_id=principal.user_id)
 
 
 def _format_note_result(result: dict) -> str:
@@ -186,8 +188,8 @@ def _record_turn(
     the citations returned with the answer; they are stored on the assistant
     turn so GET /conversations/{id}/messages can hand them back.
 
-    Skipped for ROLEPLAY: roleplay_service already appends both turns to
-    session["history"] itself, so recording again here would double them.
+    Skipped for ROLEPLAY: roleplay_service already appends both turns through
+    append_history() itself, so recording again here would double them.
     """
     if intent != "ROLEPLAY":
         append_history(session_id, "user", message)
@@ -245,7 +247,7 @@ async def _chat(
     if len(message) > settings.max_message_chars:
         raise HTTPException(status_code=413, detail=_too_long_detail(settings.max_message_chars))
 
-    session_id, session = _resolve_session(body.session_id, owner)
+    session_id, session = _resolve_session(body.session_id, principal)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
     trace_user, trace_session = trace_ids(owner, session_id)
 
@@ -401,7 +403,7 @@ def chat_stream(
         return rejected
     ip = _client_ip(request)
 
-    session_id, session = _resolve_session(body.session_id, owner)
+    session_id, session = _resolve_session(body.session_id, principal)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
     trace_user, trace_session = trace_ids(owner, session_id)
 
