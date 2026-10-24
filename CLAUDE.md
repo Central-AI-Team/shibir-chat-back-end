@@ -41,13 +41,19 @@ app/
     router.py             HTTP routes (§7). Thin: validates input, dispatches to services,
                           maps upstream failures to 503 / SSE `error`.
   services/
-    intent_classifier.py  classify_intent(message, has_active_roleplay_session) -> NOTE |
-                          ROLEPLAY | SUGGESTION | QA. Regex first (Bengali + Banglish
-                          patterns); one LLM call (task "intent") only if nothing matches.
-                          An active roleplay session stays ROLEPLAY unless the message
-                          matches an exit phrase ("stop roleplay", "রোলপ্লে বন্ধ", ...).
-    qa_service.py         answer_question(query) -> QueryResponse. Retrieval, relevance gate,
-                          grounded generation (§4).
+    intent_classifier.py  classify_intent(message, has_active_roleplay_session, history=None)
+                          -> NOTE | ROLEPLAY | SUGGESTION | CHITCHAT | QA. Regex first
+                          (Bengali + Banglish patterns); one LLM call (task "intent") only
+                          if nothing matches. With history, that same call also condenses
+                          a follow-up into a standalone Bengali question (§5 "Intent");
+                          condense(message, history) hands it to qa_service. An active
+                          roleplay session stays ROLEPLAY unless the message matches an
+                          exit phrase ("stop roleplay", "রোলপ্লে বন্ধ", ...).
+    qa_service.py         The ONE QA implementation: _prepare() (small-talk split,
+                          condense, carry-over, retrieval, per-citation gate) behind
+                          answer_question(message, history) -> QueryResponse and
+                          qa_stream(message, history) -> (sources, deltas,
+                          standalone_query) for /chat/stream (§4).
     suggestion_service.py give_suggestion(query) -> (str, list[Citation]). Same retrieval and
                           gate as QA, different prompt (§8).
     note_service.py       generate_chapter_note(chapter_id) and
@@ -90,15 +96,18 @@ app/
     chroma_client.py      get_collection(): the ONLY place a Chroma PersistentClient is
                           created. The collection uses hnsw:space="cosine" (Chroma's default
                           is L2, which would break similarity thresholds).
-    retriever.py          retrieve_relevant_docs(query) -> list[Citation]:
+    retriever.py          retrieve_relevant_docs(query, extra_row_keys=None) -> list[Citation]:
                           expand_query → embed the query → Chroma FETCH_K neighbours
-                          → merge + dedupe → drop below MIN_SIMILARITY → rerank →
-                          TOP_K. Citations carry `similarity` (cosine pre-filter) and
-                          `rerank_score` (the real relevance signal).
-    generator.py          generate_answer(query, citations) -> str (task "qa") and
-                          stream_answer() for /chat/stream. Bengali system prompt with
-                          numbered excerpts (§4). QA and suggestion answers go through
-                          with_script_check() (script_check.py).
+                          → merge + dedupe → drop below MIN_SIMILARITY → append every
+                          chunk of the extra_row_keys pages (carry-over, §4) → rerank →
+                          TOP_K. Citations carry `similarity` (cosine pre-filter),
+                          `rerank_score` (the real relevance signal) and `row_key`.
+    generator.py          generate_answer(query, citations, history=, original_message=,
+                          style_rules=) -> str (task "qa") and stream_answer() for
+                          /chat/stream; both build the prompt with build_messages().
+                          Bengali system prompt with numbered excerpts (§4). QA and
+                          suggestion answers go through with_script_check()
+                          (script_check.py).
     script_check.py       count_stray_tokens / strip_stray: finds letters from the wrong
                           script in a Bengali answer (Arabic fused into a Bengali word,
                           Cyrillic, Thai, ...). Arabic is allowed only as a quotation (a run of
@@ -207,27 +216,50 @@ idempotent. The running app does not read them.
    anything else gets standard Bengali, never Banglish. Never mix the two in one answer. The LLM
    picks the language (a word-list heuristic mislabels Banglish as English). Excerpt labels stay
    `[১]`, `[২]` either way. Canned greeting replies are still Bengali.
+5. (rule ৬ in the prompt) Treat earlier turns as context for what was said, never as sources:
+   every claim still comes from the current excerpts, and a fact from an earlier answer that
+   the current excerpts do not contain is not repeated.
+
+**Conversation history in QA** (2026-10-24, roadmap §1). `answer_question(message, history)` /
+`qa_stream(message, history)` receive the session's recent turns and use them three ways:
+(a) **condensation**: the intent call returns `standalone_query`, the message rewritten as a
+Bengali question that needs no history ("আরো বলো" -> "যাকাত সম্পর্কে আরো বিস্তারিত বলো"); retrieval
+runs on it, and it goes in the prompt as `প্রশ্ন:` with the user's own wording above it as
+`ব্যবহারকারীর বার্তা:` so tone and the language rule follow the real message; (b) **carry-over**:
+the previous assistant turn's cited pages (`Citation.row_key`, stored with the turn) are added
+to the rerank pool via `extra_row_keys`, so "explain [২] more" reaches the right page even when
+condensation is imperfect; (c) the last `QA_HISTORY_TURNS` (4) turns, content only, go between
+the system and user messages of the answer prompt. `standalone_query` is stored on the user turn
+(`messages.standalone_query`) and shown on the `expand-query` trace span. Roleplay and
+suggestion are untouched.
 
 No `temperature` is passed: `gpt-5-mini` is a reasoning model and rejects any value except its
 default of 1 (§5).
 
-**The relevance gate is decided in code, by score, and the LLM is always called.** If the top
-citation's `rerank_score` is below `settings.min_rerank_score`, `qa_service.answer_question()`
-calls `generate_answer()` with an **empty** citation list, and the prompt has the model explain in
-its own words that the books do not cover the question. `sources` is `[]` in that case. There is
-no canned refusal string.
+**The relevance gate is decided in code, by score, per citation, and the LLM is always
+called.** `qa_service.gate()` keeps every citation whose `rerank_score` is at least
+`settings.min_rerank_score`, in rerank order; those are the prompt's excerpts and the response's
+`sources`. When none passes, `generate_answer()` is called with an **empty** citation list, and
+the prompt has the model explain in its own words that the books do not cover the question.
+`sources` is `[]` in that case. There is no canned refusal string. (Until 2026-10-24 only the
+top citation was checked and all `TOP_K` went through together; the threshold is unchanged, but
+re-run `tune_threshold` when it is next tuned, since the operating point moved slightly.)
 
 This fixes an old bug where sources were always attached, so the UI could show "not in the
 library" next to a populated source list. The answer text and the sources can no longer
 contradict each other. After changing the gate, re-verify with an on-topic Bengali question, the
 same question in Banglish, and an off-topic question (§12).
 
-**Conversational shortcut.** `qa_service._is_conversational()` (mirrored in `router._qa_stream()`
-for streaming) matches short greetings, thanks and farewells in Bengali and common Banglish
-spellings ("hello", "kemon achen", "dhonnobad") **before** retrieval. A match returns a random
-reply from a small fixed set with no retrieval, no LLM call and `sources: []`. Messages longer
-than six words always go through normal retrieval, so a real question that starts with "হ্যালো" is
-still answered.
+**Conversational shortcut.** `chitchat_service.preface()` (called once, in
+`qa_service._prepare()`, for both `/chat` and `/chat/stream`) matches short greetings, thanks and
+farewells in Bengali and common Banglish spellings ("hello", "kemon achen", "dhonnobad")
+**before** retrieval. A match returns a random reply from a small fixed set with no retrieval, no
+LLM call and `sources: []`. Messages longer than six words always go through normal retrieval, so
+a real question that starts with "হ্যালো" is still answered.
+
+**One QA path.** `/chat` and `/chat/stream` share `qa_service._prepare()` for everything up to
+the gate; they differ only in the final call (`generate_answer`, stray-script checked, vs
+`stream_answer`, unchecked). The router carries no QA logic of its own any more; do not add any.
 
 ## 5. LLM provider (`app/core/llm.py`)
 
@@ -271,11 +303,23 @@ several times: `openai/gpt-oss-20b` passed a single run but misspelled key Bangl
   Latin word untranslated. Cost: Bengali with one stray Latin word pays one rewrite call (~3-4 s).
   Rewrites are validated (`_is_bengali_output`, >= 80 % Bengali); a non-Bengali reply is retried
   once, and a non-Bengali primed rewrite from the intent call is discarded.
-- **Intent.** Greetings never reach the LLM (`classify_intent` returns QA, `answer_question`/
-  `_qa_stream` send the canned reply). When the LLM is needed for a non-Bengali message, ONE call
-  returns `{"intent","rewritten_query"}` and primes `expand_query()` (`COMBINE_INTENT_REWRITE`;
-  the same `is_bengali_query()` decides whether a message needs it); invalid JSON falls back to
-  the old two calls.
+- **Condensation skip** (`intent_classifier.should_skip_condense`). With history, "already
+  Bengali" is not enough to skip the LLM: "আরো বলো" is pure Bengali and meaningless alone. A
+  Bengali message skips condensation only when there is no history, or when it has at least
+  `CONDENSE_MIN_WORDS` (6) words and matches none of `ANAPHORA`
+  (এটা|এটি|সেটা|সেটি|ওটা|ওই|এই|সেই|আরো|আরও|বিস্তারিত|উদাহরণ|তাহলে|কেন|কীভাবে এটা|ওখানে|সেখানে).
+  Non-Bengali messages always go to the LLM. The false-skip rate of the list has not been
+  measured yet (roadmap §3).
+- **Intent.** Greetings never reach the LLM (`classify_intent` returns QA, `qa_service._prepare`
+  sends the canned reply). When the LLM is needed, ONE call returns
+  `{"intent","rewritten_query"}` and primes `expand_query()` (`COMBINE_INTENT_REWRITE`); with
+  history and the condensation skip not applying, the same call runs with the roadmap §1
+  prompt and the last `QA_HISTORY_TURNS` turns (assistant turns cut to 300 chars, prefixed
+  with the cited `বই › অধ্যায়` from the stored sources) and also returns `standalone_query`.
+  That field is validated like the rewrite (>= 80 % Bengali): retried once, else the raw message
+  is used and `query_rewriter.note_fallback()` counts it with a warning. Invalid JSON falls back
+  to the old two calls, which never condense. Without history the prompt is byte-identical to
+  the pre-condensation one.
 - **Embedding LRU** (`embedder.embed_queries`, `EMBED_CACHE_SIZE`), **startup warm-up** in the
   lifespan (background; failure only logs; `WARMUP_ON_STARTUP`), **note map calls** run
   concurrently (`NOTE_MAP_CONCURRENCY`; each task gets the request's contextvars).
@@ -394,12 +438,15 @@ on the injected response, so it calls `apply_owner_cookie()`. Do not move this i
 
 - `mode` is `qa`, `note`, `roleplay` or `suggestion`.
 - `sources` is `[]` for `note` and `roleplay`, and for `qa`/`suggestion` whenever retrieval did
-  not pass the gate. It is never populated alongside a "not found" answer.
+  not pass the gate. For `qa` it holds exactly the citations that passed it individually (§4),
+  each with `row_key`. It is never populated alongside a "not found" answer.
 - An upstream failure (OpenAI `APIError` or `GPUServiceError`) returns **503** with a Bengali
   "temporarily unavailable" detail, never a bare 500.
 
 **`POST /chat/stream`**: the same request and dispatch, returned as events `sources`, then one or
 more `token`, then `done` (`mode`, `session_id`, `response_time_ms`). QA streams token by token
+(from `qa_service.qa_stream`, the same preparation as `/chat`; `sources` is the per-citation
+grounding)
 through `generator.stream_answer()`; the other modes send their whole answer as one `token`. An
 upstream failure emits a single `error` event instead.
 
