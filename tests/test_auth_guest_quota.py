@@ -180,9 +180,9 @@ def test_quota_survives_a_restart(tmp_path, monkeypatch):
         assert _chat(client).status_code == 200
     engine.dispose()
 
-    # "restart": every in-process store is empty, the database is not
+    # "restart": every in-process store is empty, the database (quota and,
+    # since the move to Postgres, the chat sessions) is not
     rate_limiter.reset()
-    monkeypatch.setattr(session_store, "_sessions", {})
     engine = boot()
     restarted = TestClient(app, client=("10.0.0.1", 50000), headers={"Origin": "http://localhost:5173"},
                            cookies=dict(client.cookies))

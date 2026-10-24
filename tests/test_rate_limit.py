@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.deps import COOKIE_NAME
+from app.api.deps import COOKIE_NAME, hash_token
 from app.core.config import settings
 from app.main import app
 from app.services import rate_limiter, session_store
@@ -137,11 +137,12 @@ def test_rejected_request_creates_no_session(clock, limits):
     limits(ip=1)
     client = _client()
     assert _chat(client).status_code == 200
-    before = len(session_store._sessions)
+    owner = hash_token(client.cookies[COOKIE_NAME])
+    before = len(session_store.list_sessions(owner))
     with patch("app.api.router.classify_intent") as mock_classify:
         assert client.post("/chat", json={"message": "আবার"}).status_code == 429
         assert client.post("/chat/stream", json={"message": "আবার"}).status_code == 429
-    assert len(session_store._sessions) == before
+    assert len(session_store.list_sessions(owner)) == before
     mock_classify.assert_not_called()
 
 
