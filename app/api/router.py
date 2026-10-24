@@ -38,7 +38,6 @@ browser Origin that is not on the CORS allow-list (CSRF).
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import re
@@ -69,9 +68,7 @@ from app.core import timing, tracing
 from app.core.network_errors import NETWORK_ERRORS, NETWORK_UNAVAILABLE_DETAIL, is_network_error
 from app.core.config import settings
 from app.rag.gpu_client import GPUServiceError
-from app.rag.generator import stream_answer
 from app.rag.script_check import strip_stray
-from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import (
     ChatRequest,
     ChatResponse,
@@ -81,10 +78,10 @@ from app.schemas.query import (
     SESSION_ID_PATTERN,
 )
 from app.services import rate_limiter
-from app.services.chitchat_service import preface, respond
+from app.services.chitchat_service import respond
 from app.services.intent_classifier import classify_intent
 from app.services.note_service import generate_book_notes_from_text
-from app.services.qa_service import answer_question
+from app.services.qa_service import answer_question, qa_stream
 from app.services.roleplay_service import handle_roleplay
 from app.services.session_store import (
     append_history,
@@ -336,7 +333,7 @@ async def _chat(
                 # The history is read before this turn is recorded below.
                 answer = strip_stray(await run_in_threadpool(respond, message, list(session["history"])))
             else:  # QA
-                qa_response = await run_in_threadpool(answer_question, message)
+                qa_response = await run_in_threadpool(answer_question, message, session["history"])
                 answer, sources = qa_response.answer, qa_response.sources
         except (APIError, GPUServiceError, *NETWORK_ERRORS) as e:
             # An upstream dependency failed: the LLM call (quota, bad key,
@@ -384,46 +381,6 @@ async def _chat(
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _qa_stream(
-    message: str, *, trace_id: str | None = None, parent_observation_id: str | None = None
-):
-    rec = timing.current()
-    """Return (sources, answer_delta_iterator) for a QA message, mirroring
-    the relevance gate in qa_service.answer_question -- that function stays
-    the source of truth for the non-streaming path; keep this in sync.
-
-    trace_id/parent_observation_id are threaded through to stream_answer() so
-    the streamed QA generation nests under the request's root span -- the
-    streaming path can't rely on ambient trace context for this (see
-    app/core/tracing.py's module docstring).
-    """
-    # Same small-talk split as answer_question (one shared function): pure
-    # small talk is answered directly, with no retriever / book-QA LLM call;
-    # "hi, <question>" yields the greeting as the first delta and then streams
-    # the answer to the question alone.
-    greeting, question = preface(message)
-    if not question:
-        return [], iter([greeting])
-
-    # The `retrieve-context` span is emitted inside retrieve_stages().
-    citations = retrieve_relevant_docs(question)
-    relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
-    tracing.record_gate(
-        grounded=relevant,
-        top_score=citations[0].rerank_score if citations else None,
-        threshold=settings.min_rerank_score,
-    )
-    grounding = citations if relevant else []
-    deltas = stream_answer(
-        question, grounding, trace_id=trace_id, parent_observation_id=parent_observation_id,
-        **({"timing_rec": rec} if rec else {}),
-    )
-    if greeting:
-        # Same text as the non-streaming "<greeting>\n\n<answer>".
-        deltas = itertools.chain([f"{greeting}\n\n"], deltas)
-    return grounding, deltas
 
 
 @router.post(
@@ -480,8 +437,11 @@ def chat_stream(
                 timing.set_mode(intent)
 
                 if intent == "QA":
-                    sources, deltas = _qa_stream(
-                        message, trace_id=trace_id, parent_observation_id=parent_observation_id
+                    # qa_service.qa_stream is the single QA implementation (the
+                    # gate and small-talk split used to be duplicated here).
+                    sources, deltas, _standalone = qa_stream(
+                        message, session["history"],
+                        trace_id=trace_id, parent_observation_id=parent_observation_id,
                     )
                     yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
                     for delta in deltas:

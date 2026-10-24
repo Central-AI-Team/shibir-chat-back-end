@@ -43,8 +43,8 @@ def _qa(answer: str = "উত্তর।"):
 def _stream_qa():
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
-        patch("app.api.router.retrieve_relevant_docs", return_value=[]),
-        patch("app.api.router.stream_answer", return_value=iter(["উত্তর।"])),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=[]),
+        patch("app.services.qa_service.stream_answer", return_value=iter(["উত্তর।"])),
     ):
         yield
 

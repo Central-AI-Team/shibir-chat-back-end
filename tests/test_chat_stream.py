@@ -62,8 +62,8 @@ def _events(raw: str) -> list[tuple[str, str]]:
 def test_stream_qa_emits_sources_then_tokens_then_done():
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
-        patch("app.api.router.retrieve_relevant_docs", return_value=_CITATIONS),
-        patch("app.api.router.stream_answer", return_value=iter(["উ", "ত্ত", "র।"])),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CITATIONS),
+        patch("app.services.qa_service.stream_answer", return_value=iter(["উ", "ত্ত", "র।"])),
     ):
         r = client.post("/chat/stream", json={"message": "তৃতীয় অধ্যায়ে কী আছে?"})
 
@@ -151,8 +151,8 @@ def test_stream_trace_is_finalized_with_the_answer(monkeypatch):
 
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
-        patch("app.api.router.retrieve_relevant_docs", return_value=_CITATIONS),
-        patch("app.api.router.stream_answer", return_value=iter(["হ্যাঁ", "।"])),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CITATIONS),
+        patch("app.services.qa_service.stream_answer", return_value=iter(["হ্যাঁ", "।"])),
     ):
         r = client.post("/chat/stream", json={"message": "প্রশ্ন?"})
 
@@ -173,15 +173,15 @@ def test_stream_qa_generation_receives_the_trace_id(monkeypatch):
 
     seen = {}
 
-    def _spy_stream_answer(message, citations, *, trace_id=None, parent_observation_id=None):
+    def _spy_stream_answer(message, citations, *, trace_id=None, parent_observation_id=None, **_kw):
         seen["trace_id"] = trace_id
         seen["parent_observation_id"] = parent_observation_id
         return iter(["x"])
 
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
-        patch("app.api.router.retrieve_relevant_docs", return_value=_CITATIONS),
-        patch("app.api.router.stream_answer", side_effect=_spy_stream_answer),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CITATIONS),
+        patch("app.services.qa_service.stream_answer", side_effect=_spy_stream_answer),
     ):
         r = client.post("/chat/stream", json={"message": "প্রশ্ন?"})
 
@@ -200,15 +200,15 @@ def test_stream_works_when_tracing_disabled(monkeypatch):
     assert tracing.is_enabled() is False
     seen = {}
 
-    def _spy_stream_answer(message, citations, *, trace_id=None, parent_observation_id=None):
+    def _spy_stream_answer(message, citations, *, trace_id=None, parent_observation_id=None, **_kw):
         seen["trace_id"] = trace_id
         seen["parent_observation_id"] = parent_observation_id
         return iter(["x"])
 
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
-        patch("app.api.router.retrieve_relevant_docs", return_value=_CITATIONS),
-        patch("app.api.router.stream_answer", side_effect=_spy_stream_answer),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CITATIONS),
+        patch("app.services.qa_service.stream_answer", side_effect=_spy_stream_answer),
     ):
         r = client.post("/chat/stream", json={"message": "প্রশ্ন?"})
 
@@ -224,7 +224,7 @@ def test_stream_gpu_service_failure_emits_error_event():
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
         patch(
-            "app.api.router.retrieve_relevant_docs",
+            "app.services.qa_service.retrieve_relevant_docs",
             side_effect=GPUServiceError("GPU service /rerank: HTTP 503", 503),
         ),
     ):
@@ -253,8 +253,8 @@ def test_stream_message_exactly_at_max_message_chars_works():
 
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
-        patch("app.api.router.retrieve_relevant_docs", return_value=_CITATIONS),
-        patch("app.api.router.stream_answer", return_value=iter(["উত্তর।"])),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CITATIONS),
+        patch("app.services.qa_service.stream_answer", return_value=iter(["উত্তর।"])),
     ):
         r = client.post("/chat/stream", json={"message": "ক" * settings.max_message_chars})
 
