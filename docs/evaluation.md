@@ -21,7 +21,8 @@ uv run python -m scripts.<script_name> [arguments]
 
 | File | Used by | Shape |
 |---|---|---|
-| `scripts/retrieval_eval_questions.json` | `eval_retrieval`, `tune_threshold`, `eval_responses`, `eval_ragas` | `{"query", "answerable", "relevant_ids": ["page_8219", ...]}`. Hand-labelled. |
+| `scripts/eval/seed.json`, `train.json`, `test.json` | `eval_retrieval`, `tune_threshold`, `eval_followups`, the nightly workflow | **v2** ([scripts/eval/schema.md](../scripts/eval/schema.md)): `id`, `slice`, `category`, `source_db`, `language`, `question`, `previous_turn`, `expected_row_keys`, `answerable`, `variant_of`, `review`, `notes`. `seed.json` is everything drafted; the split files hold accepted records only and are generated, never edited. `test.json` is held out: report on it, never tune on it. Workflow: [scripts/eval/README.md](../scripts/eval/README.md). |
+| `scripts/retrieval_eval_questions.json` | `eval_retrieval`, `tune_threshold`, `eval_responses`, `eval_ragas` | **v1**: `{"query", "answerable", "relevant_ids": ["page_8219", ...]}`. Hand-labelled, 40 questions; kept as is and read as slice `legacy`. |
 | `scripts/retrieval_eval_questions.example.json` | Template | The same shape, with a `_README` explaining how to label. |
 | `scripts/eval_questions.example.json` | `tune_threshold`, `eval_responses` (default) | `{"query", "answerable"}`. Copy it; do not edit it in place. |
 | `scripts/chat_intent_test_questions.json` | `eval_intent_routing`, `eval_task_routing` | Messages with their expected `/chat` mode. |
@@ -29,13 +30,20 @@ uv run python -m scripts.<script_name> [arguments]
 `relevant_ids` are Chroma `row_key` values (`page_<id>` or `article_<id>`), so one question can
 match a whole page rather than a single chunk.
 
-To extend the labelled set:
+To extend the labelled set (details in [scripts/eval/README.md](../scripts/eval/README.md)):
 
-1. `sample_corpus_pages`: print a reproducible, spread-out sample of published pages.
-2. Write one paraphrased question per page and record its `row_key`. `eval_retrieval --label`
-   shows the top candidates for unlabelled questions to speed this up.
-3. `validate_eval_set`: check the file before trusting it. It exits with status 1 on hard
-   errors, such as ids that do not exist.
+1. `sample_corpus_pages --n 150`: a reproducible, spread-out sample of published pages.
+2. `draft_eval_questions`: 1-2 Bengali questions per sampled page from the LLM (task
+   `eval_draft`), written to `scripts/eval/seed.json` as `review: "pending"`. Prints the cost
+   estimate first and needs `--yes`. Drafts reusing the page's wording are dropped.
+3. Review by hand: set `review` to `accepted` or `rejected`. Add variants, follow-up pairs and
+   negatives by hand. `eval_retrieval --label` still shows top candidates for unlabelled
+   questions.
+4. `validate_eval_set [file] [--no-chroma]`: every schema rule, live `row_key` existence,
+   known-bad pages, near-duplicates, and the slice shares against the roadmap targets. Exits 1
+   on hard errors.
+5. `split_eval_set`: accepted records to `train.json` / `test.json`, 70/30, stratified by slice
+   and category, fixed seed, variants kept with their `bn` record.
 
 ## Scripts
 
@@ -43,8 +51,9 @@ To extend the labelled set:
 
 | Script | What it answers |
 |---|---|
-| `eval_retrieval [file] [--k 1,3,5,10] [--no-rewrite] [--ablation]` | Are the right pages retrieved at all? Reports recall@k, hit rate and MRR, separately for the Chroma candidate pool and the reranked top-k. Each miss is classed as a retrieval loss or a rerank loss. No answers are generated. |
-| `tune_threshold [file] [--report out.json]` | Where should `MIN_RERANK_SCORE` sit? Compares top rerank scores of answerable and unanswerable questions and suggests a cutoff. Use at least 30 questions (about 20 answerable, 10 not). |
+| `eval_retrieval [file] [--k 1,3,5,10] [--no-rewrite] [--ablation]` | Are the right pages retrieved at all? Reports recall@k, hit rate and MRR, separately for the Chroma candidate pool and the reranked top-k. Each miss is classed as a retrieval loss or a rerank loss. No answers are generated. On a v2 file it also prints the same numbers, plus the gate confusion at `MIN_RERANK_SCORE`, **per slice and per category** (`breakdowns` in the JSON report). |
+| `tune_threshold [file] [--report out.json]` | Where should `MIN_RERANK_SCORE` sit? Compares top rerank scores of answerable and unanswerable questions and suggests a cutoff. Use at least 30 questions (about 20 answerable, 10 not). On a v2 file it adds the confusion counts per slice and per category at the current, balanced and conservative thresholds. The choice is a human's: the output is a table, not a setting. |
+| `eval_followups [file] [--k ...]` | Follow-up slice: recall@k / MRR of the follow-up question **with** condensation and carry-over (`classify_intent` + `condense` + `retrieve_stages(extra_row_keys=...)`) against the raw follow-up, after running `previous_turn` live to build the history. Exits with a message when the pipeline has no `history` parameter. |
 | `eval_query_expansion` | Do more query-rewrite variants (`MAX_VARIANTS`) improve recall enough to justify the extra embed and search cost? |
 | `eval_chunking` | Compares chunk size and overlap settings against the labelled set. Builds temporary indexes and is slow. |
 
@@ -69,6 +78,22 @@ To extend the labelled set:
 | Script | Purpose |
 |---|---|
 | `debug_pipeline` | Walks one query through every stage (normalize, intent, rewrite, embed, retrieve, rerank, gate, answer) and prints the intermediate results. |
+
+## Recording results and the nightly run
+
+`docs/eval-results.md` holds one row per run worth keeping (date, commit, eval-set version,
+slice, recall@5, MRR, gate precision, gate recall, notes). `.github/workflows/eval-nightly.yml`
+runs `eval_retrieval` on `scripts/eval/test.json` against a **staging** copy of the index every
+night (and on `workflow_dispatch`), and fails when recall@5 drops by more than 2 points or gate
+precision by more than 1 point against the last `all` row of that table. It never runs on PRs:
+it costs OpenAI calls and needs the index. Repository secrets it expects, all placeholders until
+set: `OPENAI_API_KEY`, `EVAL_GPU_SERVICE_URL`, `EVAL_GPU_API_KEY`, `EVAL_DATABASE_URL`,
+`EVAL_CHROMA_ARCHIVE_URL` (a URL to a tarball of the staging `chroma_db/`).
+
+**Citation validity** is checked on every production `generate_answer()` call
+(`app/rag/generator.citation_labels_valid`: every `[n]`, Bengali or ASCII digits, within
+`1..len(sources)`; no `[n]` when there are no sources). A failure is logged as a warning and
+recorded as `citation_valid` on the request trace. The answer is never changed.
 
 ## Lessons learned
 
