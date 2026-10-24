@@ -82,7 +82,7 @@ from app.services.chitchat_service import respond
 from app.services.intent_classifier import classify_intent
 from app.services.note_service import generate_book_notes_from_text
 from app.services.qa_service import answer_question, qa_stream
-from app.services.roleplay_service import handle_roleplay
+from app.services.roleplay_service import handle_roleplay, handle_roleplay_stream
 from app.services.session_store import (
     append_history,
     create_session,
@@ -169,6 +169,22 @@ def _resolve_session(session_id: str | None, principal: Principal) -> tuple[str,
     return create_session(principal.owner_key, user_id=principal.user_id)
 
 
+def _finish_session(session_id: str, intent: str, was_roleplaying: bool, roleplay) -> None:
+    """The end-of-request update_session() call for every mode. Mentor mode
+    stores the role, the smoothed level and the level window (persona
+    column); an exit phrase (was ROLEPLAY, now something else) clears all
+    three so the next roleplay starts fresh."""
+    if was_roleplaying and intent != "ROLEPLAY":
+        update_session(session_id, mode=intent, persona=None, role_id=None, level=None)
+    elif intent == "ROLEPLAY" and roleplay is not None:
+        update_session(
+            session_id, mode=intent, role_id=roleplay.role_id, level=roleplay.level,
+            persona=roleplay.level_window,
+        )
+    else:
+        update_session(session_id, mode=intent)
+
+
 def _format_note_result(result: dict) -> str:
     if "error" in result:
         return result["error"]
@@ -189,15 +205,12 @@ def _record_turn(
     """Persist one user+assistant turn to the session history. `sources` are
     the citations returned with the answer; they are stored on the assistant
     turn so GET /conversations/{id}/messages can hand them back.
-    `standalone_query` (QA) is the condensed question the turn was retrieved
-    with, stored on the user turn.
-
-    Skipped for ROLEPLAY: roleplay_service already appends both turns through
-    append_history() itself, so recording again here would double them.
+    `standalone_query` (QA and mentor-mode roleplay) is the condensed question
+    the turn was retrieved with, stored on the user turn. Every mode,
+    roleplay included, is recorded here and nowhere else.
     """
-    if intent != "ROLEPLAY":
-        append_history(session_id, "user", message, standalone_query=standalone_query)
-        append_history(session_id, "assistant", answer, sources=sources)
+    append_history(session_id, "user", message, standalone_query=standalone_query)
+    append_history(session_id, "assistant", answer, sources=sources)
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +319,7 @@ async def _chat(
     answer = ""
     sources: list[Citation] = []
     standalone: str | None = None
+    roleplay = None
     trace_error = False
     try:
         try:
@@ -331,7 +345,12 @@ async def _chat(
                 result = await run_in_threadpool(generate_book_notes_from_text, message)
                 answer = strip_stray(_format_note_result(result))
             elif intent == "ROLEPLAY":
-                answer = strip_stray(await run_in_threadpool(handle_roleplay, message, session))
+                # Mentor mode (docs/roleplay-v2.md): the answer comes from
+                # qa_stream under the role's style rules; refusals and the
+                # "which role?" reply are ordinary answers with no sources.
+                roleplay = await run_in_threadpool(handle_roleplay, message, session, session["history"])
+                answer, sources = strip_stray(roleplay.answer), roleplay.sources
+                standalone = roleplay.standalone_query
             elif intent == "SUGGESTION":
                 answer, sources = await run_in_threadpool(give_suggestion, message)
             elif intent == "CHITCHAT":
@@ -351,14 +370,7 @@ async def _chat(
             detail = NETWORK_UNAVAILABLE_DETAIL if is_network_error(e) else _LLM_UNAVAILABLE_DETAIL
             raise HTTPException(status_code=503, detail=detail) from e
 
-        if was_roleplaying and intent != "ROLEPLAY":
-            # Explicit exit phrase was detected -- drop out of roleplay mode and
-            # clear the persona so a future roleplay starts fresh instead of
-            # picking the old character back up.
-            update_session(session_id, mode=intent, persona=None)
-        else:
-            update_session(session_id, mode=intent)
-
+        _finish_session(session_id, intent, was_roleplaying, roleplay)
         _record_turn(session_id, intent, message, answer, sources, standalone_query=standalone)
 
         response_time_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -437,6 +449,7 @@ def chat_stream(
         answer = ""
         sources = []
         standalone = None
+        roleplay = None
         trace_error = False
         try:
             try:
@@ -471,17 +484,26 @@ def chat_stream(
                         answer = strip_stray(_format_note_result(generate_book_notes_from_text(message)))
                         sources = []
                     elif intent == "ROLEPLAY":
-                        answer = strip_stray(handle_roleplay(message, session))
-                        sources = []
+                        sources, deltas, finalize = handle_roleplay_stream(
+                            message, session, session["history"],
+                            trace_id=trace_id, parent_observation_id=parent_observation_id,
+                        )
+                        yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
+                        for delta in deltas:
+                            answer += delta
+                            yield _sse("token", {"text": delta})
+                        roleplay = finalize()
+                        standalone = roleplay.standalone_query
                     elif intent == "CHITCHAT":
                         answer = strip_stray(respond(message, list(session["history"])))
                         sources = []
                     else:  # SUGGESTION
                         answer, sources = give_suggestion(message)
-                    # These paths produce a whole answer at once -- emit it as a
-                    # single token event so the client renders them uniformly.
-                    yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
-                    yield _sse("token", {"text": answer})
+                    if intent != "ROLEPLAY":
+                        # These paths produce a whole answer at once -- emit it as
+                        # a single token event so the client renders them uniformly.
+                        yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
+                        yield _sse("token", {"text": answer})
             except (APIError, GPUServiceError, *NETWORK_ERRORS) as e:
                 trace_error = True
                 timing.record_error("request_total", e, rec=rec)
@@ -493,10 +515,7 @@ def chat_stream(
                 guest_quota.refund(reservation)
                 raise
 
-            if was_roleplaying and intent != "ROLEPLAY":
-                update_session(session_id, mode=intent, persona=None)
-            else:
-                update_session(session_id, mode=intent)
+            _finish_session(session_id, intent, was_roleplaying, roleplay)
             _record_turn(session_id, intent, message, answer, sources, standalone_query=standalone)
 
             response_time_ms = round((time.perf_counter() - start) * 1000, 2)
