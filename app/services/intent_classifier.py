@@ -440,14 +440,28 @@ def classify_intent(
     call, for condense()."""
     normalized = message.strip()
 
-    if has_active_roleplay_session and not _ROLEPLAY_EXIT_RE.search(normalized):
+    exiting = has_active_roleplay_session and bool(_ROLEPLAY_EXIT_RE.search(normalized))
+    if has_active_roleplay_session and not exiting:
         # An ongoing roleplay conversation shouldn't get reclassified as QA
         # (or anything else) on every follow-up turn.
         return _roleplay_turn(normalized, history, entering=False, method="session")
+    if exiting:
+        # "stop roleplay" / "রোলপ্লে বন্ধ" contains the entry words too, so the
+        # ROLEPLAY regex is skipped below. A bare exit phrase is small talk
+        # (chitchat_service acknowledges it); "stop roleplay, <question>"
+        # classifies the rest as usual.
+        rest = _ROLEPLAY_EXIT_RE.sub(" ", normalized)
+        rest = re.sub(r"করো|করুন|কর\b|দাও|দিন|এখন|প্লিজ|\b(?:please|plz|now|it|this|the)\b", " ", rest, flags=re.IGNORECASE)
+        if not re.sub(r"[\W_]+", "", rest):
+            timing.mark("intent_classification", "roleplay exit")
+            tracing.record_intent("CHITCHAT", method="regex")
+            return "CHITCHAT"
 
     for intent, pattern in _INTENT_PATTERNS:
         if pattern.search(normalized):
             if intent == "ROLEPLAY":
+                if exiting:
+                    continue
                 return _roleplay_turn(normalized, history, entering=True, method="regex")
             timing.mark("intent_classification", "regex")
             tracing.record_intent(intent, method="regex")

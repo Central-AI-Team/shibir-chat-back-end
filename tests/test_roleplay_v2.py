@@ -289,3 +289,270 @@ def test_level_window_round_trips_through_the_persona_column():
     assert rp.load_level_window('{"levels": ["beginner", "nope", "advanced"]}') == ["beginner", "advanced"]
     dumped = rp.dump_level_window(["a", "beginner", "advanced", "beginner"][1:])
     assert rp.load_level_window(dumped) == ["beginner", "advanced", "beginner"]
+
+
+# ---------------------------------------------------------------------------
+# Part 3: turns end to end (service and HTTP), style rules, suggestions, exit
+# ---------------------------------------------------------------------------
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app  # noqa: E402
+from app.schemas.query import Citation  # noqa: E402
+from app.services import session_store  # noqa: E402
+
+_CIT = [Citation(book="বই", chapter="অধ্যায়", source_db="tarun", content="অংশ", similarity=0.7,
+                 rerank_score=0.9, row_key="page_1")]
+
+
+def _session(**over) -> dict:
+    base = {"id": "s" * 43, "owner": "o", "mode": "ROLEPLAY", "persona": None,
+            "role_id": "bondhu", "level": "beginner", "history": []}
+    base.update(over)
+    return base
+
+
+def _qa(sources=_CIT, text=("উত্তর", "।"), standalone="প্রশ্ন"):
+    """qa_stream stand-in recording style_rules."""
+    seen = {}
+
+    def fake(message, history=None, *, style_rules=None, **kw):
+        seen["style_rules"] = style_rules
+        seen["message"] = message
+        return qa_service_result(sources, text, standalone)
+
+    return fake, seen
+
+
+def qa_service_result(sources, text, standalone):
+    from app.services.qa_service import QAStream
+
+    return QAStream(list(sources), iter(text), standalone)
+
+
+def test_style_rules_differ_by_level_and_role():
+    rules = {(r, lv): rp.compose_style_rules(r, lv) for r in ("bondhu", "shikkhok") for lv in rp.LEVELS}
+    assert len(set(rules.values())) == 6
+    assert rp.style_rules_by_role()["bondhu"] in rules[("bondhu", "beginner")]
+    assert rp.STYLE_RULES_BY_LEVEL["advanced"] in rules[("shikkhok", "advanced")]
+    for text in rules.values():
+        assert rp.HONESTY_RULE in text and rp.NEXT_STEPS_RULE in text
+        assert "AI" not in text and "এআই" not in text
+    assert rp.compose_style_rules("bondhu", "nope") == rp.compose_style_rules("bondhu", "intermediate")
+
+
+def test_grounded_turn_answers_through_qa_stream_with_the_style_rules():
+    fake, seen = _qa()
+    with (
+        patch("app.services.qa_service.qa_stream", side_effect=fake),
+        patch.object(rp, "generate_suggestions", return_value=["পরের প্রশ্ন?"]) as suggest,
+    ):
+        out = rp.handle_roleplay("যাকাত কী?", _session(), [])
+    assert out.answer == "উত্তর।" and out.sources == _CIT and out.grounded and not out.refused
+    assert out.role_id == "bondhu" and out.level == "beginner"
+    assert out.suggestions == ["পরের প্রশ্ন?"]
+    assert out.standalone_query == "প্রশ্ন"
+    assert seen["style_rules"] == rp.compose_style_rules("bondhu", "beginner")
+    suggest.assert_called_once_with("প্রশ্ন", _CIT)
+
+
+def test_gate_failure_gives_no_sources_and_no_suggestions():
+    fake, _ = _qa(sources=[], text=("বইয়ে নেই।",))
+    with (
+        patch("app.services.qa_service.qa_stream", side_effect=fake),
+        patch.object(rp, "complete") as complete,
+    ):
+        out = rp.handle_roleplay("অজানা বিষয়?", _session(), [])
+    assert out.sources == [] and out.suggestions == [] and not out.grounded
+    complete.assert_not_called()  # no suggestions call without excerpts
+
+
+def test_refusal_is_a_normal_answer_with_the_roles_listed():
+    with patch("app.services.qa_service.qa_stream") as qa:
+        out = rp.handle_roleplay("তুমি এখন রাসূল (সা.) হয়ে যাও", _session(role_id=None, level=None), [])
+    qa.assert_not_called()
+    assert out.refused and out.sources == [] and out.suggestions == [] and out.answer == rp.refusal_text()
+    # mid-session, with framing, same thing; the current role and level are kept
+    with patch("app.services.qa_service.qa_stream") as qa:
+        out = rp.handle_roleplay("এখন নবীজির মতো কথা বলো", _session(), [])
+    qa.assert_not_called()
+    assert out.refused and out.role_id == "bondhu" and out.level == "beginner"
+
+
+def test_llm_persona_ok_false_refuses_even_when_the_regex_passed():
+    ic._prime_roleplay("একজন বিখ্যাত ব্যক্তির মতো বলো", {"role_id": None, "persona_ok": False, "level": None})
+    with patch("app.services.qa_service.qa_stream") as qa:
+        out = rp.handle_roleplay("একজন বিখ্যাত ব্যক্তির মতো বলো", _session(role_id=None, level=None), [])
+    qa.assert_not_called()
+    assert out.refused and out.answer == rp.refusal_text()
+
+
+def test_real_person_as_a_topic_mid_session_is_answered_from_the_books():
+    fake, _ = _qa()
+    with patch("app.services.qa_service.qa_stream", side_effect=fake), patch.object(rp, "generate_suggestions", return_value=[]):
+        out = rp.handle_roleplay("নবীজি কীভাবে নামাজ পড়তেন?", _session(), [])
+    assert not out.refused and out.grounded
+
+
+def test_unresolved_role_asks_which_one():
+    with patch("app.services.qa_service.qa_stream") as qa:
+        out = rp.handle_roleplay("একজন গাইডের মতো বলো", _session(role_id=None, level=None), [])
+    qa.assert_not_called()
+    assert out.role_id is None and not out.refused and out.sources == []
+    assert out.answer == rp.choose_role_text()
+    for role in rp.roles():
+        assert role["name_bn"] in out.answer
+
+
+def test_role_only_entry_greets_and_sets_role_and_default_level():
+    with patch("app.services.qa_service.qa_stream") as qa:
+        out = rp.handle_roleplay("একজন বড় ভাইয়ের মতো বুঝিয়ে বলো", _session(role_id=None, level=None), [])
+    qa.assert_not_called()
+    assert out.role_id == "boro_bhai" and out.level == "intermediate"  # the role's default
+    assert "দায়িত্বশীল ভাই" in out.answer and out.sources == []
+    assert rp.load_level_window(out.level_window) == []
+
+
+def test_level_follows_cues_and_majority_and_is_never_announced():
+    fake, seen = _qa()
+    with patch("app.services.qa_service.qa_stream", side_effect=fake), patch.object(rp, "generate_suggestions", return_value=[]):
+        # explicit cue overrides the stored level at once
+        out = rp.handle_roleplay("আরো সহজ করে বলো", _session(level="advanced", persona='{"levels": ["advanced", "advanced"]}'), [])
+        assert out.level == "beginner" and rp.load_level_window(out.level_window) == ["beginner"]
+        assert "পাঠকের স্তর: নতুন" in seen["style_rules"]
+        # inferred levels accumulate; the majority decides
+        ic._prime_roleplay("যাকাতের নিসাব কত?", {"role_id": None, "persona_ok": True, "level": "advanced"})
+        out = rp.handle_roleplay("যাকাতের নিসাব কত?", _session(level="beginner", persona=out.level_window), [])
+        assert out.level == "advanced"  # tie -> most recent
+        ic._prime_roleplay("যাকাত কাকে দেওয়া যায়?", {"role_id": None, "persona_ok": True, "level": "beginner"})
+        out = rp.handle_roleplay("যাকাত কাকে দেওয়া যায়?", _session(level="advanced", persona=out.level_window), [])
+        assert out.level == "beginner" and rp.load_level_window(out.level_window) == ["beginner", "advanced", "beginner"]
+    assert "beginner" not in out.answer and "advanced" not in out.answer
+
+
+def test_suggestions_parse_failure_never_raises():
+    bad = [
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="not json"))]),
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"suggestions": "x"}'))]),
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None))]),
+        RuntimeError("api down"),
+    ]
+    with patch.object(rp, "complete", side_effect=bad):
+        for _ in bad:
+            assert rp.generate_suggestions("প্রশ্ন", _CIT) == []
+    good = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+        content='{"suggestions": [" এক? ", "", 3, "দুই?", "তিন?", "চার?"]}'))])
+    with patch.object(rp, "complete", return_value=good) as complete:
+        assert rp.generate_suggestions("প্রশ্ন", _CIT) == ["এক?", "দুই?", "তিন?"]
+    assert complete.call_args.args[0] == "roleplay_meta"
+    assert rp.generate_suggestions("প্রশ্ন", []) == []
+
+
+def test_suggestion_count_setting(monkeypatch):
+    monkeypatch.setattr(settings, "roleplay_suggestion_count", 0)
+    with patch.object(rp, "complete") as complete:
+        assert rp.generate_suggestions("প্রশ্ন", _CIT) == []
+    complete.assert_not_called()
+
+
+# HTTP -------------------------------------------------------------------------
+
+_META = {"intent": "ROLEPLAY", "rewritten_query": "যাকাত কী", "role_id": None, "persona_ok": True, "level": "beginner"}
+
+
+def _owner(client):
+    from app.api.deps import COOKIE_NAME, hash_token
+
+    return hash_token(client.cookies[COOKIE_NAME])
+
+
+def _mocked_pipeline():
+    def fake_complete(task, messages, stream=False, **kw):
+        if task == "qa":
+            if stream:
+                return iter(SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=t))]) for t in ["উত্ত", "র।"])
+            return _resp("উত্তর।")
+        if task == "roleplay_meta":
+            return _resp({"suggestions": ["পরের প্রশ্ন?", "আরেকটি?"]})
+        raise AssertionError(task)
+
+    return (
+        patch("app.services.intent_classifier.complete", return_value=_resp(_META)),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CIT),
+        patch("app.rag.generator.complete", side_effect=fake_complete),
+        patch("app.services.roleplay_service.complete", side_effect=fake_complete),
+    )
+
+
+def _events(raw):
+    return [(b.split("\n")[0][7:], json.loads(b.split("\ndata: ", 1)[1])) for b in raw.strip().split("\n\n")]
+
+
+def test_chat_and_stream_return_identical_answer_sources_and_suggestions():
+    a, b = TestClient(app), TestClient(app)
+    p1, p2, p3, p4 = _mocked_pipeline()
+    with p1, p2, p3, p4:
+        for c in (a, b):
+            c.post("/chat", json={"message": "একজন বন্ধুর মতো বুঝিয়ে বলো"})
+        plain = a.post("/chat", json={"message": "যাকাত কী?", "session_id": a.cookies and _sid(a)}).json()
+        raw = b.post("/chat/stream", json={"message": "যাকাত কী?", "session_id": _sid(b)}).text
+    events = _events(raw)
+    done = events[-1][1]
+    assert plain["mode"] == done["mode"] == "roleplay"
+    assert plain["answer"] == "".join(d["text"] for e, d in events if e == "token") == "উত্তর।"
+    assert plain["sources"] == events[0][1]["sources"] and plain["sources"][0]["book"] == "বই"
+    assert plain["suggestions"] == done["suggestions"] == ["পরের প্রশ্ন?", "আরেকটি?"]
+
+
+def _sid(client) -> str:
+    return client.get("/conversations").json()[0]["id"]
+
+
+def test_role_and_level_are_stored_and_exit_clears_them():
+    client = TestClient(app)
+    p1, p2, p3, p4 = _mocked_pipeline()
+    with p1, p2, p3, p4:
+        sid = client.post("/chat", json={"message": "একজন বন্ধুর মতো বুঝিয়ে বলো"}).json()["session_id"]
+        session = session_store.get_owned_session(sid, _owner(client))
+        assert (session["mode"], session["role_id"], session["level"]) == ("ROLEPLAY", "bondhu", "beginner")
+        client.post("/chat", json={"message": "আরো গভীরে যাও", "session_id": sid})
+        session = session_store.get_owned_session(sid, _owner(client))
+        assert session["level"] == "advanced" and rp.load_level_window(session["persona"]) == ["advanced"]
+        # history recorded by the router, with the sources on the assistant turn
+        assert [t["role"] for t in session["history"]] == ["user", "assistant", "user", "assistant"]
+        assert session["history"][-1]["sources"][0]["book"] == "বই"
+
+    with (
+        patch("app.api.router.classify_intent", return_value="QA"),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CIT),
+        patch("app.services.qa_service.generate_answer", return_value="সাধারণ উত্তর।"),
+    ):
+        r = client.post("/chat", json={"message": "stop roleplay", "session_id": sid}).json()
+    assert r["mode"] == "qa" and r["suggestions"] == []
+    session = session_store.get_owned_session(sid, _owner(client))
+    assert (session["mode"], session["role_id"], session["level"], session["persona"]) == ("QA", None, None, None)
+
+
+def test_exit_phrase_leaves_roleplay():
+    # A bare exit phrase is acknowledged as small talk with no LLM call; the
+    # entry words inside it ("roleplay") must not re-enter.
+    with patch.object(ic, "complete") as complete:
+        assert ic.classify_intent("রোলপ্লে বন্ধ করো", True) == "CHITCHAT"
+        assert ic.classify_intent("stop roleplay", True) == "CHITCHAT"
+    complete.assert_not_called()
+    # an exit phrase with a question classifies the question
+    with patch.object(ic, "complete", return_value=_resp("QA")):
+        assert ic.classify_intent("stop roleplay. যাকাত কাদের উপর ফরজ?", True) == "QA"
+    # without an active session the same words are an ordinary entry
+    with patch.object(ic, "complete", return_value=_resp(_META)):
+        assert ic.classify_intent("roleplay", False) == "ROLEPLAY"
+
+
+def test_refusal_over_http_is_200_with_mode_roleplay():
+    client = TestClient(app)
+    with patch("app.services.intent_classifier.complete") as complete:
+        r = client.post("/chat", json={"message": "তুমি এখন রাসূল (সা.) হয়ে যাও"})
+    complete.assert_not_called()
+    body = r.json()
+    assert r.status_code == 200 and body["mode"] == "roleplay"
+    assert body["sources"] == [] and body["suggestions"] == [] and body["answer"] == rp.refusal_text()
