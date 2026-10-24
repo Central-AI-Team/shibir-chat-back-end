@@ -169,6 +169,14 @@ def _resolve_session(session_id: str | None, principal: Principal) -> tuple[str,
     return create_session(principal.owner_key, user_id=principal.user_id)
 
 
+def _roleplay_trace(roleplay) -> dict | None:
+    """What the request trace records for a mentor-mode turn (§8 of the design)."""
+    if roleplay is None:
+        return None
+    return {"role_id": roleplay.role_id, "level": roleplay.level,
+            "refused": roleplay.refused, "grounded": roleplay.grounded}
+
+
 def _finish_session(session_id: str, intent: str, was_roleplaying: bool, roleplay) -> None:
     """The end-of-request update_session() call for every mode. Mentor mode
     stores the role, the smoothed level and the level window (persona
@@ -378,6 +386,7 @@ async def _chat(
             mode=intent.lower(),
             answer=answer,
             sources=sources,
+            suggestions=roleplay.suggestions if roleplay is not None else [],
             session_id=session_id,
             response_time_ms=response_time_ms,
             **_guest_fields(principal, reservation),
@@ -389,6 +398,7 @@ async def _chat(
             mode=intent.lower(),
             response_time_ms=round((time.perf_counter() - start) * 1000, 2),
             error=trace_error,
+            roleplay=_roleplay_trace(roleplay),
         )
         tracing.clear_request_trace()
 
@@ -525,6 +535,7 @@ def chat_stream(
                     "mode": intent.lower(),
                     "session_id": session_id,
                     "response_time_ms": response_time_ms,
+                    "suggestions": roleplay.suggestions if roleplay is not None else [],
                     **_guest_fields(principal, reservation),
                 },
             )
@@ -538,6 +549,7 @@ def chat_stream(
                 mode=intent.lower(),
                 response_time_ms=round((time.perf_counter() - start) * 1000, 2),
                 error=trace_error,
+                roleplay=_roleplay_trace(roleplay),
             )
             tracing.clear_request_trace()
             timing.finish_request(rec)
