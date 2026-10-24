@@ -259,11 +259,23 @@ def _key_rules(tag: str, answerable, keys: list[str], question, field: str = "re
 # corpus checks
 # ---------------------------------------------------------------------------
 
+LIVE_PAGE = 5000  # one unbounded get() on 77k chunks fails with "too many SQL variables"
+
+
 def live_row_keys() -> set[str]:
+    """Every row_key in the live collection, read page by page (read-only)."""
     from app.rag.chroma_client import get_collection
 
-    got = get_collection().get(include=["metadatas"])
-    return {m["row_key"] for m in got["metadatas"] if m.get("row_key")}
+    collection = get_collection()
+    keys: set[str] = set()
+    offset = 0
+    while True:
+        got = collection.get(include=["metadatas"], limit=LIVE_PAGE, offset=offset)
+        metas = got.get("metadatas") or []
+        keys.update(m["row_key"] for m in metas if m.get("row_key"))
+        if len(metas) < LIVE_PAGE:
+            return keys
+        offset += LIVE_PAGE
 
 
 def bad_page_ids() -> set[int]:
