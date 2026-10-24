@@ -242,3 +242,70 @@ def test_yes_writes_pending_records_and_skips_drafted_pages(tmp_path, monkeypatc
     records = json.loads(out.read_text(encoding="utf-8"))
     assert [r["id"] for r in records] == ["bn-0001", "bn-0002"]
     assert records[1]["expected_row_keys"] == ["page_1"] and records[1]["review"] == "pending"
+
+
+# -- split ----------------------------------------------------------------------
+
+from collections import Counter  # noqa: E402
+
+from scripts import split_eval_set as sp  # noqa: E402
+
+
+def _accepted_set() -> list[dict]:
+    out = []
+    for i in range(1, 21):
+        cat = "A" if i <= 12 else "B"
+        bn = rec(id=f"bn-{i:04d}", category=cat, question=f"প্রশ্ন নম্বর {i} এর বিষয়বস্তু কী বলা হয়েছে?",
+                 expected_row_keys=[f"page_{i}"])
+        out.append(bn)
+        if i % 2 == 0:
+            out.append(rec(id=f"bl-{i:04d}", slice="answerable_banglish", language="banglish", category=cat,
+                           question=f"proshno number {i} er bishoy ki?", expected_row_keys=[f"page_{i}"],
+                           variant_of=bn["id"]))
+    for i in range(1, 11):
+        out.append(dict(NEG, id=f"neg-{i:04d}", question=f"ইসলামে বিষয় {i} সম্পর্কে কী বিধান আছে?"))
+    out.append(rec(id="bn-0099", question="এটি পর্যালোচনায় বাদ পড়া একটি প্রশ্ন কি?", review="pending"))
+    out.append(rec(id="bn-0098", question="এটি প্রত্যাখ্যাত একটি প্রশ্ন কি?", review="rejected"))
+    return out
+
+
+def test_split_uses_accepted_only_is_deterministic_and_stratified():
+    records = _accepted_set()
+    train, test = sp.split(records)
+    assert sp.split(records) == (train, test)  # same seed, same files
+    ids = {r["id"] for r in train + test}
+    assert "bn-0099" not in ids and "bn-0098" not in ids
+    assert len(train) + len(test) == 40
+    # ~30 % per stratum: bn/A 12 families -> 4 test; bn/B 8 -> 2; neg 10 -> 3
+    by = Counter((r["slice"], r["category"]) for r in test if r["slice"] != "answerable_banglish")
+    assert by[("answerable_bn", "A")] == 4 and by[("answerable_bn", "B")] == 2
+    assert by[("unanswerable_on_theme", None)] == 3
+    assert [r["id"] for r in test] == sorted(r["id"] for r in test)
+
+
+def test_variants_stay_with_their_bn_record():
+    train, test = sp.split(_accepted_set())
+    side = {r["id"]: "test" for r in test} | {r["id"]: "train" for r in train}
+    for r in train + test:
+        if r.get("variant_of"):
+            assert side[r["variant_of"]] == side[r["id"]], r["id"]
+
+
+def test_split_changes_with_the_seed_and_single_strata_go_to_train():
+    records = _accepted_set()
+    assert sp.split(records, seed=1)[1] != sp.split(records, seed=2)[1]
+    lonely = [rec(id="bn-0001", category="Z")]
+    train, test = sp.split(lonely)
+    assert len(train) == 1 and test == []
+
+
+def test_split_cli_writes_both_files(tmp_path, capsys):
+    seed = tmp_path / "seed.json"
+    seed.write_text(json.dumps(_accepted_set(), ensure_ascii=False), encoding="utf-8")
+    train, test = tmp_path / "train.json", tmp_path / "test.json"
+    assert sp.main(["--seed-file", str(seed), "--train", str(train), "--test", str(test)]) == 0
+    assert "answerable_bn" in capsys.readouterr().out
+    assert len(json.loads(train.read_text())) + len(json.loads(test.read_text())) == 40
+    empty = tmp_path / "empty.json"
+    empty.write_text("[]")
+    assert sp.main(["--seed-file", str(empty), "--train", str(train), "--test", str(test)]) == 1
