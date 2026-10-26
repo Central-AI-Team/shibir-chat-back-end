@@ -353,18 +353,20 @@ def record_intent(intent: str, method: str) -> None:
 
 
 @_safe
-def record_rewrite(variants) -> None:
+def record_rewrite(variants, *, standalone_query: str | None = None) -> None:
+    """The `expand-query` span: the search string(s) retrieval used and, for a
+    condensed follow-up, the standalone question the intent call produced
+    (roadmap §1). The key is present only when condensation happened."""
     if _current_ctx.get() is None:
         return
     client = _client()
     if client is None:
         return
     variants = list(variants)
-    client.start_observation(
-        as_type="span",
-        name="expand-query",
-        output={"variants": variants, "n_variants": len(variants)},
-    ).end()
+    output = {"variants": variants, "n_variants": len(variants)}
+    if standalone_query is not None:
+        output["standalone_query"] = standalone_query
+    client.start_observation(as_type="span", name="expand-query", output=output).end()
 
 
 @_safe

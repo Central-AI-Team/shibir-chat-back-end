@@ -17,6 +17,11 @@ class Citation(BaseModel):
     # alone instead of guessing.
     similarity: float | None = None
     rerank_score: float | None = None
+    # Page/article-level id of the chunk ("page_842", "article_12"; ingest.py's
+    # row_key). Stored with the turn's sources so the next turn can carry the
+    # cited pages into its rerank pool (retriever extra_row_keys). None for
+    # citations built before this field existed.
+    row_key: str | None = None
 
 
 class QueryResponse(BaseModel):

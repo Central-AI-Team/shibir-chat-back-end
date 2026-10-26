@@ -56,12 +56,19 @@ _SYSTEM = f"""তুমি একজন জ্ঞানী, বিনয়ী �
 ৪। {ANSWER_LANGUAGE_RULE}
 ৫। সরাসরি উত্তর দিয়ে শুরু করো। সাধারণভাবে স্বাভাবিক, প্রবহমান অনুচ্ছেদে লেখো; বুলেট
    তখনই ব্যবহার করো যখন বিষয়বস্তু সত্যিই তালিকাধর্মী। শিরোনাম বা পরীক্ষার খাতার মতো
-   কাঠামো এড়িয়ে চলো। ছোট প্রশ্নে উত্তরও ছোট রাখো।"""
+   কাঠামো এড়িয়ে চলো। ছোট প্রশ্নে উত্তরও ছোট রাখো।
+৬। আগের পালার উত্তর শুধু "কী বলা হয়েছে" বোঝার প্রসঙ্গ; সেগুলো উৎস নয়। প্রতিটি দাবি
+   এখনকার "উদ্ধৃত অংশ" থেকেই আসবে এবং [১], [২] আকারে উৎস দেবে। আগের উত্তরে থাকা
+   কোনো তথ্য এখনকার উদ্ধৃত অংশে না থাকলে সেটি পুনরাবৃত্তি করবে না।"""
 
+# {original_line} is empty, or "ব্যবহারকারীর বার্তা: <what the user typed>\n\n"
+# when the question below is a condensed standalone version of it (roadmap
+# §1): the model answers the resolved question, but tone and the
+# answer-language rule (৪) follow the actual message.
 _USER = """উদ্ধৃত অংশসমূহ:
 {context}
 
-প্রশ্ন: {query}
+{original_line}প্রশ্ন: {query}
 
 উপরের নিয়ম মেনে প্রশ্নের ভাষায় উত্তর দাও।
 
@@ -86,15 +93,57 @@ def format_context(citations: list[Citation]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def _history_messages(history: list[dict] | None) -> list[dict]:
+    """The last settings.qa_history_turns turns as plain chat messages
+    (role + content only; stored sources and anything else are dropped)."""
+    out = []
+    for turn in history or []:
+        role, content = turn.get("role"), (turn.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            out.append({"role": role, "content": content})
+    return out[-settings.qa_history_turns:]
+
+
+def build_messages(
+    query: str,
+    citations: list[Citation],
+    *,
+    history: list[dict] | None = None,
+    original_message: str | None = None,
+    style_rules: str | None = None,
+) -> list[dict]:
+    """The chat messages for one QA generation, shared by the non-streaming
+    and streaming paths: [system (+ style_rules)] + history + [user].
+    With every keyword at its default this is exactly the pre-history prompt.
+    """
+    system = _SYSTEM if not style_rules else f"{_SYSTEM}\n\n{style_rules}"
+    original_line = (
+        f"ব্যবহারকারীর বার্তা: {original_message}\n\n"
+        if original_message and original_message != query
+        else ""
+    )
+    user = _USER.format(context=format_context(citations), query=query, original_line=original_line)
+    return [
+        {"role": "system", "content": system},
+        *_history_messages(history),
+        {"role": "user", "content": user},
+    ]
+
+
 def _generate_once(
     query: str,
     citations: list[Citation],
     *,
+    history: list[dict] | None = None,
+    original_message: str | None = None,
+    style_rules: str | None = None,
     model: str | None = None,
     client=None,
     extra_params: dict | None = None,
 ) -> str:
     """Generate a grounded answer with the production prompt/context format.
+
+    history / original_message / style_rules: see build_messages().
 
     model=client=None (the plain call every real caller makes) routes through
     complete("qa", ...) -- app/core/llm.py -- which resolves the "qa" task's
@@ -104,12 +153,10 @@ def _generate_once(
     bypasses that routing entirely and calls exactly what was asked for.
     """
     with timing.timed("prompt_build"):
-        messages = [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": _USER.format(
-                context=format_context(citations), query=query
-            )},
-        ]
+        messages = build_messages(
+            query, citations, history=history, original_message=original_message,
+            style_rules=style_rules,
+        )
     if model is None and client is None:
         response = complete("qa", messages, **(extra_params or {}))
     else:
@@ -153,6 +200,9 @@ def generate_answer(
     query: str,
     citations: list[Citation],
     *,
+    history: list[dict] | None = None,
+    original_message: str | None = None,
+    style_rules: str | None = None,
     model: str | None = None,
     client=None,
     extra_params: dict | None = None,
@@ -164,15 +214,23 @@ def generate_answer(
     comparisons are not flattered by the repair. Not applied to stream_answer():
     tokens are already sent by the time the answer could be checked.
     """
+    prompt = dict(history=history, original_message=original_message, style_rules=style_rules)
     if model is not None or client is not None:
-        return _generate_once(query, citations, model=model, client=client, extra_params=extra_params)
-    return with_script_check(lambda: _generate_once(query, citations, extra_params=extra_params))
+        return _generate_once(
+            query, citations, model=model, client=client, extra_params=extra_params, **prompt
+        )
+    return with_script_check(
+        lambda: _generate_once(query, citations, extra_params=extra_params, **prompt)
+    )
 
 
 def stream_answer(
     query: str,
     citations: list[Citation],
     *,
+    history: list[dict] | None = None,
+    original_message: str | None = None,
+    style_rules: str | None = None,
     trace_id: str | None = None,
     parent_observation_id: str | None = None,
     timing_rec=None,
@@ -194,12 +252,10 @@ def stream_answer(
     (see app/core/tracing.py's module docstring). None -> unchanged.
     """
     with timing.timed("prompt_build", rec=timing_rec):
-        messages = [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": _USER.format(
-                context=format_context(citations), query=query
-            )},
-        ]
+        messages = build_messages(
+            query, citations, history=history, original_message=original_message,
+            style_rules=style_rules,
+        )
     extra = {}
     if trace_id:
         extra["trace_id"] = trace_id

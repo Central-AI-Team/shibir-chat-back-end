@@ -206,20 +206,29 @@ def _derive_title(content: str) -> str:
 
 
 def append_history(
-    session_id: str, role: str, content: str, sources: list | None = None
+    session_id: str,
+    role: str,
+    content: str,
+    sources: list | None = None,
+    standalone_query: str | None = None,
 ) -> dict | None:
     """Append one turn. `sources` (assistant turns only) is the citation list
     returned with the answer, kept so GET /conversations/{id}/messages can
     restore them. Citation models are stored as plain dicts (JSON); a missing
-    key means no sources. Readers that build LLM messages (chitchat_service,
-    roleplay_service) only take role/content. The first user turn also sets
-    the conversation title."""
+    key means no sources. `standalone_query` (user turns of QA) is the
+    condensed question retrieval ran on (messages.standalone_query; roadmap
+    §1/§3) -- stored, not returned in history. Readers that build LLM
+    messages (chitchat_service, roleplay_service) only take role/content.
+    The first user turn also sets the conversation title."""
     with _open() as db:
         conv = _get_live(db, session_id)
         if conv is None:
             return None
         now = _now()
-        message = Message(conversation_id=session_id, role=role, content=content, created_at=now)
+        message = Message(
+            conversation_id=session_id, role=role, content=content, created_at=now,
+            standalone_query=standalone_query,
+        )
         if sources:
             message.sources = [
                 s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in sources

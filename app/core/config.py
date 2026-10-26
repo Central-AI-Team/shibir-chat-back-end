@@ -66,6 +66,14 @@ class Settings(BaseSettings):
     # When intent needs the LLM AND the query needs a rewrite, do both in one
     # call returning JSON; falls back to the two-call path on invalid JSON.
     combine_intent_rewrite: bool = True
+    # Conversational QA (intent_classifier.condense, generator): how many of
+    # the most recent turns (user + assistant messages) the condensation
+    # prompt and the answer prompt see. 4 = the last two exchanges.
+    qa_history_turns: int = 4
+    # A Bengali-script follow-up with at least this many words and no anaphor
+    # (intent_classifier.ANAPHORA) is taken as self-contained and skips the
+    # condensation LLM call; shorter or anaphoric ones are condensed.
+    condense_min_words: int = 6
     # LRU of query embeddings, keyed by the normalized rewritten query. 0 = off.
     embed_cache_size: int = 512
     # Embed + search + rerank a dummy query in the background at startup.
