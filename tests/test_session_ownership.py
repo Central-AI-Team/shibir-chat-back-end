@@ -170,35 +170,34 @@ def test_malformed_path_id_is_the_same_404(alice, bad):
         assert r.json() == NOT_FOUND
 
 
-def test_roleplay_persona_and_history_never_reach_another_owner(alice, bob):
+def test_roleplay_role_and_history_never_reach_another_owner(alice, bob):
+    """Mentor mode: bob sending alice's id gets a fresh session of his own --
+    no role, and none of alice's turns in the history handed to generation."""
+    meta = {"intent": "ROLEPLAY", "rewritten_query": "x", "role_id": "shikkhok",
+            "persona_ok": True, "level": "advanced"}
+    histories = []
+
+    def fake_stream(question, citations, *, history=None, **kw):
+        histories.append(list(history or []))
+        return iter(["উত্তর।"])
+
     with (
-        patch("app.api.router.classify_intent", return_value="ROLEPLAY"),
-        patch("app.core.llm.get_client") as get_client,
+        patch("app.services.intent_classifier.complete", return_value=MagicMock(
+            choices=[MagicMock(message=MagicMock(content=json.dumps(meta)))])),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=[]),
+        patch("app.services.qa_service.stream_answer", side_effect=fake_stream),
     ):
-        fake = MagicMock()
-        get_client.return_value = fake
+        sid = alice.post("/chat", json={"message": "শিক্ষকের মতো বলো: অ্যালিসের গোপন প্রশ্ন কী?"}).json()["session_id"]
+        alice.post("/chat", json={"message": "অ্যালিসের দ্বিতীয় গোপন প্রশ্ন", "session_id": sid})
 
-        def completion(text):
-            msg = MagicMock(content=text)
-            return MagicMock(choices=[MagicMock(message=msg)])
-
-        fake.chat.completions.create.side_effect = [
-            completion("গোপন চরিত্র"), completion("অ্যালিসের উত্তর"),
-        ]
-        sid = alice.post("/chat", json={"message": "অ্যালিসের গোপন বার্তা"}).json()["session_id"]
-
-        # bob sending alice's id gets a fresh roleplay of his own, with none
-        # of alice's persona or history.
-        fake.chat.completions.create.reset_mock()
-        fake.chat.completions.create.side_effect = [
-            completion("ববের চরিত্র"), completion("ববের উত্তর"),
-        ]
-        r = bob.post("/chat", json={"message": "ববের বার্তা", "session_id": sid})
+        r = bob.post("/chat", json={"message": "ববের বার্তা, শিক্ষকের মতো বলো: ববের প্রশ্ন কী?", "session_id": sid})
         assert r.status_code == 200
         assert r.json()["session_id"] != sid
 
-    sent = str(fake.chat.completions.create.call_args_list)
-    assert "অ্যালিসের" not in sent and "গোপন" not in sent
+    # alice's second turn saw her own first turn; bob's saw nothing of hers
+    assert any("অ্যালিসের গোপন" in t["content"] for t in histories[1])
+    assert not any("অ্যালিসের" in t["content"] for t in histories[2])
+    assert sid not in {row["id"] for row in bob.get("/conversations").json()}
 
 
 # ---------------------------------------------------------------------------

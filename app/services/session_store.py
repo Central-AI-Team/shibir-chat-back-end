@@ -113,6 +113,8 @@ def _snapshot(db: Session, conv: Conversation) -> dict:
         "user_id": conv.user_id,
         "mode": conv.mode,
         "persona": conv.persona,
+        "role_id": conv.role_id,
+        "level": conv.level,
         "history": _history(db, conv.id),
         "created_at": _aware(conv.created_at),
         "updated_at": _aware(conv.updated_at),

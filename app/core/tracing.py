@@ -286,9 +286,13 @@ def finalize_request_trace(
     mode: str,
     response_time_ms: float | None,
     error: bool = False,
+    roleplay: dict | None = None,
 ) -> None:
     """Attach the request outcome to the root span and close it. Called from
     a ``finally`` at the /chat boundary, so it also runs on the error paths.
+
+    ``roleplay`` (mentor mode, docs/roleplay-v2.md §8): {role_id, level,
+    refused, grounded}, merged into the root span's metadata when given.
 
     ``trace`` may be passed explicitly by a caller whose control flow loses
     the ContextVar before the ``finally`` runs. The streaming endpoint is
@@ -307,8 +311,8 @@ def finalize_request_trace(
         return
     root = ctx["root"]
     metadata = {"response_time_ms": response_time_ms, "mode": mode}
-    if "citation_valid" in ctx:
-        metadata["citation_valid"] = ctx["citation_valid"]
+    if roleplay:
+        metadata.update({k: roleplay.get(k) for k in ("role_id", "level", "refused", "grounded")})
     root.update(
         output={"answer": answer, "sources": _sources_view(sources), "mode": mode},
         metadata=metadata,
