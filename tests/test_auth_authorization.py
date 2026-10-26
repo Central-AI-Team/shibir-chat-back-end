@@ -82,8 +82,12 @@ def test_roleplay_and_suggestion_stay_open_to_guests():
     with patch("app.api.router.classify_intent", return_value="SUGGESTION"), \
             patch("app.api.router.give_suggestion", return_value=("পরামর্শ", [])):
         assert guest.post("/chat", json={"message": "পরামর্শ দাও"}).status_code == 200
+    from app.services.roleplay_service import RoleplayResult
+
+    canned = RoleplayResult(answer="ভূমিকা", sources=[], suggestions=[], role_id="bondhu",
+                            level="beginner", refused=False)
     with patch("app.api.router.classify_intent", return_value="ROLEPLAY"), \
-            patch("app.api.router.handle_roleplay", return_value="চরিত্র"):
+            patch("app.api.router.handle_roleplay", return_value=canned):
         assert guest.post("/chat", json={"message": "রোলপ্লে"}).status_code == 200
 
 

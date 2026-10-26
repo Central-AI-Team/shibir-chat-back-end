@@ -57,6 +57,10 @@ class ChatResponse(BaseModel):
     # and the per-guest total. See docs/auth.md.
     guest_remaining: int | None = None
     guest_limit: int | None = None
+    # Mentor mode (mode "roleplay", docs/roleplay-v2.md): 2-3 follow-up
+    # questions drawn from the retrieved excerpts. [] for every other mode and
+    # whenever the gate failed. Also carried in the SSE `done` event.
+    suggestions: list[str] = []
 
 
 class ConversationSummary(BaseModel):

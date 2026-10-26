@@ -237,7 +237,7 @@ Response:
 | `qa` | Answers from retrieved excerpts, with `[১]`-style citations. | Excerpts used, or `[]` if nothing passed the relevance gate. |
 | `suggestion` | Book-grounded recommendation; clearly labelled as general advice when the books do not cover it. | As for `qa`. |
 | `note` | Structured summary of a whole book named in the message. | `[]` |
-| `roleplay` | Multi-turn conversation in a persona. Continues until an exit phrase such as "stop roleplay". | `[]` |
+| `roleplay` | Mentor mode: a role from the allow-list (বন্ধু, দায়িত্বশীল ভাই, শিক্ষক, অধ্যয়ন-সার্কেল পরিচালক) answers from the books in its tone, adapted to the reader's level, with next steps; `suggestions` carries 2–3 follow-up questions. Requests to speak as a real person are refused with a normal answer. Continues until an exit phrase such as "stop roleplay". | As for `qa`. |
 
 Errors: `400` for an empty message; `503` with a Bengali "temporarily unavailable" message when
 the LLM or the GPU service fails.
@@ -249,7 +249,7 @@ Same request body. The response is `text/event-stream` with these events, in ord
 1. `sources`: `{"sources": [...]}`
 2. `token` (one or more): `{"text": "..."}`. `qa` streams token by token; other modes send
    the whole answer in one event.
-3. `done`: `{"mode", "session_id", "response_time_ms"}`
+3. `done`: `{"mode", "session_id", "response_time_ms", "suggestions"}`
 
 On an upstream failure a single `error` event (`{"detail": "..."}`) is sent instead.
 

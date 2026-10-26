@@ -12,6 +12,7 @@ no embedding model, reranker, or real LLM call.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -66,47 +67,45 @@ def test_chat_note_intent_routes_to_note_generation(logged_in_user):
     assert body["session_id"]
 
 
-def test_chat_roleplay_intent_continues_persona_across_turns():
+def test_chat_roleplay_picks_a_role_then_answers_from_the_books_in_that_style():
+    """Mentor mode (docs/roleplay-v2.md): the entry turn stores the role and
+    greets without retrieval; the next turn is QA through qa_stream with the
+    role's tone as style_rules, so sources come back and no persona LLM call
+    is made. The level is never announced."""
+    meta = {"intent": "ROLEPLAY", "rewritten_query": "বন্ধুর মতো বুঝিয়ে বলো",
+            "role_id": "bondhu", "persona_ok": True, "level": "beginner"}
+    seen = {}
+
+    def fake_stream(question, citations, *, style_rules=None, **kw):
+        seen["style_rules"] = style_rules
+        seen["citations"] = citations
+        return iter(["উত্তর", "।"])
+
     with (
-        patch("app.api.router.classify_intent", return_value="ROLEPLAY"),
-        # roleplay_service now calls llm.complete(), which resolves its client
-        # through app.core.llm.get_client() -- patch there, not on the service.
-        patch("app.core.llm.get_client") as mock_get_client,
+        patch("app.services.intent_classifier.complete", return_value=_completion(json.dumps(meta))),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CITATIONS) as retrieve,
+        patch("app.services.qa_service.stream_answer", side_effect=fake_stream),
+        patch("app.services.roleplay_service.complete",
+              return_value=_completion('{"suggestions": ["যাকাত কাদের উপর ফরজ?"]}')),
     ):
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
+        r1 = client.post("/chat", json={"message": "একজন বন্ধুর মতো বুঝিয়ে বলো"})
+        assert r1.status_code == 200
+        body1 = r1.json()
+        assert body1["mode"] == "roleplay" and body1["sources"] == []
+        assert "বন্ধু" in body1["answer"]  # greets in the role, asks for a question
+        retrieve.assert_not_called()
+        sid = body1["session_id"]
 
-        # Turn 1: persona extraction call, then the in-character reply call.
-        mock_client.chat.completions.create.side_effect = [
-            _completion("শার্লক হোমস"),
-            _completion("আমি শার্লক হোমস, বলুন কী জানতে চান।"),
-        ]
-        response1 = client.post(
-            "/chat", json={"message": "তুমি এখন শার্লক হোমস চরিত্রে অভিনয় করো"}
-        )
-        assert response1.status_code == 200
-        body1 = response1.json()
-        assert body1["mode"] == "roleplay"
-        assert body1["answer"] == "আমি শার্লক হোমস, বলুন কী জানতে চান।"
-        session_id = body1["session_id"]
-        assert session_id
-
-        # Turn 2, same session: only the reply call should happen -- persona
-        # should not be re-extracted.
-        mock_client.chat.completions.create.side_effect = [
-            _completion("দ্বিতীয় উত্তর, একই চরিত্রে।"),
-        ]
-        response2 = client.post(
-            "/chat", json={"message": "তোমার পরিচয় কী?", "session_id": session_id}
-        )
-        assert response2.status_code == 200
-        body2 = response2.json()
-        assert body2["mode"] == "roleplay"
-        assert body2["answer"] == "দ্বিতীয় উত্তর, একই চরিত্রে।"
-        assert body2["session_id"] == session_id
-
-    # 1 persona-extraction call + 2 reply calls = 3 total LLM calls.
-    assert mock_client.chat.completions.create.call_count == 3
+        r2 = client.post("/chat", json={"message": "যাকাত কী?", "session_id": sid})
+    assert r2.status_code == 200
+    body2 = r2.json()
+    assert body2["mode"] == "roleplay"
+    assert body2["answer"] == "উত্তর।"
+    assert [s["book"] for s in body2["sources"]] == ["Test Book"]
+    assert body2["session_id"] == sid
+    retrieve.assert_called_once()
+    assert "বন্ধু" in seen["style_rules"] and "পাঠকের স্তর: নতুন" in seen["style_rules"]
+    assert "beginner" not in body2["answer"] and "নতুন" not in body2["answer"]
 
 
 def test_chat_suggestion_intent_returns_sources_when_grounded():

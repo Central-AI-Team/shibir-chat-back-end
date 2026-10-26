@@ -61,8 +61,13 @@ app/
                           published page of a chapter in reading order and map-reduces it.
                           The book is resolved from free text by substring match on book
                           names (no LLM call).
-    roleplay_service.py   handle_roleplay(message, session) -> str. Persona extraction on the
-                          first turn (task "persona"), then multi-turn chat. No retrieval (§8).
+    roleplay_service.py   Mentor mode (docs/roleplay-v2.md). handle_roleplay(message, session,
+                          history) -> RoleplayResult(answer, sources, suggestions, role_id,
+                          level, refused, ...) and handle_roleplay_stream(). A ROLE from
+                          settings.roleplay_roles answers through qa_service.qa_stream()
+                          with style_rules (tone + level + honesty + next steps); real-person
+                          requests are refused in code (REAL_PERSON_PATTERNS) before any LLM
+                          call. Suggestions: one call, task "roleplay_meta" (§8).
     session_store.py      Sessions on Postgres (tables conversations / messages, §3). Same
                           public functions as the old dict. Only create_session(owner,
                           user_id=None) creates; every lookup takes the owner and is
@@ -264,7 +269,7 @@ the gate; they differ only in the final call (`generate_answer`, stray-script ch
 ## 5. LLM provider (`app/core/llm.py`)
 
 OpenAI is the production provider (`OPENAI_API_KEY`, `OPENAI_MODEL`, default `gpt-5-mini`). Every
-LLM call (tasks `intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`, `roleplay`) goes through
+LLM call (tasks `intent`, `rewrite`, `roleplay_meta`, `qa`, `note`, `suggest`, `roleplay`) goes through
 this module; no call site constructs an `openai.OpenAI` client itself.
 
 - **`get_client()`**: the shared, cached OpenAI client, built with
@@ -436,10 +441,13 @@ on the injected response, so it calls `apply_owner_cookie()`. Do not move this i
 }
 ```
 
-- `mode` is `qa`, `note`, `roleplay` or `suggestion`.
-- `sources` is `[]` for `note` and `roleplay`, and for `qa`/`suggestion` whenever retrieval did
-  not pass the gate. For `qa` it holds exactly the citations that passed it individually (§4),
-  each with `row_key`. It is never populated alongside a "not found" answer.
+- `mode` is `qa`, `note`, `roleplay`, `suggestion` or `chitchat`.
+- `sources` is `[]` for `note` and `chitchat`, and for `qa`/`suggestion`/`roleplay` whenever
+  retrieval did not pass the gate. For `qa` and `roleplay` it holds exactly the citations that
+  passed it individually (§4), each with `row_key`. It is never populated alongside a "not
+  found" answer.
+- `suggestions` (`list[str]`, additive, 2026-10-25) is non-empty only for a grounded `roleplay`
+  turn: 2-3 follow-up questions drawn from the excerpts. The SSE `done` event carries the same key.
 - An upstream failure (OpenAI `APIError` or `GPUServiceError`) returns **503** with a Bengali
   "temporarily unavailable" detail, never a bare 500.
 
@@ -461,11 +469,41 @@ account (`owner_key`, `user_id`) inside the login/register transaction.
 
 ## 8. Roleplay and suggestion
 
-**Roleplay** (`roleplay_service.handle_roleplay`) uses no retrieval by design; it is a persona
-conversation, not a book lookup. The first roleplay message is used to extract a persona (task
-`persona`). Later turns continue in that persona using the session history. The classifier keeps
-the session in ROLEPLAY until an exit phrase is sent; `router.py` then clears `persona`, so the
-next roleplay starts fresh.
+**Roleplay is mentor mode** (`roleplay_service`, contract in [docs/roleplay-v2.md](docs/roleplay-v2.md);
+rebuilt 2026-10-25, the free-form persona roleplay is gone). In one sentence: QA + conversational
+memory + a tone layer.
+
+- **Roles, not people.** The user picks one of `ROLEPLAY_ROLES` (`bondhu`, `boro_bhai`, `shikkhok`,
+  `circle_porichalok`) in free text; role keywords resolve in code, otherwise the intent call's
+  `role_id`, otherwise the reply lists the roles and asks. A request to speak as a real person
+  (the Prophet, a sahabi, a scholar, a leader, a politician) is refused **before any LLM call** by
+  `REAL_PERSON_PATTERNS` when the message carries impersonation framing or is the entry turn, and
+  again on the intent call's `persona_ok=false`. A refusal is a normal answer (`mode: "roleplay"`,
+  `sources: []`, `suggestions: []`) that lists the roles; never a 4xx. A real person as the *topic*
+  of a question inside a session is answered from the books.
+- **Grounded like QA.** The reply body always comes from `qa_service.qa_stream(message, history,
+  style_rules=...)`; the service never calls the LLM for the answer. Retrieval, the per-citation
+  gate, citations, condensation and carry-over are inherited. `style_rules` = the role's `tone_bn`
+  + `STYLE_RULES_BY_LEVEL[level]` + the honesty rule (it is an assistant answering from the library
+  in this style; no "do not reveal you are an AI" instruction anywhere; no rulings) + the next-steps
+  rule (one or two next steps from the excerpts when the gate passed).
+- **Level.** The intent call infers `beginner | intermediate | advanced` each turn; explicit cues
+  ("আরো সহজ করে", "আরো গভীরে") override at once and reset the window; otherwise the majority of the
+  last three inferred levels decides. Stored on `conversations.level`, with the window as JSON in
+  `conversations.persona` (free since personas went). Never announced to the user.
+- **Suggestions.** After a grounded reply one `complete("roleplay_meta", ...)` call turns the
+  excerpts into `ROLEPLAY_SUGGESTION_COUNT` follow-up questions (JSON, validated; any failure ->
+  `[]`, never raises). `[]` when the gate failed.
+- **Session.** Entry sets `mode`, `role_id`, `level`; the router records both turns through
+  `append_history()` like every other mode (the service writes nothing); an exit phrase ("stop
+  roleplay", "রোলপ্লে বন্ধ") returns to QA and clears `role_id`, `level` and `persona`. A bare exit
+  phrase is acknowledged as CHITCHAT; before 2026-10-25 the entry regex re-matched the word
+  "roleplay" inside the exit phrase, so exits never worked. Pure small talk inside a session
+  ("hi") makes no level call. A role-only entry ("একজন বন্ধুর মতো বুঝিয়ে বলো") greets and asks for a
+  question instead of retrieving on the request itself.
+- **Cost.** A grounded mentor turn is three LLM calls: intent (with role/level and condensation),
+  the QA generation, and the suggestions call. `role_id`, `level`, `refused` and `grounded` go on
+  the request trace.
 
 **Suggestion** (`suggestion_service.give_suggestion`) uses the same retrieval and gate as QA, but
 its grounded prompt allows the model to phrase a recommendation or opinion based on the excerpts
@@ -617,7 +655,7 @@ All settings come from `.env`; `.env.example` documents each one. Only `OPENAI_A
 | `OPENAI_MODEL` | `gpt-5-mini` | Reasoning model; see the token-budget note in §5. |
 | `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `90` / `1` | Per LLM call. For streaming, the timeout bounds the gap between chunks. |
 | `ANSWER_SCRIPT_RETRIES` | `1` | Regenerations of a QA/suggestion answer that has stray-script letters, before they are stripped (§5). `0` = strip only. |
-| `MODEL_BY_TASK` | `{}` | JSON map from task (`intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`, `roleplay`) to model. Change only after an evaluation (§5). |
+| `MODEL_BY_TASK` | `{}` | JSON map from task (`intent`, `rewrite`, `roleplay_meta`, `qa`, `note`, `suggest`, `roleplay`) to model. Change only after an evaluation (§5). |
 | `DATABASE_URL` | `postgresql+psycopg2://…` | SQLAlchemy DSN, **not** usable with `psql`. Use `app.db.session.SessionLocal` for one-off queries. |
 | `CORS_ALLOW_ORIGINS` | local Vite (`:5173`) + `https://shibirgpt.potropollob.com` | JSON list. An explicit allow-list, not `*`. |
 | `ENABLE_DOCS` | `false` | Serves `/docs`, `/redoc`, `/openapi.json` when true. Local development only. |
