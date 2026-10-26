@@ -271,11 +271,17 @@ class Settings(BaseSettings):
     # owner cookie is Secure by default; COOKIE_SECURE=false is for plain-http
     # local development only (browsers drop Secure cookies on http://).
     cookie_secure: bool = True
-    # Session caps (app/services/session_store.py): creating one past the limit
-    # evicts the least-recently-updated session (the owner's own, or globally).
-    # No TTL or rate limiting yet (Step 3).
-    max_sessions_per_owner: int = 50
-    max_sessions_total: int = 10000
+    # Live (not deleted) conversations per owner (app/services/session_store.py):
+    # creating one past the cap soft-deletes that owner's least-recently-updated
+    # conversation. Guests are keyed by the owner cookie, users by account.
+    # Replaced MAX_SESSIONS_PER_OWNER / MAX_SESSIONS_TOTAL when history moved to
+    # Postgres (2026-10-24): a global cap made sense for a dict, not a table.
+    guest_conversation_cap: int = 50
+    user_conversation_cap: int = 500
+    # scripts/purge_history.py hard-deletes guest conversations (no user_id) not
+    # updated for this many days, and soft-deleted conversations of any owner
+    # that old. A guest who clears cookies can never reach them again anyway.
+    guest_history_retention_days: int = 30
     # Message length caps (characters, after strip), enforced in router.py with
     # a 413. The general one bounds what reaches the intent/rewrite/answer LLM
     # calls. NOTE never sends the message to an LLM -- note_service only

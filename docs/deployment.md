@@ -10,8 +10,8 @@ more than one instance of it reliably*.
 > **Status (September 2026).** Embedding and reranking can now run on the separate
 > `shibir-chat-gpu-service` on Modal (set `GPU_SERVICE_URL`; see CLAUDE.md §6). With it enabled,
 > API replicas load no models and the "models externalized" sizing below applies; step 5 of the
-> migration path is done. Sessions (Tier 2) and the vector store (Tier 3) are still the blockers
-> for running more than one replica.
+> migration path is done. Sessions moved to Postgres in October 2026 (Tier 2 done); the vector
+> store (Tier 3) is the remaining blocker for running more than one replica.
 
 ## Development-stage requirements (before any of the scaling below applies)
 
@@ -40,15 +40,15 @@ replicas behind a load balancer" approach will silently break:
 
 | Component | Current implementation | Scales horizontally? |
 |---|---|---|
-| Chat/roleplay session state | `app/services/session_store.py` — a plain module-level `dict` | **No.** Its own docstring already says so: a session started on one worker/replica is invisible to another. Multi-worker or multi-replica today means a user's roleplay persona or conversation history randomly "disappears" mid-conversation depending on which process handles the next request. |
+| Chat/roleplay session state | `app/services/session_store.py` — Postgres tables `conversations` / `messages` | **Yes** (since October 2026). Every worker and replica reads the same rows; history survives restarts. |
 | Embedding + reranker models | `app/rag/embedder.py` / `app/rag/reranker.py` — in CPU mode, `sentence-transformers` models loaded in-process via `@lru_cache`; in GPU mode, HTTP calls to the Modal service | GPU mode: **yes**, replicas hold no models. CPU mode: scales, but **expensively** — every replica loads its own full copy of `BAAI/bge-m3` (~2.2 GB) and `BAAI/bge-reranker-v2-m3` (~2 GB+), so N replicas cost N× that RAM before serving a single request. |
 | Vector store (Chroma) | `app/rag/chroma_client.py` — `chromadb.PersistentClient` writing to a local `chroma_db/` directory | **Not safely**, as-is. Chroma's persistent-client mode is not designed for multiple processes concurrently opening the same on-disk index (this has caused real corruption/contention in this project's own ingest workflow). A shared network volume mounted read-write from N replicas is not a fix — it's the same problem with extra latency. |
 | Postgres (content, source of truth) | Standard SQLAlchemy engine, `app/db/session.py` | **Yes**, this is a normal RDBMS — connection pooling and read replicas work the usual way. |
 | LLM calls (OpenAI, optionally Groq) | `app/core/llm.py`, external API calls, no local state | **Yes**, but each provider has its own rate limits that don't scale just because you added replicas — see [LLM provider layer](#tier-5-llm-provider-layer) below. |
 | Corpus ingest (`uv run python -m app.rag.ingest`) | Offline batch script, not in the request path | Not a live-traffic concern, but it competes for the same CPU/RAM as the embedder/reranker if run on the same host — schedule it separately (see [Ingest as its own job](#ingest-as-its-own-job)). |
 
-Everything below is organized around fixing these three (session store, model duplication,
-vector store) without a rewrite — each is an incremental, independently-shippable change.
+Everything below is organized around fixing these (model duplication, vector store; the
+session store is done) without a rewrite — each is an incremental, independently-shippable change.
 
 ## Recommended topology
 
@@ -122,8 +122,8 @@ or `nginx`/`traefik` if self-hosting), with:
   theoretical number — `bge-m3` (~2.2 GB) + `bge-reranker-v2-m3` (~2 GB) + PyTorch/Chroma
   client overhead has been directly observed to cause OOM kills on boxes with less headroom
   than that, even for a single instance.
-- **Readiness probe on `GET /health`**, but don't rely on it alone — `/health` returns
-  `{"status": "ok"}` unconditionally and does not check that the embedder/reranker have
+- **Readiness probe on `GET /ready`** (Postgres `SELECT 1` + Chroma collection count; 503 names
+  the failed check), but don't rely on it alone — neither it nor `/health` checks that the embedder/reranker have
   finished loading (they load lazily on first use via `@lru_cache`). Either warm them at
   startup (a FastAPI `startup` event calling `embed_texts([""])`/`rerank("", [""], 1)` once)
   or accept a slow first request per replica after a rollout.
@@ -133,52 +133,14 @@ or `nginx`/`traefik` if self-hosting), with:
   replicas without the deployment-level flexibility (independent scheduling, rolling restarts)
   of actual pods/containers.
 
-## Tier 2: shared session store (Redis)
+## Tier 2: shared session store
 
-This is the first thing to fix, and the lowest-risk change on this list — `session_store.py`
-already exposes a narrow, three-function interface
-(`get_or_create_session` / `update_session` / `append_history`), so swapping its backing store
-doesn't touch any caller in `roleplay_service.py` or `router.py`.
-
-Replace the module-level `_sessions: dict` with Redis, keeping the exact same function
-signatures:
-
-```python
-# app/services/session_store.py (Redis-backed sketch)
-import json
-import uuid
-import redis
-
-MAX_HISTORY = 20
-SESSION_TTL_SECONDS = 60 * 60 * 6  # expire idle sessions; a roleplay chat isn't forever
-
-_r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-
-def _key(session_id: str) -> str:
-    return f"session:{session_id}"
-
-def get_or_create_session(session_id: str | None) -> tuple[str, dict]:
-    if session_id is None:
-        session_id = str(uuid.uuid4())
-    raw = _r.get(_key(session_id))
-    session = json.loads(raw) if raw else {"mode": None, "persona": None, "history": []}
-    return session_id, session
-
-def update_session(session_id: str, **fields) -> dict:
-    _, session = get_or_create_session(session_id)
-    history = fields.pop("history", None)
-    session.update(fields)
-    if history is not None:
-        session["history"] = history[-MAX_HISTORY:]
-    _r.set(_key(session_id), json.dumps(session), ex=SESSION_TTL_SECONDS)
-    return session
-```
-
-Add `redis_url: str = "redis://localhost:6379/0"` to `app/core/config.py`'s `Settings`
-(same pattern as every other setting there), and a `redis` service to `docker-compose.yml`
-(a managed Redis/ElastiCache/Memorystore instance in production — don't self-host Redis
-persistence for session data that's expendable). This alone unblocks running more than one
-API replica without roleplay sessions randomly resetting.
+**Done (October 2026).** `session_store.py` keeps its function signatures but is backed by the
+Postgres tables `conversations` / `messages` (schema in `migrations/`, applied by
+`scripts/deploy.sh`), so every replica and every uvicorn worker sees the same sessions and
+nothing is lost on restart. No Redis is needed for sessions. `guest_quota` is DB-backed too;
+`rate_limiter` is still per process, so with N workers each per-IP / per-owner limit is
+effectively N times looser until it moves to Postgres or Redis.
 
 ## Tier 3: vector store — pick one, don't run both
 
@@ -278,9 +240,9 @@ architecture. At minimum, instrument:
   you picked in Tier 3, its own growth (more chunks ingested over time) degrades query latency
   gradually, not as a discrete incident, and won't show up as an API-side alert until it's
   already been slow for a while.
-- **Session-store hit rate and TTL evictions** (Redis) — a sudden drop in "existing session
-  found" vs "new session created" after a deploy usually means a config/connectivity issue to
-  Redis, not organic new-user growth.
+- **Session-store hit rate** — a sudden drop in "existing session found" vs "new session
+  created" after a deploy usually means a Postgres connectivity or migration issue, not organic
+  new-user growth.
 - **RAM headroom on API replicas**, watched explicitly rather than assumed — the ~6 GB/replica
   figure in Tier 1 is a floor for this specific model combination, and a scheduler that packs
   pods tightly against that number with no margin will intermittently OOM-kill exactly the way
@@ -290,8 +252,7 @@ architecture. At minimum, instrument:
 
 Do these in order — each is independently shippable and leaves the system in a working state:
 
-1. **Externalize the session store to Redis** (Tier 2). Zero API contract changes, unblocks
-   running more than one replica at all.
+1. **Externalize the session store** (Tier 2) — done: Postgres, October 2026.
 2. **Put N API replicas behind a load balancer**, still pointed at a single Chroma
    `PersistentClient` instance/volume (one writer, i.e. don't run ingest concurrently with
    this, and treat this step as a stopgap, not the end state — it works because Chroma reads

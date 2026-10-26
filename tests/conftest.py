@@ -91,10 +91,11 @@ def _reset_rate_limits():
 
 @pytest.fixture(autouse=True)
 def auth_db(monkeypatch):
-    """Accounts and the guest quota run on a fresh in-memory SQLite database
-    (only users / auth_sessions / guest_usage; the content tables use JSONB),
-    with a cheap argon2 hasher for speed. Guest limits are raised so tests that
-    predate the quota are not capped; tests/test_auth_*.py set them back."""
+    """Accounts, the guest quota AND the chat session store run on a fresh
+    in-memory SQLite database (users / auth_sessions / guest_usage /
+    conversations / messages; the content tables use JSONB), with a cheap
+    argon2 hasher for speed. Guest limits are raised so tests that predate the
+    quota are not capped; tests/test_auth_*.py set them back."""
     from argon2 import PasswordHasher
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
@@ -102,13 +103,22 @@ def auth_db(monkeypatch):
     import app.auth as auth
     from app.auth import passwords
     from app.db.base import Base
-    from app.db.models import AuthSession, GuestUsage, User
+    from app.db.models import AuthSession, Conversation, GuestUsage, Message, User
+    from app.services import session_store
 
     engine = create_engine(
         "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
-    Base.metadata.create_all(engine, tables=[User.__table__, AuthSession.__table__, GuestUsage.__table__])
-    monkeypatch.setattr(auth, "SESSION_FACTORY", sessionmaker(bind=engine, future=True))
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            User.__table__, AuthSession.__table__, GuestUsage.__table__,
+            Conversation.__table__, Message.__table__,
+        ],
+    )
+    factory = sessionmaker(bind=engine, future=True)
+    monkeypatch.setattr(auth, "SESSION_FACTORY", factory)
+    monkeypatch.setattr(session_store, "SESSION_FACTORY", factory)
     monkeypatch.setattr(passwords, "_hasher", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1))
     passwords._dummy_hash.cache_clear()
     monkeypatch.setattr(settings, "guest_message_limit", 10_000)

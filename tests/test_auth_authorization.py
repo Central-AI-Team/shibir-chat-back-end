@@ -147,8 +147,7 @@ def test_register_moves_the_guest_sessions_too():
 
 
 def test_reassign_owner_respects_the_per_owner_cap(monkeypatch):
-    monkeypatch.setattr(settings, "max_sessions_per_owner", 3)
-    monkeypatch.setattr(session_store, "_sessions", {})
+    monkeypatch.setattr(settings, "guest_conversation_cap", 3)
     user_ids = [session_store.create_session("user")[0] for _ in range(2)]
     guest_ids = [session_store.create_session("guest")[0] for _ in range(2)]
     session_store.create_session("someone-else")

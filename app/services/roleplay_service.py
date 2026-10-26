@@ -8,7 +8,7 @@ retrieve_relevant_docs() the same way qa_service does.
 from __future__ import annotations
 
 from app.core.llm import complete
-from app.services.session_store import MAX_HISTORY
+from app.services.session_store import append_history, update_session
 
 _PERSONA_EXTRACT_SYSTEM = """ব্যবহারকারীর নির্দেশনা থেকে শুধুমাত্র চরিত্র/ব্যক্তিত্বের
 বর্ণনাটুকু বের করো (কে বা কী চরিত্রে অভিনয় করতে বলা হয়েছে)। শুধু চরিত্রের নাম ও
@@ -29,7 +29,11 @@ def _extract_persona(message: str) -> str:
 
 def handle_roleplay(message: str, session: dict) -> str:
     if session.get("persona") is None:
+        # `session` is a snapshot (session_store is Postgres-backed), so the
+        # persona must be written through the store or the next turn
+        # re-extracts it.
         session["persona"] = _extract_persona(message)
+        update_session(session["id"], persona=session["persona"])
 
     system_prompt = _ROLEPLAY_SYSTEM_TEMPLATE.format(persona=session["persona"])
 
@@ -45,13 +49,9 @@ def handle_roleplay(message: str, session: dict) -> str:
     # most providers reject outright.
     reply = response.choices[0].message.content or ""
 
-    # `session` is the caller's own session dict from session_store's
-    # module-level store (get_owned_session / create_session don't copy), so
-    # mutating it in place
-    # here is equivalent to routing through append_history -- it's just done
-    # as one capped update instead of two separate calls.
-    session["history"].append({"role": "user", "content": message})
-    session["history"].append({"role": "assistant", "content": reply})
-    session["history"] = session["history"][-MAX_HISTORY:]
+    # Both turns go through the store (router._record_turn skips ROLEPLAY so
+    # they are not recorded twice). No-op if the session vanished mid-request.
+    append_history(session["id"], "user", message)
+    append_history(session["id"], "assistant", reply)
 
     return reply
