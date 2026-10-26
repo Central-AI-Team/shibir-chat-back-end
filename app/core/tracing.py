@@ -445,6 +445,16 @@ def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve-
 
 
 @_safe
+def record_citation_validity(valid: bool) -> None:
+    """Remember whether the answer's [n] labels were all within the sources
+    (app/rag/generator.citation_labels_valid). Written into the root span's
+    metadata as ``citation_valid`` by finalize_request_trace(); no new span."""
+    ctx = _current_ctx.get()
+    if ctx is not None:
+        ctx["citation_valid"] = valid
+
+
+@_safe
 def record_gate(*, grounded: bool, top_score, threshold) -> None:
     """A ``guardrail``-typed observation: this is the pass/refuse decision
     that keeps an ungrounded answer from being cited (see CLAUDE.md's

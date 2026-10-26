@@ -6,8 +6,11 @@ Usage:
 
 Input file: a JSON list of {"query": str, "answerable": bool}, optionally with
 "relevant_ids": [row_key, ...] (the labeled retrieval eval set,
-scripts/retrieval_eval_questions.json). See scripts/eval_questions.example.json
-for the minimal shape. Extra keys (_README, lang, difficulty) are ignored.
+scripts/retrieval_eval_questions.json), or a v2 file from scripts/eval/
+(scripts/eval/schema.md). See scripts/eval_questions.example.json for the
+minimal shape. Extra keys (_README, lang, difficulty) are ignored. v2 files
+add a per-slice and per-category table at the current threshold and at each
+recommendation; the sweep itself is unchanged.
 
 WHAT THIS THRESHOLD DOES (app/services/qa_service.py):
     relevant = citations[0].rerank_score >= settings.min_rerank_score
@@ -58,22 +61,30 @@ OVERLAP_MEDIAN_GAP = 0.15
 # ---------------------------------------------------------------------------
 
 def _load_questions(path: Path) -> list[dict]:
-    """Read the dataset, tolerating the _README-on-first-entry convention and
-    entries with or without relevant_ids."""
+    """Read a v1 or v2 dataset, tolerating the _README-on-first-entry
+    convention and entries with or without relevant_ids."""
+    from scripts.validate_eval_set import LEGACY_SLICE, is_v2, to_v2
+
     with open(path, encoding="utf-8") as f:
         questions = json.load(f)
     if isinstance(questions, dict):  # tolerated: {"questions": [...]}
         questions = questions["questions"]
+    v2 = is_v2(questions)
 
     out: list[dict] = []
-    for q in questions:
+    for i, q in enumerate(questions):
+        if v2:
+            r = to_v2(q, i)
+            q = {"query": r["question"], "answerable": r["answerable"], "relevant_ids": r["expected_row_keys"],
+                 "slice": r["slice"], "category": r["category"]}
         if "query" not in q or "answerable" not in q:
             raise ValueError(f"bad entry, expected query/answerable keys: {q}")
         ids = q.get("relevant_ids") or []
         if not isinstance(ids, list) or any(not isinstance(i, str) for i in ids):
             raise ValueError(f"relevant_ids must be a list of row_key strings: {q}")
         out.append({"query": q["query"], "answerable": bool(q["answerable"]),
-                    "relevant_ids": ids})
+                    "relevant_ids": ids, "slice": q.get("slice") or LEGACY_SLICE,
+                    "category": q.get("category")})
     return out
 
 
@@ -104,6 +115,8 @@ def _gather(questions: list[dict], use_rewrite: bool) -> list[dict]:
         top_is_gold = (row_key in gold) if (gold and row_key) else None
         records.append({
             "query": q["query"],
+            "slice": q.get("slice"),
+            "category": q.get("category"),
             "answerable": q["answerable"],
             "labeled": bool(gold),
             "top_score": score,
@@ -238,6 +251,23 @@ def _print_table(rows: list[dict], has_labels: bool) -> None:
         print("\n  misgnd = answerable queries that cleared the gate but whose "
               "top page was NOT the gold page\n  (a grounded-but-wrong answer -- "
               "not counted as an error here, but not a real win either).")
+
+
+def _breakdown_at(threshold: float, records: list[dict], by: str) -> dict[str, dict]:
+    """_metrics_at() per group of `by` ("slice" / "category"): the same
+    confusion counts and precision/recall, just on the subset."""
+    groups: dict[str, list[dict]] = {}
+    for r in records:
+        groups.setdefault(str(r.get(by)), []).append(r)
+    return {name: {"n": len(rows), **_metrics_at(threshold, rows)} for name, rows in sorted(groups.items())}
+
+
+def _print_breakdown(title: str, table: dict[str, dict]) -> None:
+    print(f"\n  {title}")
+    print(f"    {'group':<28} {'n':>4} {'FalseRef':>8} {'FalseAns':>8} {'prec':>6} {'recall':>6} {'misgnd':>6}")
+    for name, m in table.items():
+        print(f"    {name[:28]:<28} {m['n']:>4} {m['false_refusals']:>8} {m['false_answers']:>8} "
+              f"{m['precision']:>6.3f} {m['recall']:>6.3f} {m['misgrounded_answers']:>6}")
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +437,18 @@ def main() -> None:
         print("    NOTE: zero false answers was not achievable; this is the "
               "minimum-false-answer point.")
 
+    # --- per-slice / per-category view (v2 sets) ---
+    breakdowns: dict[str, dict] = {}
+    if any(q.get("slice") not in (None, "legacy") for q in questions):
+        print("\n" + "=" * 78)
+        print("BY SLICE AND CATEGORY  (same metrics, per group; a human picks the operating point)")
+        print("=" * 78)
+        for label, t in (("current", settings.min_rerank_score), ("balanced", balanced["threshold"]),
+                         ("conservative", conservative["threshold"])):
+            breakdowns[label] = {by: _breakdown_at(t, records, by) for by in ("slice", "category")}
+            _print_breakdown(f"at {label} threshold {t:.4f} -- by slice", breakdowns[label]["slice"])
+            _print_breakdown(f"at {label} threshold {t:.4f} -- by category", breakdowns[label]["category"])
+
     n_small = len(questions) < 30
     if n_small:
         print(f"\n  CONFIDENCE: only {len(questions)} questions -- treat these as "
@@ -431,6 +473,7 @@ def main() -> None:
             "separation": overlap,
             "sweep": rows,
             "recommendations": {"balanced": balanced, "conservative": conservative},
+            "breakdowns": breakdowns,
             "per_query": records,
         }
         out = Path(args.report)

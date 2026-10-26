@@ -37,11 +37,12 @@ Usage:
                                      [--mode dense|bm25|hybrid]
     python -m scripts.eval_retrieval --label [path/to/questions.json]
 
-Input file: the {"query": str, "answerable": bool} shape the other two eval
-scripts consume, plus "relevant_ids": [row_key, ...]. See
-scripts/retrieval_eval_questions.example.json, whose _README explains how to
-fill the gold ids in. The file stays valid input for tune_threshold.py and
-eval_responses.py.
+Input file: either the v1 shape ({"query", "answerable", "relevant_ids"};
+scripts/retrieval_eval_questions.json) or the v2 schema of scripts/eval/
+(scripts/eval/schema.md: "question", "expected_row_keys", "slice",
+"category", ...). v2 files add PER-SLICE and PER-CATEGORY breakdowns to the
+output and the report (v1 records all fall in slice "legacy"). The metrics
+themselves are computed exactly as before.
 
 --label prints, for every entry whose relevant_ids is empty, the top retrieved
 candidates with an id and a text preview, so a 30-50 question gold set can be
@@ -91,19 +92,29 @@ LABEL_CANDIDATES = 10
 # --------------------------------------------------------------------------
 
 def _load_questions(path: Path) -> list[dict]:
-    """Read the dataset, tolerating entries written for the other eval scripts.
+    """Read a v1 or v2 dataset into the internal shape
+    {query, answerable, relevant_ids, id, slice, category, language}.
 
     relevant_ids is optional on disk -- a missing one is treated as empty, so
     a tune_threshold.py question file can be pointed at --label directly and
-    grown into a retrieval dataset from there.
+    grown into a retrieval dataset from there. v2 records (scripts/eval/
+    schema.md) are mapped question -> query and expected_row_keys ->
+    relevant_ids; v1 records get slice "legacy".
     """
+    from scripts.validate_eval_set import LEGACY_SLICE, is_v2, to_v2
+
     with open(path, encoding="utf-8") as f:
         questions = json.load(f)
     if isinstance(questions, dict):  # tolerated: {"questions": [...]}
         questions = questions["questions"]
+    v2 = is_v2(questions)
 
     out: list[dict] = []
-    for q in questions:
+    for i, q in enumerate(questions):
+        if v2:
+            r = to_v2(q, i)
+            q = {"query": r["question"], "answerable": r["answerable"], "relevant_ids": r["expected_row_keys"],
+                 "id": r["id"], "slice": r["slice"], "category": r["category"], "language": r["language"]}
         if "query" not in q or "answerable" not in q:
             raise ValueError(f"bad entry, expected query/answerable keys: {q}")
         ids = q.get("relevant_ids") or []
@@ -117,7 +128,9 @@ def _load_questions(path: Path) -> list[dict]:
                   f"them: {q['query']!r}")
             ids = []
         out.append({"query": q["query"], "answerable": bool(q["answerable"]),
-                    "relevant_ids": ids})
+                    "relevant_ids": ids, "id": q.get("id"),
+                    "slice": q.get("slice") or LEGACY_SLICE,
+                    "category": q.get("category"), "language": q.get("language") or q.get("lang")})
     return out
 
 
@@ -232,6 +245,10 @@ def _run(questions: list[dict], ks: list[int], use_rewrite: bool,
         scorable = bool(q["answerable"] and gold)
         records.append({
             "query": q["query"],
+            "id": q.get("id"),
+            "slice": q.get("slice"),
+            "category": q.get("category"),
+            "language": q.get("language"),
             "answerable": q["answerable"],
             "relevant_ids": gold,
             "scorable": scorable,
@@ -322,8 +339,63 @@ def _false_positives(records: list[dict]) -> dict:
 
 
 # --------------------------------------------------------------------------
-# output
+# breakdowns (v2 sets): the same metrics, grouped by slice / category
 # --------------------------------------------------------------------------
+
+def _gate_counts(records: list[dict]) -> dict:
+    """Gate outcome at settings.min_rerank_score, the rule qa_service applies
+    to the top rerank score (identical to tune_threshold._metrics_at): an
+    answerable query that fails it is a false refusal, an unanswerable one that
+    clears it a false answer. precision/recall are of "grounded" with
+    answerable as the positive class."""
+    t = settings.min_rerank_score
+
+    def cleared(r) -> bool:
+        return r["top_rerank_score"] is not None and r["top_rerank_score"] >= t
+
+    tp = sum(1 for r in records if r["answerable"] and cleared(r))
+    fn = sum(1 for r in records if r["answerable"] and not cleared(r))
+    fp = sum(1 for r in records if not r["answerable"] and cleared(r))
+    tn = sum(1 for r in records if not r["answerable"] and not cleared(r))
+    return {
+        "threshold": t, "true_answers": tp, "false_refusals": fn, "false_answers": fp, "true_refusals": tn,
+        "gate_precision": tp / (tp + fp) if (tp + fp) else None,
+        "gate_recall": tp / (tp + fn) if (tp + fn) else None,
+    }
+
+
+def _breakdown(records: list[dict], by: str, stage: str, k: int) -> dict[str, dict]:
+    """{group: {n, n_scored, recall, mrr, hit_rate, gate...}} for one grouping
+    key ("slice" / "category"), one stage and one k. Recall/MRR average over
+    the scorable records of the group with _score_one, as the main table does."""
+    groups: dict[str, list[dict]] = {}
+    for r in records:
+        groups.setdefault(str(r.get(by)), []).append(r)
+    out: dict[str, dict] = {}
+    for name in sorted(groups):
+        rows = groups[name]
+        scorable = [r for r in rows if r["scorable"] and stage in r["metrics"]]
+        row = {"n": len(rows), "n_scored": len(scorable)}
+        for metric in ("recall", "mrr", "hit_rate"):
+            row[metric] = _mean([r["metrics"][stage][k][metric] for r in scorable]) if scorable else None
+        row.update(_gate_counts(rows))
+        out[name] = row
+    return out
+
+
+def _print_breakdown(title: str, table: dict[str, dict], k: int) -> None:
+    print(f"\n{title}  (recall/MRR at k={k}, final stage; gate at {settings.min_rerank_score})")
+    print(f"  {'group':<28} {'n':>4} {'scored':>6} {'recall':>7} {'MRR':>6} {'hit':>6} "
+          f"{'FalseRef':>8} {'FalseAns':>8} {'gPrec':>6} {'gRec':>6}")
+
+    def f(v, w=6, d=3):
+        return f"{v:>{w}.{d}f}" if isinstance(v, float) else f"{'-':>{w}}"
+
+    for name, m in table.items():
+        print(f"  {name[:28]:<28} {m['n']:>4} {m['n_scored']:>6} {f(m['recall'], 7)} {f(m['mrr'])} "
+              f"{f(m['hit_rate'])} {m['false_refusals']:>8} {m['false_answers']:>8} "
+              f"{f(m['gate_precision'])} {f(m['gate_recall'])}")
+
 
 _STAGE_LABELS = {
     "candidates": f"STAGE A -- candidates (pre-rerank, fetch_k={settings.fetch_k})",
@@ -515,6 +587,12 @@ def _evaluate(questions: list[dict], ks: list[int], use_rewrite: bool,
     n_scored = sum(1 for r in records if r["scorable"])
 
     _print_table(agg, ks, n_scored)
+    breakdowns: dict[str, dict] = {}
+    if mode != "bm25" and any(r.get("slice") not in (None, "legacy") for r in records):
+        k = settings.top_k if settings.top_k in ks else ks[0]
+        for by in ("slice", "category"):
+            breakdowns[by] = _breakdown(records, by, "final", k)
+            _print_breakdown(f"BY {by.upper()}", breakdowns[by], k)
     misses: list[dict] = []
     fp: dict = {}
     if mode == "bm25":
@@ -534,6 +612,7 @@ def _evaluate(questions: list[dict], ks: list[int], use_rewrite: bool,
         # int-keyed, so _print_delta can index it; _jsonable() stringifies the
         # k values on the way out (JSON object keys must be strings).
         "metrics": agg,
+        "breakdowns": breakdowns,
         "misses": misses,
         "false_positives": fp,
         "per_query": records,

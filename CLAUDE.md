@@ -269,7 +269,8 @@ the gate; they differ only in the final call (`generate_answer`, stray-script ch
 ## 5. LLM provider (`app/core/llm.py`)
 
 OpenAI is the production provider (`OPENAI_API_KEY`, `OPENAI_MODEL`, default `gpt-5-mini`). Every
-LLM call (tasks `intent`, `rewrite`, `roleplay_meta`, `qa`, `note`, `suggest`, `roleplay`) goes through
+LLM call (tasks `intent`, `rewrite`, `persona`, `qa`, `note`, `suggest`, `roleplay`; plus
+`eval_draft`, scripts-only, used by `scripts/draft_eval_questions.py`) goes through
 this module; no call site constructs an `openai.OpenAI` client itself.
 
 - **`get_client()`**: the shared, cached OpenAI client, built with
