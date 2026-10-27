@@ -16,8 +16,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from sqlalchemy import select, update
+
 from app.api.deps import COOKIE_NAME, hash_token
 from app.core.config import Settings, settings
+from app.db.models import Conversation
 from app.main import app
 from app.services import session_store
 
@@ -40,8 +43,8 @@ def _qa(answer: str = "উত্তর।"):
 def _stream_qa():
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
-        patch("app.api.router.retrieve_relevant_docs", return_value=[]),
-        patch("app.api.router.stream_answer", return_value=iter(["উত্তর।"])),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=[]),
+        patch("app.services.qa_service.stream_answer", return_value=iter(["উত্তর।"])),
     ):
         yield
 
@@ -63,6 +66,13 @@ def bob():
 
 def _set_cookie_headers(response) -> list[str]:
     return [v for k, v in response.headers.multi_items() if k.lower() == "set-cookie"]
+
+
+def _row(sid: str) -> Conversation | None:
+    """The stored row by id alone (any owner, deleted or not): the store's
+    public functions can't answer "was anything created under this id?"."""
+    with session_store._open() as db:
+        return db.execute(select(Conversation).where(Conversation.id == sid)).scalar_one_or_none()
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +146,7 @@ def test_unknown_session_id_starts_a_new_session_under_a_fresh_id(alice):
         rs = alice.post("/chat/stream", json={"message": "প্রশ্ন", "session_id": UNKNOWN_ID})
     assert rs.status_code == 200
     assert _done_session_id(rs.text) not in (UNKNOWN_ID, new_sid)
-    assert UNKNOWN_ID not in session_store._sessions
+    assert _row(UNKNOWN_ID) is None
 
     # the new id works for the next turn
     assert _chat(alice, "আবার", session_id=new_sid).json()["session_id"] == new_sid
@@ -150,7 +160,7 @@ def test_malformed_body_session_id_starts_a_new_session(alice, bad):
     r = _chat(alice, session_id=bad)
     assert r.status_code == 200
     assert r.json()["session_id"] != bad
-    assert bad not in session_store._sessions
+    assert _row(bad) is None
 
 
 @pytest.mark.parametrize("bad", ["does-not-exist", "a" * 42 + "$", "a" * 44])
@@ -160,35 +170,34 @@ def test_malformed_path_id_is_the_same_404(alice, bad):
         assert r.json() == NOT_FOUND
 
 
-def test_roleplay_persona_and_history_never_reach_another_owner(alice, bob):
+def test_roleplay_role_and_history_never_reach_another_owner(alice, bob):
+    """Mentor mode: bob sending alice's id gets a fresh session of his own --
+    no role, and none of alice's turns in the history handed to generation."""
+    meta = {"intent": "ROLEPLAY", "rewritten_query": "x", "role_id": "shikkhok",
+            "persona_ok": True, "level": "advanced"}
+    histories = []
+
+    def fake_stream(question, citations, *, history=None, **kw):
+        histories.append(list(history or []))
+        return iter(["উত্তর।"])
+
     with (
-        patch("app.api.router.classify_intent", return_value="ROLEPLAY"),
-        patch("app.core.llm.get_client") as get_client,
+        patch("app.services.intent_classifier.complete", return_value=MagicMock(
+            choices=[MagicMock(message=MagicMock(content=json.dumps(meta)))])),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=[]),
+        patch("app.services.qa_service.stream_answer", side_effect=fake_stream),
     ):
-        fake = MagicMock()
-        get_client.return_value = fake
+        sid = alice.post("/chat", json={"message": "শিক্ষকের মতো বলো: অ্যালিসের গোপন প্রশ্ন কী?"}).json()["session_id"]
+        alice.post("/chat", json={"message": "অ্যালিসের দ্বিতীয় গোপন প্রশ্ন", "session_id": sid})
 
-        def completion(text):
-            msg = MagicMock(content=text)
-            return MagicMock(choices=[MagicMock(message=msg)])
-
-        fake.chat.completions.create.side_effect = [
-            completion("গোপন চরিত্র"), completion("অ্যালিসের উত্তর"),
-        ]
-        sid = alice.post("/chat", json={"message": "অ্যালিসের গোপন বার্তা"}).json()["session_id"]
-
-        # bob sending alice's id gets a fresh roleplay of his own, with none
-        # of alice's persona or history.
-        fake.chat.completions.create.reset_mock()
-        fake.chat.completions.create.side_effect = [
-            completion("ববের চরিত্র"), completion("ববের উত্তর"),
-        ]
-        r = bob.post("/chat", json={"message": "ববের বার্তা", "session_id": sid})
+        r = bob.post("/chat", json={"message": "ববের বার্তা, শিক্ষকের মতো বলো: ববের প্রশ্ন কী?", "session_id": sid})
         assert r.status_code == 200
         assert r.json()["session_id"] != sid
 
-    sent = str(fake.chat.completions.create.call_args_list)
-    assert "অ্যালিসের" not in sent and "গোপন" not in sent
+    # alice's second turn saw her own first turn; bob's saw nothing of hers
+    assert any("অ্যালিসের গোপন" in t["content"] for t in histories[1])
+    assert not any("অ্যালিসের" in t["content"] for t in histories[2])
+    assert sid not in {row["id"] for row in bob.get("/conversations").json()}
 
 
 # ---------------------------------------------------------------------------
@@ -253,9 +262,9 @@ def test_invalid_cookie_is_replaced_not_trusted(forged, alice):
 def test_store_holds_only_the_hash_of_the_token(alice):
     sid = _chat(alice).json()["session_id"]
     token = alice.cookies.get(COOKIE_NAME)
-    stored = session_store._sessions[sid]["owner"]
+    stored = _row(sid).owner_key
     assert stored == hash_token(token)
-    assert token not in repr(session_store._sessions[sid])
+    assert token not in repr(session_store.get_owned_session(sid, stored))
 
 
 # ---------------------------------------------------------------------------
@@ -278,11 +287,17 @@ def test_session_ids_are_43_char_urlsafe_and_unique():
 
 
 def _age(sid: str, minutes: int) -> None:
-    session_store._sessions[sid]["updated_at"] = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    with session_store._open() as db:
+        db.execute(
+            update(Conversation)
+            .where(Conversation.id == sid)
+            .values(updated_at=datetime.now(timezone.utc) - timedelta(minutes=minutes))
+        )
+        db.commit()
 
 
 def test_per_owner_cap_evicts_that_owners_least_recently_updated(monkeypatch):
-    monkeypatch.setattr(settings, "max_sessions_per_owner", 3)
+    monkeypatch.setattr(settings, "guest_conversation_cap", 3)
     owner, other = "p" * 64, "q" * 64
     s1, _ = session_store.create_session(owner)
     s2, _ = session_store.create_session(owner)
@@ -300,34 +315,33 @@ def test_per_owner_cap_evicts_that_owners_least_recently_updated(monkeypatch):
     session_store.delete_session(o1, other)
 
 
-def test_global_cap_evicts_least_recently_updated(monkeypatch):
-    saved = dict(session_store._sessions)
-    session_store._sessions.clear()
-    try:
-        monkeypatch.setattr(settings, "max_sessions_total", 3)
-        a, _ = session_store.create_session("a" * 64)
-        b, _ = session_store.create_session("b" * 64)
-        c, _ = session_store.create_session("c" * 64)
-        _age(a, 1); _age(b, 60); _age(c, 2)  # noqa: E702
-        d, _ = session_store.create_session("d" * 64)
-        assert set(session_store._sessions) == {a, c, d}
-    finally:
-        session_store._sessions.clear()
-        session_store._sessions.update(saved)
+def test_user_cap_applies_to_logged_in_owners(monkeypatch):
+    # The global cap of the in-memory store is gone (Postgres); users get a
+    # larger per-owner cap than guests, selected by create_session(user_id=).
+    monkeypatch.setattr(settings, "guest_conversation_cap", 1)
+    monkeypatch.setattr(settings, "user_conversation_cap", 2)
+    owner, uid = "w" * 64, "00000000-0000-4000-8000-00000000abcd"
+    a, _ = session_store.create_session(owner, user_id=uid)
+    b, _ = session_store.create_session(owner, user_id=uid)
+    _age(a, 5)
+    c, _ = session_store.create_session(owner, user_id=uid)
+    assert {row["id"] for row in session_store.list_sessions(owner)} == {b, c}
+    assert _row(c).user_id == uid
 
 
 def test_update_and_append_never_create_and_tolerate_a_vanished_session():
     assert session_store.update_session(UNKNOWN_ID, mode="QA") is None
     assert session_store.append_history(UNKNOWN_ID, "user", "x") is None
-    assert UNKNOWN_ID not in session_store._sessions
+    assert _row(UNKNOWN_ID) is None
 
 
 def test_concurrent_delete_mid_request_does_not_crash(alice):
     """The session disappears between resolve and the final update/append."""
     sid = _chat(alice).json()["session_id"]
+    owner = hash_token(alice.cookies.get(COOKIE_NAME))
 
     def answer_then_delete(*_a, **_k):
-        session_store._sessions.pop(sid, None)
+        session_store.delete_session(sid, owner)
         return "উত্তর।"
 
     with (
@@ -337,7 +351,7 @@ def test_concurrent_delete_mid_request_does_not_crash(alice):
     ):
         r = alice.post("/chat", json={"message": "আবার", "session_id": sid})
     assert r.status_code == 200
-    assert sid not in session_store._sessions
+    assert session_store.get_owned_session(sid, owner) is None
 
 
 # ---------------------------------------------------------------------------

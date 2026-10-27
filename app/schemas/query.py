@@ -17,6 +17,11 @@ class Citation(BaseModel):
     # alone instead of guessing.
     similarity: float | None = None
     rerank_score: float | None = None
+    # Page/article-level id of the chunk ("page_842", "article_12"; ingest.py's
+    # row_key). Stored with the turn's sources so the next turn can carry the
+    # cited pages into its rerank pool (retriever extra_row_keys). None for
+    # citations built before this field existed.
+    row_key: str | None = None
 
 
 class QueryResponse(BaseModel):
@@ -52,6 +57,10 @@ class ChatResponse(BaseModel):
     # and the per-guest total. See docs/auth.md.
     guest_remaining: int | None = None
     guest_limit: int | None = None
+    # Mentor mode (mode "roleplay", docs/roleplay-v2.md): 2-3 follow-up
+    # questions drawn from the retrieved excerpts. [] for every other mode and
+    # whenever the gate failed. Also carried in the SSE `done` event.
+    suggestions: list[str] = []
 
 
 class ConversationSummary(BaseModel):
@@ -59,7 +68,10 @@ class ConversationSummary(BaseModel):
 
     id: str
     title: str
-    message_count: int
+    message_count: int  # every stored turn, not just the read window
+    # The intent of the last turn ("QA", "ROLEPLAY", ...), as stored on the
+    # conversation. Optional so older clients and fixtures without it still parse.
+    mode: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -67,3 +79,7 @@ class ConversationSummary(BaseModel):
 class ConversationMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
+    # Assistant turns only: the citations that were returned with the answer,
+    # so reopening a conversation restores them. [] for user turns, for modes
+    # without retrieval (note, roleplay) and for answers that failed the gate.
+    sources: list[Citation] = []

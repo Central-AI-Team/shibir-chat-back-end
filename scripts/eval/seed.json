@@ -1,0 +1,2434 @@
+[
+  {
+    "id": "bn-0001",
+    "slice": "answerable_bn",
+    "category": "বিষয়ভিত্তিক আয়াত হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন কাজে নিয়োজিত ব্যক্তি বর্ণিত হয়েছে যে সে নিজের আত্মনের নিয়ন্ত্রণ করবে ও মৃত্যুর পরের জন্য তৎপর হবে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6916"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বিষয়ভিত্তিক আয়াত হাদীস › ব্যক্তিগত রিপোর্ট; page says: হাদিসে বলা হয়েছে যে যে ব্যক্তি নিজের নাফসকে দমন করে এবং মৃত্যুর পরবর্তী জীবনের জন্য কাজ করে তাকে বুদ্ধিমান বলা হয়েছে।"
+  },
+  {
+    "id": "bn-0002",
+    "slice": "answerable_bn",
+    "category": "বিষয়ভিত্তিক আয়াত হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন প্রকার ব্যক্তির সম্পর্কে কুরআনের আয়াতে বলা হয়েছে যে তার কাজের প্রতিটি কথা ও কাজ রেকর্ড করে লেখকরা থাকে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6916"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বিষয়ভিত্তিক আয়াত হাদীস › ব্যক্তিগত রিপোর্ট; page says: কুরআনের আয়াতে উল্লেখ আছে যে দু’জন লেখক বা সম্মানিত লেখকবৃন্দ ডানে-বামে বসে মানুষোার উক্তি ও কাজ রেকর্ড করে; তাদের উপর পরিদর্শক বা রক্ষী নিয়ুক্ত আছে যারা প্রতিটি কাজ জানে।"
+  },
+  {
+    "id": "bn-0003",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন অবস্থায় কিছু লোক চোখ দিয়ে অশ্রু ঝরাচ্ছিল এবং তাদের মনের কষ্টের কারণ কী ছিল কি না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4317"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাফহীমুল কুরআন › সূরা আত তাওবা; page says: পৃষ্ঠায় বলা আছে যে কিছু লোক নিজেরা এসে বাহনের ব্যবস্থা চাইলেও বাহন না পেয়ে তারা ফিরে গিয়ে চোখে অশ্রু ঝরাচ্ছিল; তাদের কষ্টের কারণ ছিল নিজের অর্থে জিহাদে অংশগ্রহণ করতে অপারগতা ও সম্ভাব্য উপায়-উপকরণ না থাকা।"
+  },
+  {
+    "id": "bn-0004",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "বিত্তশালী যারা জিহাদে অংশগ্রহণ থেকে অব্যাহতি চায় তাদের সম্পর্কে কী বলা হয়েছে এবং আল্লাহ তাদের সম্পর্কে কী করেছেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4317"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাফহীমুল কুরআন › সূরা আত তাওবা; page says: পৃষ্ঠায় বলা আছে যে বিত্তশালীরা জিহাদে অংশগ্রহণ থেকে অব্যাহতি চাইছে, তারা পুরবাসিনীদের সঙ্গে থাকতে পছন্দ করেছে এবং আল্লাহ তাদের হৃদয়ে মোহর লাগিয়ে দিয়েছেন বলে উল্লেখ আছে।"
+  },
+  {
+    "id": "bn-0005",
+    "slice": "answerable_bn",
+    "category": "ক্যারিয়ার ও দক্ষতা",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কোন গ্রন্থটির রচনায় সহযোগিতা করা হয়েছে এবং তা কত কপি বিক্রি হয়েছে বলে বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8327"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মোরা বড় হতে চাই › কে সবচেয়ে বড়?; page says: গ্রন্থটির নাম ও বিক্রির সংখ্যা — সেই বইয়ে সহযোগিতায় রচিত গ্রন্থটি বেস্টসেলার হয়েছে এবং প্রায় ৩০ লক্ষ কপি বিক্রি হয়েছে।"
+  },
+  {
+    "id": "bn-0006",
+    "slice": "answerable_bn",
+    "category": "ক্যারিয়ার ও দক্ষতা",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "লেখক অনুযায়ী মানুষের মস্তিষ্ক কমপক্ষে কত গুণ ক্ষমতাসম্পন্ন এবং সেই তুলনায় মস্তিষ্কের মনোহিত মূল্য কত টাকা ধরা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8327"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মোরা বড় হতে চাই › কে সবচেয়ে বড়?; page says: নিউরো সায়েন্টিস্টদের উদ্ধৃতিতে বলা আছে মস্তিষ্ক সর্বাধুনিক কম্পিউটারের চেয়ে কমপক্ষে দশ লক্ষ গুণ বেশি ক্ষমতাসম্পন্ন এবং সেই অনুযায়ী এক ব্যক্তির ব্রেনের দাম কমপক্ষে ৫০,০০০ কোটি টাকা ধরা হয়েছে।"
+  },
+  {
+    "id": "bn-0007",
+    "slice": "answerable_bn",
+    "category": "মাসআলা-মাসায়েল",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "জানাযা নামাজ মোট কতটি তাকবির দিয়ে পড়তে হবে কিংবা শেষের সালাম কবে ফিরানো হয় কি করে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6389"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মাসয়ালা মাসায়েল ও দোআ › জানাযা নামাজ পড়ার পদ্ধতি; page says: পৃষ্ঠায় বলা আছে জানাযা নামাজ চার তাকবিরের সাথে পড়তে হবে এবং চতুর্থ তাকবিরের শেষে সালাম ফিরানো হয়।"
+  },
+  {
+    "id": "bn-0008",
+    "slice": "answerable_bn",
+    "category": "মাসআলা-মাসায়েল",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "জানাযার সানায় কী ধরনের পুরোহিত পাঠ বা প্রশংসা করা হয়, সংক্ষেপে কি বিষয়গুলো বলা হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6389"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মাসয়ালা মাসায়েল ও দোআ › জানাযা নামাজ পড়ার পদ্ধতি; page says: পৃষ্ঠায় সানার বাংলা অনুবাদে বলা আছে আল্লাহকে পবিত্র ও প্রশংসিত বলা, তাঁর নাম বরকতময় ও মহিমা উচ্চ বলা, এবং তাঁর ব্যতীত অন্য কোনো উপাস্য নেই বলেছি।"
+  },
+  {
+    "id": "bn-0009",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "নেতৃত্বের পালাবদল চলতে থাকলেও আনুগত্যকেও কেন বজায় রাখতে বলা হয়েছে কি কারণে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4871"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from চরিত্র গঠনের মৌলিক উপাদান › সংগঠনের সাথে সম্পর্ক; page says: কারণ শৃঙ্খলার আনুগত্য ব্যক্তিত্বকে সম্মুখে রেখে নয়, বরং শরীয়তের প্রদত্ত দায়িত্ব ও অধিকারগুলোর মর্যাদা রক্ষার জন্য নির্দেশ করা হয়েছে; তাই দায়িত্ব পালন করে অধিকার আদায় নিশ্চিত করতে আনুগত্য বজায় রাখতে হবে।"
+  },
+  {
+    "id": "bn-0010",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কর্তৃত্বশীলদের দায়িত্ব সম্পর্কে পৃষ্ঠায় কী সতর্কতা দিয়েছে এবং তাদের দায়-মাপকাঠি কিসে নির্ভর করে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4871"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from চরিত্র গঠনের মৌলিক উপাদান › সংগঠনের সাথে সম্পর্ক; page says: কর্তৃত্বশীলদের দায়িত্ব অনেক বেশি নাজুক ও গুরুতর এবং তারা তাদের দায়িত্ব পুরোপুরি পালন না করলে কর্তৃত্ব ও আনুগত্যের ভারসাম্য চূকিয়ে যাবে; উপরন্তু নেতাদের পরকালীন জবাবদিহি কড়া হবে এবং ইসলামী আন্দোলনের সাফল্য অনেকটাই তাদের সঠিক কর্মের ওপর নির্ভ"
+  },
+  {
+    "id": "bn-0011",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "বংশবাদ কিংবা জাতিগোষ্ঠীর কারণে কাউকে আল্লাহর কাছে বেশি মর্যাদাপূর্ণ বলা কি সম্ভব?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6926"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ঈমানের হাকীকত › মুসলমান ও কাফেরের মধ্যে বিশেষ পার্থক্য; page says: পৃষ্ঠায় বলা আছে যে ইসলামে বংশ বা গোত্রীয় মর্যাদার কোনো স্থান নেই; আল্লাহর কাছে মর্যাদা ইলম ও আমল, অর্থাৎ তাওবা-পিছপা ও তাঁর আদেশ পালন করার উপর নির্ভর করে।"
+  },
+  {
+    "id": "bn-0012",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন ধরনের মানুষই দুনিয়া ও আখেরাতে আল্লাহর অনুগ্রহ লাভ করবে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6926"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ঈমানের হাকীকত › মুসলমান ও কাফেরের মধ্যে বিশেষ পার্থক্য; page says: পৃষ্ঠায় স্পষ্ট করা হয়েছে যে যারা আল্লাহকে চেনে এবং তাঁকে প্রদত্ত বিধান অনুযায়ী অনুগতভাবে অনুসরণ করে, তবেই তারা দুনিয়া ও আখেরাতে তাঁর অনুগ্রহ পাবে।"
+  },
+  {
+    "id": "bn-0013",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন ও সংগঠন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "ব্যক্তিগত রিপোর্ট সংরক্ষণের উদ্দেশ্য কী এবং রিপোর্ট কিভাবে উন্নতি নিরূপণে কাজে লাগে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7915"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কর্মপদ্ধতি › ভূমিকা; page says: রিপোর্ট কর্মী তৈরির একটি গুরুত্বপূর্ণ হাতিয়ার; রিপোর্টে দুর্বলতা প্রকাশ পায়, পূর্বের রিপোর্টের সঙ্গে তুলনা করে উন্নতি, অবনতি বা স্থবিরতা ধরা পড়ে এবং নির্ধারিত পদ্ধতি অনুযায়ী সভাপতিকে দেখিয়ে মন্তব্য ও পরামর্শ নেয়া হয়।"
+  },
+  {
+    "id": "bn-0014",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লেখায় সংস্কৃতি শব্দের অর্থ কীভাবে সংক্ষেপে ব্যাখ্যা করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5331"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from শিক্ষা সাহিত্য সংস্কৃতি › সংস্কৃতি; page says: মানবগোষ্ঠীর অর্জিত কর্মপদ্ধতি—অভ্যাস, চিন্তা-বিশ্বাস, ধারা ও মূল্যমান ইত্যাদি যা মানুষকে সংহত করে এবং রক্ষা ও উৎকর্ষের জন্য চাওয়া।"
+  },
+  {
+    "id": "bn-0015",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন দুই মৌলিক উপাদানকে প্রতিটি সংস্কৃতির অপরিহার্য বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5331"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from শিক্ষা সাহিত্য সংস্কৃতি › সংস্কৃতি; page says: লেখায় ভাষা এবং পারিবারিক সংগঠনকে প্রতিটি সংস্কৃতির অনিবার্য উপাদান হিসেবে বলা হয়েছে।"
+  },
+  {
+    "id": "bn-0016",
+    "slice": "answerable_bn",
+    "category": "বিবিধ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "নৌকায় প্রাণীর সংখ্যাসংক্রান্ত কোনো তফাৎ কীভাবে উপস্থাপিত হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6657"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বাইবেল, কুরআন ও বিজ্ঞান › ভুমিকা; page says: এক অংশে প্রতি প্রজাতির একটি জোড়া নেওয়ার কথা বলা হয়েছে, আর অন্য অংশে পবিত্র প্রাণীর সাত পুরুষ ও সাত স্ত্রী এবং অপবিত্র প্রাণীর এক পুরুষ ও এক স্ত্রী নেওয়ার কথা বলা হয়েছে, পরে বলা হয়েছে নূহ শেষ পর্যন্ত প্রতি প্রজাতির একটি জোড়া নিয়েছিলেন।"
+  },
+  {
+    "id": "bn-0017",
+    "slice": "answerable_bn",
+    "category": "মাসয়ালা মাসায়েল",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "জানাযা নামাজ মোট কতটি তাকবিরসহ আদায় করতে হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8392"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মাসয়ালা মাসায়েল ও দোআ › জানাযা নামাজ পড়ার পদ্ধতি; page says: পৃষ্ঠায় বলা আছে জানাযা নামাজ ৪ তাকবিরের সাথে পড়িতে হয়।"
+  },
+  {
+    "id": "bn-0018",
+    "slice": "answerable_bn",
+    "category": "মাসয়ালা মাসায়েল",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "জানাযার প্রথম তাকবিরের পরে কোন সূরা বা দোয়া পাঠ করা উচিত বলে উল্লেখ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8392"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মাসয়ালা মাসায়েল ও দোআ › জানাযা নামাজ পড়ার পদ্ধতি; page says: পৃষ্ঠায় বলা আছে প্রথম তাকবিরের পরে সানা অথবা বিশুদ্ধ হাদিসের আলোকে সূরা ফাতিহা পড়তে হয়।"
+  },
+  {
+    "id": "bn-0019",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লেখক কোন পরিস্থিতিতে হজ্জকে সক্রিয় ও ফলপ্রসূ বলছেন যে এটি লক্ষ লক্ষ মানুষকে নেক ও ধর্মপ্রাণ বানাতে পারত?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5087"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from হজ্জের হাকীকত › হজ্জের বিশ্ব সম্মেলন; page says: যখন প্রতিবছর বিশ্বের সব অঞ্চল থেকে লোকেরা এক স্থানে এসে পুনরায় নিজের দেশে ফিরে গিয়ে তাদের পবিত্র জীবন, চিন্তা ও নৈতিকতাকে জীবনযাপনে প্রকাশ করে এবং এমন ধারাবাহিকতা শতাব্দী ধরে চলতে থাকে।"
+  },
+  {
+    "id": "bn-0020",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লেখকের মতে হজ্জের পূর্ণ উপকার পেতে ইসলামের কেন্দ্রে কী ধরনের কর্তৃত্ব এবং প্রতিষ্ঠান থাকা প্রয়োজন ছিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5087"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from হজ্জের হাকীকত › হজ্জের বিশ্ব সম্মেলন; page says: একটি শক্তিশালী কর্তৃত্ববাহী কেন্দ্র যা বিশ্বব্যাপী শক্তিকে কার্যকরভাবে কাজে লাগাবে, একটি হৃদ্য কেন্দ্র যা জাগতিক দেহে জীবনদায়ী রক্ত সঞ্চার এবং একটি মস্তিষ্ক যা আল্লাহর দূতদের মাধ্যমে ইসলামের বিপ্লবী বার্তা বিশ্বে পৌঁছে দেবে; অথবা অন্তত সেখা"
+  },
+  {
+    "id": "bn-0021",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "এই তালিকায় সবচেয়ে অধিক জীবদ্দশার বছর উল্লেখ করা কোন সাহাবীর জন্য দেয়া হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4734"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from হাদীসের পরিচয় › হাদীস প্রচার ও বর্ণনানুযায়ী সাহাবীদের বিভাগ; page says: পৃষ্ঠায় সব সাহাবীর পাশে জন্ম/মৃত্যু বা হিজরির বছর দেওয়া আছে; সকলে দেখে সর্বোচ্চ হিজরির সংখ্যা (৮৭ হি) হযরত আবদুল্লাহ ইবনে আবু আওফা (রাঃ)-এর জন্য দেয়া আছে।"
+  },
+  {
+    "id": "bn-0022",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "তালিকায় কোন সাহাবীর পাশে জীবদ্দশার নম্বর হিসেবে ৪৪ লেখা আছে এবং তিনি কে ছিলেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4734"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from হাদীসের পরিচয় › হাদীস প্রচার ও বর্ণনানুযায়ী সাহাবীদের বিভাগ; page says: পৃষ্ঠায় প্রতিটি লাইনে নামের পাশে হিজরির বছর ও একটি সংখ্যা আছে; সেখানে সংখ্যাটি ৪৪ লিখা আছে যেটি হযরত বেলাল (রাঃ)-এর পাশে দেওয়া।"
+  },
+  {
+    "id": "bn-0023",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "মুহাম্মদুর রাসূলুল্লাহ (সা)-কে প্রথম Wahy পাওয়ার পর তিনি কীভাবে প্রতিক্রিয়া দেখিয়েছিলেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8211"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আল্লাহর দিকে আহবান › আল্লাহর দিকে আহ্বান ও নবীগণ; page says: প্রথম অহী প্রাপ্তির পর তিনি চাদর মুড়া দিয়ে রইলেন।"
+  },
+  {
+    "id": "bn-0024",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "আল্লাহ প্রথম আহ্বানের জন্য নবীকে যেসব নির্দেশ দিয়েছেন, সেগুলোর মূল বক্তব্য কী ছিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8211"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আল্লাহর দিকে আহবান › আল্লাহর দিকে আহ্বান ও নবীগণ; page says: নবীকে উঠে লোকদের সতর্ক করা এবং তাঁর রবের বড়ত্ব ঘোষণা করার নির্দেশ দেওয়া হয়েছে (আল মুদ্দাচ্ছির ১–৩) এবং রিসালাতের দায়িত্ব অনুসারে বাৎসরিকভাবে নাজিলকৃত বার্তা মানুষকে পৌঁছে দেওয়া প্রয়োজন বলে উল্লেখ আছে (আল ইমরান ৬৭) এবং দিকনির্দেশনায় হিকমত ও "
+  },
+  {
+    "id": "bn-0025",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন ছাত্র ও ইসলামী আন্দোলনের কর্মীরা বই সম্পর্কে জানতে অধ্যাপক মোহাম্মাদ কুতুবের সঙ্গে দেখা করতে আসতেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6295"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কারাগারে রাতদিন › চতুর্থ অধ্যায়; page says: অধ্যাপক কুতুবের দুটি গ্রন্থ‑ 'আত্‌-তাতাউউরু...' ও 'জাহেলিয়্যাতিল কুরনিল এশরীন' প্রকাশিত হওয়ায় তাদের বিষয়াদি সম্পর্কে বিস্তারিত জানতে ইচ্ছে করায় তারা সাক্ষাতের জন্য এসেছিলেন।"
+  },
+  {
+    "id": "bn-0026",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "আবদুল ফাত্তাহ ইসমাইল ওই সমাবেশগুলোতে কেন যোগ দিতেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6295"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কারাগারে রাতদিন › চতুর্থ অধ্যায়; page says: তিনি ইখওয়ানুল মুসলিমুনের নীতিমালা বা চরিত্রবান যুবকদের মধ্যে একজন ছিলেন বলে তিনি উপস্থিত থাকতেন।"
+  },
+  {
+    "id": "bn-0027",
+    "slice": "answerable_bn",
+    "category": "উলুমুল কুরআন ও উলুমুল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মাক্কি যুগ মোট কত বছর স্থায়ী ছিল এবং এর প্রধান বৈশিষ্ট্যগুলো কী কী ছিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6864"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from উলুমুল কুরআন ও উলুমুল হাদীস › রাসূল সাঃ এর আন্দোলনের বিভিন্ন যুগ ও স্তর; page says: পৃষ্ঠায় বলা আছে মাক্কি যুগ প্রথম ১৩ বছর ছিল এবং তা দাওয়াত ও তাবলীগ, ব্যক্তিগঠনের যুগ ও নির্যাতনের যুগ হিসেবে বিবেচিত।"
+  },
+  {
+    "id": "bn-0028",
+    "slice": "answerable_bn",
+    "category": "উলুমুল কুরআন ও উলুমুল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মাদানি যুগের মোট দৈর্ঘ্য কত এবং এটি কিসের জন্য প্রসিদ্ধ ছিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6864"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from উলুমুল কুরআন ও উলুমুল হাদীস › রাসূল সাঃ এর আন্দোলনের বিভিন্ন যুগ ও স্তর; page says: পৃষ্ঠায় উল্লেখ আছে মাদানি যুগ হিজরাতের পর ১০ বছর স্থায়ী ছিল এবং এটি বিজয়, সমাজগঠন, রাষ্ট্র পরিচালনা ও সশস্ত্র মোকাবেলার যুগ ছিল।"
+  },
+  {
+    "id": "bn-0029",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "হাদিসে রাসূলুল্লাহ সাল্লাল্লাহু আলাইহি ওয়াসাল্লাম সম্পর্কে কোন ব্যক্তিকে সর্বোত্তম বলা হয়েছে এবং কেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8341"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বিষয়ভিত্তিক আয়াত ও হাদিস সংকলন › প্রশিক্ষণ; page says: বুখারীতে উক্ত হাদিস অনুযায়ী সর্বোত্তম ব্যক্তি হল সে যে নিজে কোরআন শিখে এবং অন্যকে শিখায়।"
+  },
+  {
+    "id": "bn-0030",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "নিজের হাতের কাজ করে রোজগার করার অবস্থান কিরকম বলে এখানে বর্ণনা করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7718"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from রাহে আমল (১ম খণ্ড) › গ্রন্থকারের ভূমিকা; page says: বইয়ের অংশে 'হাতের কাজ থেকে উপার্জিত অর্থ সর্বাধিক পবিত্র' বলা রয়েছে।"
+  },
+  {
+    "id": "bn-0031",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কৃতকর্মে মিথ্যে শপথ বা কসম খাওয়ার ব্যবসায়িক প্রভাব সম্পর্কে কী সতর্কবার্তা দেয়া হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7718"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from রাহে আমল (১ম খণ্ড) › গ্রন্থকারের ভূমিকা; page says: পৃষ্ঠায় উল্লেখ আছে যে বেশি কসম খাওয়ায় ব্যবসায়ে বরকত নষ্ট হয় এবং মিথ্যে শপথকারী ব্যবসায়ীর সাথে আল্লাহ কথা বলবেন না।"
+  },
+  {
+    "id": "bn-0032",
+    "slice": "answerable_bn",
+    "category": "বিষয়ভিত্তিক আয়াত হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন অবস্থায় তিনজন ভ্রমণকারীর মধ্যে একজনকে নেতা করা উচিত বলে বলা হয়েছে কি?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6895"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বিষয়ভিত্তিক আয়াত হাদীস › সংগঠন; page says: হাদিসে বলা আছে, যখন তিনজন ব্যক্তি সফরে থাকে তখন তাদের মধ্যে একজনকে আমীর করা উচিত।"
+  },
+  {
+    "id": "bn-0033",
+    "slice": "answerable_bn",
+    "category": "বিষয়ভিত্তিক আয়াত হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন আচরণ করলে কোনো ব্যক্তি বা গোষ্ঠী ইসলামের বন্ধন থেকে বিচ্ছিন্ন বলে বিবেচিত হবে বলে উল্লেখ আছে কি?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6895"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বিষয়ভিত্তিক আয়াত হাদীস › সংগঠন; page says: হাদিসে বলা আছে, যদি কেউ দলের কাছ থেকে এক বিঘত পরিমাণ (শিবর) আলাদা হয়ে যায় বা সমাজ থেকে বিচ্ছিন্ন থাকে তবে সে ইসলামের রশি খুলে ফেলেছে এবং দল থেকে বেরিয়ে গেলে এটি নিষিদ্ধ/বিপজ্জনক হিসেবে উল্লেখ আছে।"
+  },
+  {
+    "id": "bn-0034",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মাদ কীভাবে সংজ্ঞায়িত করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4607"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইলমে তাজবীদ › মাদ; page says: প্রদত্ত পৃষ্ঠায় বলা আছে মাদ হল টেনে বা দীর্ঘ করে পড়ার নাম।"
+  },
+  {
+    "id": "bn-0035",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মাদ্দে লিনের ক্ষেত্রে লিনের কোন দুইটি হরফ এবং সেগুলো কিভাবে পড়া যায়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4607"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইলমে তাজবীদ › মাদ; page says: পৃষ্ঠায় বলা আছে লিনের দুইটি হরফ হল বাম পাশে জযম ওয়ালা ওয়াও (ْو) এবং বাম পাশে জযম ওয়ালা ইয়া (ْي); এগুলো এক আলিফ লম্বা করে পড়া যায় এবং মাদ্দে লিন ২/৩ আলিফ টানিয়া ও পড়া যায়।"
+  },
+  {
+    "id": "bn-0036",
+    "slice": "answerable_bn",
+    "category": "ক্যারিয়ার ও দক্ষতা",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "লেখক কিসের মাধ্যমেই মানুষ বড় স্বপ্ন বাস্তবায়নে সফল হতে পারে বলে বলেছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8325"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মোরা বড় হতে চাই › কে সবচেয়ে বড়?; page says: পৃষ্ঠায় বলা আছে যে আত্মবিশ্বাস এবং অধ্যবসায়ের ফলে বড় স্বপ্ন পূরণ সম্ভব—উদাহরণ হিসেবে অ্যাটলিট ও বৈজ্ঞানিকদের রেকর্ড ও আবিষ্কারের কথা উল্লেখ করা হয়েছে।"
+  },
+  {
+    "id": "bn-0037",
+    "slice": "answerable_bn",
+    "category": "ক্যারিয়ার ও দক্ষতা",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কোন ঘটনাটি প্রমাণ করেছে যে আগে অসম্ভব মনে করা লক্ষ্যও পরে দ্রুত অনেক মানুষ অর্জন করতে পারে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8325"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মোরা বড় হতে চাই › কে সবচেয়ে বড়?; page says: পৃষ্ঠায় ব্যাখ্যা করা হয়েছে যে রজার ব্যানিস্টারের চার মিনিটে এক মাইল দৌড়ের রেকর্ডের পর মাত্র ছয় সপ্তাহের মধ্যে জন ল্যান্ডি সেটি ভাঙার পর আরও হাজারের অধিক দৌড়বিদ পরবর্তী সময়ে রেকর্ড ভেঙেছে, যা দেখায় একবার সম্ভব হওয়া মাত্র ভাঙার হিড়িক পড"
+  },
+  {
+    "id": "bn-0038",
+    "slice": "answerable_bn",
+    "category": "মাসআলা-মাসায়েল",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লেখকেরা কেন এই সংক্ষিপ্ত ফিকহগ্রন্থটি বাংলা ভাষায় অনুবাদ করে প্রকাশ করেছেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6392"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আসান ফেকাহ (১ম খণ্ড) › প্রকাশকের কথা; page says: গ্রন্থটির প্রয়োজন ছিল একটি সংক্ষিপ্ত বইয়ের যা প্রতিটি মুসলিমের জীবনযাপনের সব দিক মিটাবে; উর্দু গ্রন্থটি সেই প্রয়োজন পূরণ করায় এবং তাই দু‘খণ্ডের বইটি বাংলা অনূদিত করে প্রকাশ করা হয়েছে।"
+  },
+  {
+    "id": "bn-0039",
+    "slice": "answerable_bn",
+    "category": "মাসআলা-মাসায়েল",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "এই খণ্ডে কোন কোন বিষয়ের অধ্যায়গুলো অন্তর্ভুক্ত করা হয়েছে এবং দ্বিতীয় খণ্ডে কোন বিষয়গুলো থাকবে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6392"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আসান ফেকাহ (১ম খণ্ড) › প্রকাশকের কথা; page says: প্রথম খণ্ডে আকায়েদ, তাহারাত ও সালাত নামে তিনটি অধ্যায় রয়েছে; দ্বিতীয় খণ্ডে যাকাত, সাওম ও হজ্জের আহকাম থাকবে।"
+  },
+  {
+    "id": "bn-0040",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন কোনো ব্যক্তিকে বাইরে থেকে আনা পরিবর্তন প্রলোভনে জিদ ও গোঁড়ামি দেখা দেয় বলে লেখা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4905"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আদর্শ কিভাবে প্রচার করতে হবে › কথা বলার ধরন; page says: কারণ যখন পরিবর্তন তার নিজের ইচ্ছা বা স্বাভাবিকভাবে না হয়ে অপরের দ্বারা চাপা হয়, তখন সে প্রতিক্রিয়া সৃষ্টি করে এবং জিদ ও গোঁড়ামি দেখা দেয়।"
+  },
+  {
+    "id": "bn-0041",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কথা বলার সময় কীভাবে ভূমিকা নিতে বলা হয়েছে যাতে মানুষ নিজেই তার বিশ্বাস অ reassess করতে বাধ্য হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4905"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আদর্শ কিভাবে প্রচার করতে হবে › কথা বলার ধরন; page says: বলো হয়েছে যে সরাসরি বিরোধিতা না করে তার মতের বিপরীতে নয় বরং চিন্তা প্রসারণের জন্য আলাদা দৃষ্টিকোণ তুলে ধরে আলোচনা চালাতে হবে, যাতে সে নিজের সম্পর্কে ভাবতে বাধ্য হয় এবং দ্বিধা দূর হয়ে যায়।"
+  },
+  {
+    "id": "bn-0042",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কী কারণে কখনো-কখনো একজন ব্যক্তি মারা যাওয়ার পরও তার সওয়াব বা গুনাহ জমা হতে থাকে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4968"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মজবুত ঈমান › মযবুত ঈমানের শর্ত কী কী?; page says: কারো দ্বারা শেখানো, উদ্বুদ্ধ করা বা সমাজে চালু রাখা কর্মের জের হিসেবে সেই কাজ যতদিন চালু থাকবে ততদিন তার সওয়াব বা গুনাহ তার আমলনামায় জমা থাকতে পারে বলে পৃষ্ঠায় বলা হয়েছে।"
+  },
+  {
+    "id": "bn-0043",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কিয়ামতের দিন মানুষ যখন আমলনামা পাবে তখন কেন অনেকেই নিজেদের করা কাজ দেখে হতবাক হবে বলে ব্যাখ্যা করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4968"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মজবুত ঈমান › মযবুত ঈমানের শর্ত কী কী?; page says: হাদীসের বর্ণনা অনুযায়ী মানুষ দেখবে যে তারা অন্যদের শিক্ষা বা উৎসাহ দিয়ে বা উদাহরণ হয়ে অন্যদের কাজ করিয়েছে, ফলে সেই অপরদের আমলও তাদের হিসাবে ধরা হয়েছে; এজন্য নেক ও বদ উভয় ধরনের মানুষ একই জবাব পাবে বলে পৃষ্ঠায় বলা আছে।"
+  },
+  {
+    "id": "bn-0044",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন ও সংগঠন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "ছাত্রশিবির কি ধরনের সংগঠন হিসেবে বর্ণিত এবং এর প্রধান লক্ষ্যমাত্রা কী কেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7932"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কর্মপদ্ধতি › ভূমিকা; page says: পৃষ্ঠায় বলা আছে ছাত্রশিবির একটি গঠনমুখী ছাত্র আন্দোলন এবং এর লক্ষ্য ও উদ্দেশ্য আলোচনা করা হয়েছে।"
+  },
+  {
+    "id": "bn-0045",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন ও সংগঠন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "ইসলামের প্রচার কাজকে একজন মুসলিম যুবকের জীবনে কী গুরুত্ব দেওয়া হয়েছে এবং কেন এটি জরুরি বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7932"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কর্মপদ্ধতি › ভূমিকা; page says: পৃষ্ঠায় উল্লেখ আছে ইসলামের প্রচার (দাওয়াত) মু’মিন জীবনের মিশন এবং ইসলাম প্রচার ও প্রতিষ্ঠায় একজন মুসলিম যুবকের ভূমিকা ও তাৎপর্য লেখা আছে।"
+  },
+  {
+    "id": "bn-0046",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "প্রথম দোয়ার শুরুতে আল্লাহর সামনে কোন চারটি ব্যাপারে অনুরোধ ও ইকাম করা হলো?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7022"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from অর্থনীতিতে রাসুলের (সাঃ) দশ দফা › এক নজরে আল কুরআন; page says: প্রথম দোয়ায় বলা হলো: সাহায্য প্রার্থনা করা, ক্ষমা প্রার্থনা করা, ঈমান আনা এবং আল্লাহর ওপর ভরসা করা।"
+  },
+  {
+    "id": "bn-0047",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কুনুতের শেষে মুমিনদের জন্য কোন চারটি দোয়া বা অনুরোধ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7022"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from অর্থনীতিতে রাসুলের (সাঃ) দশ দফা › এক নজরে আল কুরআন; page says: কুনুতের শেষে মুমিন ও মুমিনাদের জন্য ক্ষমা প্রার্থনা, তাদের হৃদয় একত্র করা, তাদের মধ্যে সম্পর্ক মেরামত ও তাদেরকে শত্রুর বিরুদ্ধে সহায়তা প্রার্থনা করা হয়েছে।"
+  },
+  {
+    "id": "bn-0048",
+    "slice": "answerable_bn",
+    "category": "বিবিধ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লুক ও মথির বংশলিপির মধ্যে দাউদের পরে যিশুর পূর্বপুরুষের নামসংখ্যা নিয়ে কী প্রধান পার্থক্য রয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6704"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বাইবেল, কুরআন ও বিজ্ঞান › গসপেলঃ উৎস ও ইতিহাস; page says: লুকের নসবনামায় দাউদের পরে থেকে যিশু পর্যন্ত ৪২টি নাম রয়েছে, যেখানে মথির নসবনামায় একই পর্যায়ে দাউদ থেকে যিশু পর্যন্ত ২৭টি নাম আছে।"
+  },
+  {
+    "id": "bn-0049",
+    "slice": "answerable_bn",
+    "category": "বিবিধ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লুকের নসবনামার একাধিক সংস্করণ নিয়ে কোন দুটি প্রধান কোডেক্সকে মিলিয়ে দেখা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6704"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বাইবেল, কুরআন ও বিজ্ঞান › গসপেলঃ উৎস ও ইতিহাস; page says: লুকের ব্যাপারে কোডেক্স বেজাই ক্যান্টাব্রিজিনসিসে জালিয়াতি aside রেখে সর্বাধিক সম্মানিত দুটি পান্ডুলিপি হিসেবে কোডেক্স ভ্যাটিক্যানাস এবং কোডেক্স সিনাইটিকাসকে মিলিয়ে দেখা হয়েছে।"
+  },
+  {
+    "id": "bn-0050",
+    "slice": "answerable_bn",
+    "category": "মাসয়ালা মাসায়েল",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "ঘুম থেকে ওঠার পর কোন কাজের জন্য কৃতজ্ঞতা প্রকাশ করে ওই দোয়াটি প্রশংসা জানায় এবং কী সম্পর্কে বক্তৃতা করে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8393"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মাসয়ালা মাসায়েল ও দোআ › মাসনুন দোয়া; page says: পৃষ্ঠায় বলা আছে দোয়াটি আল্লাহকে প্রশংসা জ্ঞাপন করে যে তিনি আমাদেরকে (মৃত্যুর মতো ঘুমের পর) পুনরায় জীবন দিয়েছেন এবং সবাইকে তাঁর নিকট ফিরে যেতে হবে।"
+  },
+  {
+    "id": "bn-0051",
+    "slice": "answerable_bn",
+    "category": "মাসয়ালা মাসায়েল",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "টয়লেট থেকে বের হওয়ার সময় কোন দুইটি বিষয়কে কেন্দ্র করে ধন্যবাদ ও ক্ষমা প্রার্থনা করা হয় সেই দোয়ায়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8393"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মাসয়ালা মাসায়েল ও দোআ › মাসনুন দোয়া; page says: পৃষ্ঠায় উল্লেখ রয়েছে যে দোয়ায় ক্ষমা প্রার্থনা করা হয় এবং আল্লাহকে ধন্যবাদ জানানো হয় কারণ তিনি ব্যক্তি থেকে নাপাক দূর করেছেন এবং তাকে সুস্থতা/আরাম দিয়েছেন।"
+  },
+  {
+    "id": "bn-0052",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "এ ধরনের সংগঠনে নেতৃত্ব কেন নেওয়ার জন্য মানুষ ব্যক্তিগত প্রতিযোগিতা করে না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5153"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইকামাতে দ্বীন › “ইকামাতে দ্বীনের” মর্ম; page says: এই সংগঠনে নেতা হওয়ার উদ্দেশ্যে ঢুকবার পথ থাকে না এবং দায়িত্বশীলরা যোগ্যতা দেখে দায়িত্ব দিয়ে থাকেন, তাই কেউ নেতৃত্বের জন্য প্রতিযোগিতা করে না।"
+  },
+  {
+    "id": "bn-0053",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন কারণে কোনো ব্যক্তিকে কেন্দ্র করে গড়া সংগঠন স্থায়ী হতে পারে না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5153"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইকামাতে দ্বীন › “ইকামাতে দ্বীনের” মর্ম; page says: যদি সংগঠনের ভিত্তি কোনো ব্যক্তিত্ব হয় তবে সেই ব্যক্তির মৃত্যুর পর সংগঠনের অস্তিত্ব টিকে থাকতে পারে না।"
+  },
+  {
+    "id": "bn-0054",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কখন একজন নেক ব্যক্তির করা কোনো ভুল ক্ষমা করা যাবে না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4617"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from রাহে আমল (২য় খণ্ড) › এক মুসলমানের উপর আরেক মুসলমানের অধিকার অধ্যায়; page says: যখন সেই ভুল এমন কোনো অপরাধ যার জন্য শরীয়ত অনুযায়ী নির্দিষ্ট শাস্তি (হুদুদ) রয়েছে, যেমন ব্যভিচার বা চুরি।"
+  },
+  {
+    "id": "bn-0055",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কিয়ামতের দিনে রাসূলুল্লাহ কীভাবে কোনো মুসলিমের বিরুদ্ধে অমুসলিম নাগরিকের পক্ষে হস্তক্ষেপ করবেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4617"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from রাহে আমল (২য় খণ্ড) › এক মুসলমানের উপর আরেক মুসলমানের অধিকার অধ্যায়; page says: যদি কোনো মুসলিম অমুসলিম নাগরিককে পীড়িত করে, তার অধিকার লঙ্ঘন করে বা জোরপূর্বক তার বস্তু ছিনিয়ে নেয়, তাহলে রাসূলুল্লাহ কিয়ামতের দিন আল্লাহর আদালতে সেই অমুসলিমের পক্ষে দাঁড়াবেন।"
+  },
+  {
+    "id": "bn-0056",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "লেখক কোন কারণে মানুষের নিজের বুদ্ধি ও ক্ষমতায় পূর্ণাঙ্গ জীবনপথ রচনা করা সম্ভব নয় বলে বলেছেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8174"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মুক্তির পয়গাম › মুক্তির পয়গাম; page says: মানুষের সীমিত জ্ঞান, বুদ্ধি ও অভিজ্ঞতার কারণে সে সব যুগ ও দেশের মানুষের জন্য সমপূর্ণ জীবনাদর্শ রচনা করতে পারে না; আগের ও পরের মানুষদের সম্পূর্ণরূপে দেখে বা জানে না।"
+  },
+  {
+    "id": "bn-0057",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "লেখক কি কি বিশ্বব্যাপী সমস্যা বা প্রতিকূলতা তুলে ধরেছেন আধুনিক মানৱৰচিত মতবাদ এবং ব্যবস্থার ফলে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8174"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মুক্তির পয়গাম › মুক্তির পয়গাম; page says: সাম্যবাদ ও গণতন্ত্রের নামে প্রতারণা, নৈতিক অপরাধ ও পুঁজিবাদের উদয়, জাতিগত ভেদাভেদ অব্যাহত থাকা, ইহুদীবাদের হুমকি, সামরিক মেরামত ও মারণাস্ত্র নির্মাণ, বড় শক্তিগুলোর হুমকি ও যুদ্ধের ভয়, একদিকে অতিরঞ্জিত ভোগন এবং অন্যদিকে কোটি কোটি মানুষের অনা"
+  },
+  {
+    "id": "bn-0058",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লেখক কেন বলেছেন যে কিছু ব্যক্তিবর্গ আমাদের প্রতি বীতশ্রদ্ধ ঘটায়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5674"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from সত্যের সাক্ষ্য › অভিযোগ এবং তার জবাব; page says: কারণ আমাদের গ্রহণ করা কর্মপন্থা তাদের অনুসৃত কর্মনীতির ত্রুটি স্পষ্ট করেছে এবং আমরা এমন দিকেই আহবান জানাই যা তাদের মনঃপূত নয়, তাই তারা অপবাদ রটায় এবং বীতশ্রদ্ধ হয়।"
+  },
+  {
+    "id": "bn-0059",
+    "slice": "answerable_bn",
+    "category": "উলুমুল কুরআন ও উলুমুল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কে বা কীকে ‘সিকাহ’ বলা হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6875"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from উলুমুল কুরআন ও উলুমুল হাদীস › ইলমে হাদিসের কিছু পরিভাষা; page says: যেসব ব্যক্তির মধ্যে আ’দল (ন্যায়বান গুণ) পরিপূর্ণভাবে বিদ্যমান থাকে তাদেরকে 'সিকাহ' বলা হয়েছে।"
+  },
+  {
+    "id": "bn-0060",
+    "slice": "answerable_bn",
+    "category": "উলুমুল কুরআন ও উলুমুল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন কোন গ্রন্থকে মিলিয়ে সিহাহ সিত্তাহ বলা হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6875"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from উলুমুল কুরআন ও উলুমুল হাদীস › ইলমে হাদিসের কিছু পরিভাষা; page says: সিহাহ সিত্তাহ হিসেবে ছয়টি গ্রন্থের নাম দেওয়া হয়েছে: সহিহ বুখারী, সহিহ মুসলিম, সহিহ তিরমিযী, আবু দাউদ, নাসায়ী ও ইবনু মাজাহ।"
+  },
+  {
+    "id": "bn-0061",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "হাদিসশাস্ত্রে রাসূলের মৌখিক নির্দেশ ও বর্ণনাকে কী নামে বলা হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8380"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from উলুমুল কুরআন ও উলুমুল হাদীস › হাদিসের শ্রেণীবিভাগ; page says: পৃষ্ঠায় বলা হয়েছে যে রাসূল সাঃ-এর কথা সংবলিত মৌখিক আদেশ, নিষেধ ও বর্ণনাকে কাওলি হাদিস বলা হয়।"
+  },
+  {
+    "id": "bn-0062",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কোন ধরনের হাদিসকে মুত্তাসিল বলা হয় এবং তার সনদের কেমন থাকা উচিত?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8380"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from উলুমুল কুরআন ও উলুমুল হাদীস › হাদিসের শ্রেণীবিভাগ; page says: পৃষ্ঠায় বর্ণিত আছে মুত্তাসিল হাদিসের সনদের ধারাবাহিকতা ওপর থেকে নিচ পর্যন্ত সম্পূর্ণ রক্ষা করা থাকে এবং কোনো রাবি বাদ বা গোপন নেই।"
+  },
+  {
+    "id": "bn-0063",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন সাহাবার সংগ্রহীত কোরআনের গ্রন্থখানা হযরত উসমানের অনুরোধে নকল করা হয়েছিল কি?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4584"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মহাগ্রন্থ আল-কোরআন কি ও কেন? › কোরআনের পঠন পদ্ধতির সংস্কার; page says: হাফসা (রা) দ্বারা সংরক্ষিত হযরত আবু বকের (রা) সংগ্রহীত গ্রন্থখানাটি হযরত উসমান (রা) নকল করার জন্য নেওয়া হয়েছিল।"
+  },
+  {
+    "id": "bn-0064",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "উসমানী সময় হলো কি কারণে পুরোনো বিভিন্ন মাছহাফ ধ্বংস করার নির্দেশ দেওয়া হয়েছিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4584"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মহাগ্রন্থ আল-কোরআন কি ও কেন? › কোরআনের পঠন পদ্ধতির সংস্কার; page says: নকলকৃত একরকম মাছহাফ সরকারিভাবে রাজ্যের বিভিন্ন অংশে পাঠানোর পর নির্দেশ দেয়া হয়েছিল যে, উসমান (রা) প্রেরিত মাছহাফ ছাড়া অন্য সব মাছহাফ ধ্বংস করা হবে যাতে পাঠ পদ্ধতির ভিন্নতা না থাকে এবং কোরআনের পাঠ একরকম রাখা যায়।"
+  },
+  {
+    "id": "bn-0065",
+    "slice": "answerable_bn",
+    "category": "মাসআলা-মাসায়েল",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোনভাবে এই প্রার্থনায় বলেছে তারা আল্লাহর প্রতি কৃতজ্ঞতা প্রকাশ করে এবং কখনও আল্লাহকে অস্বীকার করবে না কেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6388"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মাসয়ালা মাসায়েল ও দোআ › দোয়ায়ে কুনুত; page says: অর্থভাগে বলা আছে তারা আল্লাহর উত্তম প্রশংসা করে, শোকর আদায় করে এবং কখনও আল্লাহর নাশোকরি বা কুফরি করবে না—এ কারণেই কৃতজ্ঞতা ও অস্বীকার না করার বিষয়টি উল্লেখ করা হয়েছে।"
+  },
+  {
+    "id": "bn-0066",
+    "slice": "answerable_bn",
+    "category": "মাসআলা-মাসায়েল",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কুনুতে নাযেলা অংশে কারা ওদের প্রতি সহায়তা ও ক্ষমা প্রার্থনা করার পাশাপাশি শত্রুদের বিরুদ্ধে সাহায্য চাওয়ার অনুরোধ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6388"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মাসয়ালা মাসায়েল ও দোআ › দোয়ায়ে কুনুত; page says: কুনুতে নাযেলা অংশে তারা বিশ্বাসিদের (মুমিন ও মুমিনাত) জন্য ক্ষমা ও ঐক্য প্রার্থনা করে, তাদের শত্রুদের বিরুদ্ধে সাহায্য চায় এবং কافর, মুশরিক, ইহুদী ও নাসারাদের বিরুদ্ধে আল্লাহর ক্রোধ প্রার্থনার কথা উল্লেখ আছে।"
+  },
+  {
+    "id": "bn-0067",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "এই সংগঠনের মূল লক্ষ্য কী, যা আল্লাহ ও রাসূলের নির্দেশ অনুসারে মানুষের জীবনায়ন সম্পর্কিত?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4798"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from সংবিধান › প্রথম অধ্যায়; page says: ধারা-২-তে উল্লেখিত সংগঠনের উদ্দেশ্য: আল্লাহ প্রদত্ত ও রাসূল প্রদর্শিত বিধান অনুযায়ী মানুষের সার্বিক জীবনের পুনর্বিন্যাস সাধন করে আল্লাহর সন্তোষ অর্জন।"
+  },
+  {
+    "id": "bn-0068",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "সংগঠনটি ছাত্রসমাজে কী ধরনের কার্যক্রম করে তরুণদের ইসলামী জীবনবিধান অনুশীলনে উদ্বুদ্ধ করার কথা বলেছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4798"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from সংবিধান › প্রথম অধ্যায়; page says: ধারা-৩-এর এক নম্বর দফায় বলা আছে তরুণ ছাত্রসমাজের কাছে ইসলামের আহ্বান পৌঁছে তাদের ইসলামী জ্ঞান অর্জন এবং বাস্তব জীবনে ইসলামের পূর্ণ অনুশীলনের দায়িত্বানুভূতি জাগ্রত করা।"
+  },
+  {
+    "id": "bn-0069",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন সেই ব্যক্তি পূর্ণ নিশ্চয়তা নিয়ে কাউকে সত্য বা মিথ্যা বলা থেকে বিরত থাকে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4974"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাওহীদ রিসালাত ও আখিরাত › বিবেকের ফায়সালা; page says: কারণ তার কাছে থাকা তত্ত্ব ও তথ্যের ভিত্তিতে প্রকৃত ব্যাপার নিরূপণ করা কঠিন; সে কেবল পক্ষদ্বয়ের মধ্যে কোনো একটিকে অগ্রাধিকার দিতে পারে, কিন্তু দৃঢ় প্রত্যয়সহ চূড়ান্ত সিদ্ধান্ত নেওয়া সম্ভব নয়।"
+  },
+  {
+    "id": "bn-0070",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "যারা লেখকের بیان অস্বীকার করে তাদের মধ্যে কী ধরনের বৈচিত্র্য ও অনিশ্চয়তা দেখা যায়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4974"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাওহীদ রিসালাত ও আখিরাত › বিবেকের ফায়সালা; page says: তারা প্রকৃত সত্য সম্পর্কে বিভিন্ন মত পোষণ করে একমত নয়; সত্য জানার কোনো বিশেষ জ্ঞানসূত্র তাদের মধ্যে নেই; তাদের অনুমানও কেবল অনুমানই থেকে যায়; এবং তাদের মতামত নিশ্চয়তাহীন ও সময়ের সঙ্গে পরিবর্তিত হয়।"
+  },
+  {
+    "id": "bn-0071",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন রাষ্ট্রপ্রধানকে জাতীয় গুরুত্বপূর্ণ বিষয়ে জনগণের পরামর্শ নিতে বলা হয়েছে, যদিও তিনি জনগণের আস্থাভাজন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7311"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী রাষ্ট্র ব্যবস্থা › রাষ্ট্র সংস্থা ও সংগঠন; page says: কারণ রাষ্ট্রপ্রধান ভুল সিদ্ধান্ত নিতে পারেন যা জাতির ক্ষতি করতে পারে, তাই বড় ধরনের সিদ্ধান্তে পরামর্শ নেওয়া উচিত যাতে ভুল ও মারাত্মক পদক্ষেপ থেকে জাতি রক্ষা পায়।"
+  },
+  {
+    "id": "bn-0072",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "এসব পরামর্শ নেওয়া কীভাবে শর্ত হিসেবে প্রতিষ্ঠিত হয়েছে এবং তা রাষ্ট্রপ্রধানের ক্ষমতার ওপর কী প্রভাব ফেলে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7311"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী রাষ্ট্র ব্যবস্থা › রাষ্ট্র সংস্থা ও সংগঠন; page says: শরীয়তে পরামর্শ চাওয়ার নির্দেশ স্পষ্টভাবে বিধৃত আছে এবং এটি জনগণের মৌলিক অধিকার; তাই পরামর্শ না নেওয়া হলে রাষ্ট্রপ্রধান তার ক্ষমতা প্রয়োগ করতে পারবে না, অর্থাৎ ক্ষমতা শরীয়তের শর্তে সীমাবদ্ধ।"
+  },
+  {
+    "id": "bn-0073",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "রমজান মাসের রোজার মূল কার্যক্রম কলকের সময় কী কী কাজ থেকে বিরত থাকা বোঝানো হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7001"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from নামাজ-রোজার হাকীকত › রোযা; page says: রাত থেকে নয়—সকাল থেকে সন্ধ্যায় পর্যন্ত খাদ্যগ্রহণ ও স্ত্রী-সুবর্ণ সহবাস নিরুৎসাহ করে বিরত থাকা।"
+  },
+  {
+    "id": "bn-0074",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন আল্লাহ সকল যুগের নবীর উম্মতদের জন্য রোজা ফরজ করেছেন বলে লেখক বলেছেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7001"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from নামাজ-রোজার হাকীকত › রোযা; page says: পাঠ্যটি বলেছে যে রোজার মধ্যে এমন কিছু রয়েছে যা সমস্ত যুগের শরীয়াতে প্রয়োজনীয়, এবং কুরআনের আয়াত (সূরা আলবাকারা : ১৮৩) দ্বারা প্রতিষ্ঠিত যে পূর্ববর্তী লোকদের ওপরও রোজা ফরজ ছিল।"
+  },
+  {
+    "id": "bn-0075",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "তালিকায় কোন সাহাবীকে বদর যুদ্ধে শহীদ হিসেবে দেখানো হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4768"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from হাদীসের পরিচয় › বদর যুদ্ধে অংশগ্রহণকারী সাহাবীদের তালিকা; page says: পৃষ্ঠায় উল্লেখ আছে যে হযরত মাহজা বিন সালেহ(রাঃ) বদর যুদ্ধে শহীদ ছিলেন।"
+  },
+  {
+    "id": "bn-0076",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন আনসার সাহাবীকে বীরে মাউনার যুদ্ধে শহীদ হিসেবে বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4768"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from হাদীসের পরিচয় › বদর যুদ্ধে অংশগ্রহণকারী সাহাবীদের তালিকা; page says: পৃষ্ঠায় উল্লেখ আছে যে হযরত উবাই বিন সাবিত(রাঃ) বীরে মাউনার যুদ্ধে শহীদ হয়েছিলেন।"
+  },
+  {
+    "id": "bn-0077",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কেন নামায, তাসবীহ ও যিকরের সময়ে মুখে উচ্চারণ থাকলেও মন প্রায়ই অন্যত্র ভাসে বলে লেখক মনে করেন কী ত্রুটি রয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8247"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মনটাকে কাজ দিন › ভূমিকা; page says: শিক্ষার ত্রুটি — মুখে যা পড়তে হয় তা শেখানো হলেও সঙ্গে মনে কী ভাবতে হবে তা শেখানো হয় না, ফলে অর্থ জানলেও মনোযোগ জন্মে না।"
+  },
+  {
+    "id": "bn-0078",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "লেখকের মতে নামাযে মনোগ্রাহী আবেগ তৈরির জন্য নামাজের শুরুতে কোন বিশেষ জিনিসটি করা হয় এবং এর উদ্দেশ্য কী?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8247"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মনটাকে কাজ দিন › ভূমিকা; page says: তাওয়াজ্জুহ (ইন্নি অজ্জাহাতু… মুশরিকীন) পড়া হয়; এর মাধ্যমে মনে ধারণ করতে বলা হয় যে প্রশংসিত মালিক (মা’বুদ) সামনেই উপস্থিত, ফলে আবেগ জাগ্রত হয়।"
+  },
+  {
+    "id": "bn-0079",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "বাইয়াত ছাড়া মৃত্যুকে কীভাবে বর্ণনা করা হয়েছে এবং এর সামাজিক প্রভাব হিসেবে কী উদ্বেগ প্রকাশ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7259"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী আন্দোলন ও সংগঠন › দায়িত্বশীলের গুণাবলি; page says: হাদিসে বলা হয়েছে যে বাইয়াত ছাড়া মৃত্যুকে জাহেলীয়াতের মৃত্যু বলা হয়েছে এবং লেখায় বলা হয়েছে আনুগত্যহীনতা জাহেলীয়াতের মতো ফলসহ রাজনৈতিক অরাজকতা, শান্তি-শৃঙ্খলার অভাব ও ঐক্য-বিঘ্নের সৃষ্টি করবে।"
+  },
+  {
+    "id": "bn-0080",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "মাদ্দে আরজি কবে বলা হয় এবং এটি কত আলিফ দীর্ঘ করে পড়তে হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7701"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাজবীদ শিক্ষা › মাদ; page says: মাদ্দের বাম পাশে ওয়াকফের হালে সাকিন থাকলে তাকে মাদ্দে আরজি বলা হয় এবং তিন আলিফ দীর্ঘ করে পড়তে হয়।"
+  },
+  {
+    "id": "bn-0081",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "মাদ্দে লাযেমের চার প্রকারের নাম কী এবং প্রতিটি কত আলিফ দীর্ঘ করে পড়তে হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7701"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাজবীদ শিক্ষা › মাদ; page says: মাদ্দে লাযেমের চার প্রকার হল: কلمি মুসাক্কাল, কلمি মুখাফ্ফাফ, হরফি মুসাক্কাল ও হরফি মুখাফ্ফাফ; এগুলো প্রত্যেকটি চার আলিফ দীর্ঘ করে পড়তে হয়।"
+  },
+  {
+    "id": "bn-0082",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কুরআনে এবং রাসূলের সুন্নাহতে যে সাধারণ নীতিগুলো বলা আছে, সেই নীতিগুলোকে বাস্তবে প্রয়োগ করে যে কাজগুলো রাষ্ট্রের নেতাদের করতে বলা হয়েছে তা কী কী ধরনের বিষয়কে betrifft করে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4513"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কুরআন বুঝা সহজ › কুরআনের আলোচ্য বিষয়; page says: সরকার গঠন ও পরিচালনার মূলনীতি, অর্থনৈতিক নীতি, উৎপাদন ও বন্টন অনুশাসন, ব্যবসা-বাণিজ্যের বিধি ইত্যাদি বিষয়ে গাইডলাইন হিসেবে মূলনীতি দেওয়া হয়েছে এবং তার ভিত্তিতে আইন রচনার দায়িত্ব নেতাদের উপর রাখা হয়েছে।"
+  },
+  {
+    "id": "bn-0083",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মাক্কী সময়ের সূরাগুলোতে সমাজ-রাজনৈতিক বিশদ আইন কেন নাজিল হয়নি এবং এ সিদ্ধান্তের কী প্রয়োজনীয়তা বা উদ্দেশ্য ছিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4513"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কুরআন বুঝা সহজ › কুরআনের আলোচ্য বিষয়; page says: মাক্কী যুগে সেই আইন জারী করার সুযোগ না থাকায় বিশদ হলেই মানুষ কেবল তা তেলাওয়াত করে শেষ করে দিতে পারত; তাই আইনগুলো মুসলমানদের হাতে আইন প্রণয়ের ক্ষমতা দিয়ে মাদানী যুগে নাযিল করা হয়েছে যাতে এসব বিধান সমাজে প্রয়োগের দায়িত্ব নিয়ে আইন রচনা করা হয়"
+  },
+  {
+    "id": "bn-0084",
+    "slice": "answerable_bn",
+    "category": "মাসআলা-মাসায়েল",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "ধাতুর তৈরি কাঁটা-চাকু বা আয়নার মতো জিনিস নাজায়িম হলে কীভাবে পরিষ্কার করলে পাক বলে গণ্য হবে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6435"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আসান ফেকাহ (১ম খণ্ড) › তাহারাত অধ্যায়; page says: ধাতু নির্মিত জিনিস মাটিভাবে ঘষে মেজে নিতেঃ অথবা ভিজে কাপড় দিয়ে ভালো করে মুছে ফেললে, এমনভাবে যাতে নাজাসাতের কোন চিহ্ন বা গন্ধ না থাকে; এছাড়া আগুনে দিলে তাও পাক হয়; এবং তামা/পিতল/স্টীল প্রভৃতি হলে তিন বার পানি দিয়ে ধুলে ও পাক হয়।"
+  },
+  {
+    "id": "bn-0085",
+    "slice": "answerable_bn",
+    "category": "মাসআলা-মাসায়েল",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "চিনা মাটি বা কাচের থালা যদি নকশাহীন হয় এবং নাজায়িম পড়ে যায় তবে কীভাবে তা পাক করা যাবে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6435"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আসান ফেকাহ (১ম খণ্ড) › তাহারাত অধ্যায়; page says: চিনা মাটি, কাঁচ বা মসৃণ পাথরের থালা বাটি নকশী না হলে মাটি দিয়ে ঘষে মেজে নিলে অথবা ভিজে কাপড় দিয়ে মুছে ফেললে পাক হয়; তাছাড়া ধাতু বা চিনা মাটির জিনিস তিনবার পানি দিয়ে ধুলে পাক হয়।"
+  },
+  {
+    "id": "bn-0086",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কিয়ামতের দিনে কাফেরদের কী অবস্থায় উপস্থিত করা হবে এবং তাদের আশ্রয়স্থান কী হবে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7089"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মৃত্যু যবনিকার ওপারে › জান্নাতবাসীর সাফল্যের কারণ; page says: পৃষ্ঠায় বলা হয়েছে যে কিয়ামতের দিনে তারা মস্তক ও মুখমণ্ডল অধঃমুখী (অন্ধ, বধির ও নীরব) অবস্থায় হাজির করা হবে এবং তাদের আশ্রয়স্থান হবে জাহান্নাম।"
+  },
+  {
+    "id": "bn-0087",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কাফেররা কেন শাস্তি ভোগ করবে এবং যদি জাহান্নামের অগ্নি কমে যায় তখন কী হবে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7089"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মৃত্যু যবনিকার ওপারে › জান্নাতবাসীর সাফল্যের কারণ; page says: পৃষ্ঠায় বলা হয়েছে তারা আমাদের নিদর্শন অস্বীকার করায় শাস্তি পাবে, এবং যদি জাহান্নামের অগ্নি তীব্রতা কমে যায় তাহলে সেই অগ্নি বাড়িয়ে দেওয়া হবে।"
+  },
+  {
+    "id": "bn-0088",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "ইসলাম কোন কোনো উপায়ে উপার্জন নির্বাণ করে মানুষকে স্বাধীন রাখে এবং সেই স্বাধীনতার সীমানা কীভাবে নির্ধারণ করে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5181"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী অর্থব্যবস্থার মূলনীতি › উপার্জন উপকরণাদিতে হালাল হারামের পার্থক্য; page says: বর্ণনা আছে যে ইসলাম ব্যক্তিকে স্বাধীনভাবে হালাল পদ্ধতিতে যে কোনো উপায় ও পরিমাণে অর্থ অর্জনের অধিকার দেয়; তবে উপার্জনের পদ্ধতিতে হালাল ও হারাম ভেদ করে সীমা নির্ধারণ করে এবং হারাম উপায়ে উপার্জন থেকে তাকে আটকানো হয়।"
+  },
+  {
+    "id": "bn-0089",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন কোন নৈতিক বা অপরাধমূলক কাজগুলিকে ইসলামকে হারাম বলে এবং সেই ধরণের উপায়গুলো থেকে উপার্জিত অর্থের ওপর কী ব্যবস্থা নেওয়া যেতে পারে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5181"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী অর্থব্যবস্থার মূলনীতি › উপার্জন উপকরণাদিতে হালাল হারামের পার্থক্য; page says: পৃষ্টায় তালিকাভুক্ত হারাম উপায়গুলোর মধ্যে আত্নসাৎ, ঘুষ, চুরি, সুদ, জুয়া, মদ-মাদক ব্যবসা, প্রতারণা বা চাপপ্রয়োগভিত্তিক ব্যবসা ইত্যাদি উল্লেখ আছে; এসব থেকে উপার্জিত অর্থ বৈধ মালিকানা স্বীকৃতি পাবে না এবং অপরাধমতো করাদণ্ড, অর্থদণ্ড বা সম্পদ বা"
+  },
+  {
+    "id": "bn-0090",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "আয়াতে কী শর্ত পূরণ করলে আল্লাহ তাদের সাহায্য করবেন বলে বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5014"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from যাকাতের হাকীকত › যাকাতের গুরুত্ব; page says: নামাযের সামাজিক ব্যবস্থা কায়েম করা, যাকাত আদায় করা, সৎকাজ প্রচার করা এবং অন্যায় থেকে বিরত রাখা—এই কর্মগুলো পূরণ করলে আল্লাহ সাহায্যকরী হবেন।"
+  },
+  {
+    "id": "bn-0091",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "বনী ইসরাঈলরা আল্লাহর নির্দেশকে কিভাবে গ্রহণ করেছিল এবং তার ফল কীভাবে বর্ণনা করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5014"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from যাকাতের হাকীকত › যাকাতের গুরুত্ব; page says: তারা নির্দেশকে অমূলক ও মৌখিক মাত্র মনে করে বিপরীত কাজ করায় দুনিয়ায় অপমানিত ও উচ্ছিন্নভাবে সড়াতে হচ্ছে; ধনী হলেও তাঁদের ধন কাজে লাগছে না এবং বিভিন্ন স্থানে তাদের বসবাস নির্বাসিত করা হচ্ছে।"
+  },
+  {
+    "id": "bn-0092",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মৃত ব্যক্তিকে সম্পর্কে খারাপ কথা বলার কারণে কেন তা সমর্থন করা যায় না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4635"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from রাহে আমল (২য় খণ্ড) › চারিত্রিক দোষত্রুটি অধ্যায়; page says: কারণ মৃতরা তাদের করা কাজের ফলাফলের দিকে পৌঁছে গেছে, তাই তাঁদের গালিগালাজ করা উচিত নয়।"
+  },
+  {
+    "id": "bn-0093",
+    "slice": "answerable_bn",
+    "category": "আল হাদীস",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন ধরনের লোককে কিয়ামতের দিনে সবচেয়ে নিকৃষ্ট অবস্থায় পড়বে বলে বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4635"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from রাহে আমল (২য় খণ্ড) › চারিত্রিক দোষত্রুটি অধ্যায়; page says: যে ব্যক্তি পার্থিব লক্ষ্য অর্জনের জন্য নিজের পরকালের তথা আখেরাতের ক্ষতি করেছে।"
+  },
+  {
+    "id": "bn-0094",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "রোযার বিশেষ বৈশিষ্ট্য হিসেবে কেন আল্লাহ তা’আলা রোযাকে অন্যান্য নেক কাজের গুণের সাধারণ বহুগুণ বাড়ানোর তালিকায় ধরেননি?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8022"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from নামাজ-রোজার হাকীকত › রোযা; page says: কারণ রোযা বিশেষভাবে শুধুমাত্র আল্লাহর জন্য রাখা হয় এবং আল্লাহ নিজে এর প্রতিদান দেবেন—অতএব রোযাকে সাধারণ বহুগুণের মধ্যে গণ্য করা হয়নি।"
+  },
+  {
+    "id": "bn-0095",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "রাসূল (সা)-এর নির্দেশমতো আব্দুল্লাহ কীভাবে কিছু উট সংগ্রহ করেছিলেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7503"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আসহাবে রাসূলের জীবন কথা (২য় খণ্ড) › আবদুল্লাহ ইবন আমর ইবনিল আস (রা); page says: তিনি সদকার বিনিময়ে উট দেওয়ার অঙ্গীকার করে একদল লোকের কাছ থেকে উট ক্রয় করে প্রয়োজন মত সংগ্রহ করলেন।"
+  },
+  {
+    "id": "bn-0096",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "সিফফীন যুদ্ধে আবদুল্লাহ কেন জীবনভরে অনুশোচনায় ভুগেছিলেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7503"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আসহাবে রাসূলের জীবন কথা (২য় খণ্ড) › আবদুল্লাহ ইবন আমর ইবনিল আস (রা); page says: তিনি মুয়াবিয়ার পক্ষে যোগ দিলেও বাস্তবে যুদ্ধে অংশগ্রহণ না করলেও ওই পক্ষকে সমর্থন ও পিতার হাতে ঝাণ্ডা থাকার কারণে জীবন্তভাবে সেই ঘটনার জন্য তাওবাহ ও ইসতিগফার করেছেন এবং অনুশোচনা পেয়েছেন।"
+  },
+  {
+    "id": "bn-0097",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "এই সূরায় সময়ের কসম কিসের জন্য খাওয়া হয়েছে এবং সে কসম দ্বারা কী বোঝানো হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7689"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাফহীমুল কুরআন › সূরা আসর; page says: বইটিতে বলা আছে যে সময়ের কসম খাওয়া হয়েছে মানুষের বড় ক্ষতির স্বীকৃতির জন্য; এখানে সময়কে সাক্ষী ধরে বোঝানো হয়েছে যে যাদের চারটি গুণাবলী নেই তাদের জীবনকাল দ্রুত অতিবাহিত হয়ে ক্ষতি হয়েছে (অতীত ও বর্তমান—উভয় সময়ের সাক্ষ্য)।"
+  },
+  {
+    "id": "bn-0098",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কোন চারটি গুণ মানুষের ক্ষতি থেকে রক্ষা করে বলে এতে উল্লেখ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7689"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাফহীমুল কুরআন › সূরা আসর; page says: পৃষ্ঠায় উল্লেখ আছে যে ক্ষতি থেকে রক্ষা পাওয়ার চারটি গুণ হলো ঈমান, সৎকাজ করা, পরস্পরকে হকের উপদেশ দেওয়া এবং একে অপরকে ধৈর্য ধরার (সবরের) উপদেশ দেওয়া।"
+  },
+  {
+    "id": "bn-0099",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "আল্লাহর পথে ব্যয় সম্পর্কে লেখক কোন ধরনের কাজগুলোকেই এ শ্রেণীতে গণ্য করেছেন এবং এই দৃষ্টিকোণ থেকে যাকাত কোন উদ্দেশ্যে খরচ করা যেতে পারে বলে বলা হয়েছে কি না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4306"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাফহীমুল কুরআন › সূরা আত তাওবা; page says: পৃষ্ঠায় বলা আছে যে আল্লাহর পথে শব্দটি ব্যাপকার্থে ব্যবহার হয়েছে এবং এতে সৎকাজসমূহ অন্তর্ভুক্ত; তবে প্রথম যুগের ইমামগণ এই নির্দেশকে মূলত জিহাদ অর্থে বুঝেছেন, ফলে যাকাত জিহাদের জন্য—যেমন যুদ্ধে অংশগ্রহণ, বাহন-অস্ত্র সংগ্রহ ও জিহাদের কাজে নি"
+  },
+  {
+    "id": "bn-0100",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "যদি একজন মুসাফির ধনী থাকলেও সফরের সময় সাহায্যের প্রয়োজন হয় তাহলে সে কি যাকাত থেকে সাহায্য পেতে পারে এবং এ বিষয়ে কী যুক্তি সামনে আনা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4306"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from তাফহীমুল কুরআন › সূরা আত তাওবা; page says: পৃষ্ঠায় উল্লেখ আছে যে মুসাফির যদি নিজের বাসায় ধনীও হয় তবু সফরের সময় সাহায্যের প্রয়োজন হলে তাকে যাকাতের খাত থেকে সাহায্য দেওয়া যেতে পারে; লেখক ব্যাখ্যা করেছেন যে কোরআন-হাদীসে এমন কোনো শর্ত নেই যে অপরাধী বা খারাপ চরিত্রের লোককে সাহায্য "
+  },
+  {
+    "id": "bn-0101",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "ইসলামী সংগঠনে যারাই নেতৃত্বে নির্বাচিত হন তাদের প্রতি আনুগত্য কেন কঠোরভাবে বাধ্যতামূলক ঘোষণা করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4866"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from চরিত্র গঠনের মৌলিক উপাদান › সংগঠনের সাথে সম্পর্ক; page says: কারণ নেতৃত্বে নির্বাচিতরা দ্বীনি শরীয়ত ও ইসলামী আইন অনুযায়ী প্রতিষ্ঠিত সংগঠনের লোক হিসেবে উচ্চমানের ইলম ও তাকওয়ার অধিকারী হওয়ার কারণে তাদের আনুগত্য সৎকর্মে শামিল এবং তা শরীয়তের অত্যন্ত গুরুত্বপূর্ণ ফরজ ও ওয়াজিবের মধ্যে পড়ে।"
+  },
+  {
+    "id": "bn-0102",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "যারা আমীরের আনুগত্য প্রত্যাখ্যান করে তাদের সম্পর্কে কী কঠোর সতর্কতা দেওয়া হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4866"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from চরিত্র গঠনের মৌলিক উপাদান › সংগঠনের সাথে সম্পর্ক; page says: বর্ণিত হয়েছে যে, আমীরের আনুগত্য ত্যাগকারীরা—even যদি তারা অনেক তাকওয়ার অধিকারী হন—আখেরাতে সফল হবে না এবং কেয়ামতের দিনে তাদের কোন ন্যায্য দালিল থাকবে না।"
+  },
+  {
+    "id": "bn-0103",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কালেমা পড়ার পর একজন মানুষের দৈনন্দিন কাজকর্মে কিসে বাধ্যতা সৃষ্টি হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6940"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ঈমানের হাকীকত › কালেমায়ে তাইয়্যেবার অর্থ; page says: পৃষ্ঠায় বলা আছে কালেমা পড়ার পর ওই কালেমার বিধানই জীবন পরিচালনার একমাত্র হুকুমদাতা হবে; যা হুকুম করবে তা পালন করতে হবে এবং যা নিষেধ করবে তা এড়াতে হবে।"
+  },
+  {
+    "id": "bn-0104",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "‘লা-ইলাহা ইল্লাল্লাহ’ পাঠ করে কেউ আল্লাহ সম্পর্কে প্রথম কোন বিষয়টি স্বীকার করে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6940"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ঈমানের হাকীকত › কালেমায়ে তাইয়্যেবার অর্থ; page says: পৃষ্ঠার তথ্য অনুযায়ী প্রথম স্বীকার করা হয় যে এই দুনিয়া আল্লাহ ছাড়া সৃষ্টি হতে পারেনি এবং সৃষ্টিকর্তা একমাত্র আল্লাহ, তিনি ছাড়া কোনো খোদা নেই।"
+  },
+  {
+    "id": "bn-0105",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "এই পাঠ অনুযায়ী আধুনিক স্কুলপাঠ্য ও শিক্ষাপদ্ধতির মূল উদ্দেশ্য কীভাবে চিহ্নিত করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7167"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from শিক্ষাব্যবস্থার ইসলামী রূপরেখা › প্রচলিত আধুনিক শিক্ষাব্যবস্থার মৌলিক গলদ; page says: পাঠে বলা আছে যে ইংরেজ শাসকদের লক্ষ্য ছিল এমন লোক তৈরি করা যারা ইংরেজ শাসকদের বিশ্বস্ত কর্মচারী হবে ও তাদের ভাষা, চালচলন, রীতি ও আদর্শ অনুকরণ করবে।"
+  },
+  {
+    "id": "bn-0106",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন ধর্মীয় শিক্ষা আলাদা ও পরে যোগ করলে শিক্ষার্থীদের মনে ধর্মকে অবহেলা বা বিদ্রুপের 대상으로 পরিণত হতে পারে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7167"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from শিক্ষাব্যবস্থার ইসলামী রূপরেখা › প্রচলিত আধুনিক শিক্ষাব্যবস্থার মৌলিক গলদ; page says: পাঠে উল্লেখ আছে যে পার্থিব শাস্ত্রগুলো স্রষ্টানিরপেক্ষ দৃষ্টিভঙ্গি দিয়ে শেখালে মুখ্য শিক্ষার মাধ্যমে জীবনব্যবস্থা স্রষ্টানিরপেক্ষ হয়ে যায়; পরে আলোকচিত্তভাবে ধর্ম শিক্ষা দিলে সেই বিষয়গুলো শিক্ষার্থীদের অবাক করে পরে বিদ্রুপ ও অপ্রয়োজনীয়"
+  },
+  {
+    "id": "bn-0107",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কী কারণে সাধারণ মানুষ পূজারীদের মান্য করে এবং তাদের ওপর ভরসা রাখত?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5052"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from হজ্জের হাকীকত › হজ্জের গোড়ার কথা; page says: লেখায় বলা আছে যে মানুষ মনে করত পূজারীদের নিয়ন্ত্রণে দেবতারা, পূজারীরা খুশি হলে দেবতাদের অনুগ্রহ এবং অন্যথায় ধ্বংস হওয়ার আশঙ্কা থাকায় তারা পূজারীদের নির্দেশে চলত।"
+  },
+  {
+    "id": "bn-0108",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "হযরত ইব্রাহীম আলাইহিস সালাম কিসে বেড়ে উঠেছিলেন এবং তার পরিবারের অবস্থান কী ছিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5052"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from হজ্জের হাকীকত › হজ্জের গোড়ার কথা; page says: পৃষ্ঠায় উল্লেখ আছে যে তিনি সেই বংশে জন্ম নেন যা পেশাদার ও বংশানুক্রমিক পূজারীদের পরিবার; তার বাপ-দাদা ছিল পুরোহিত ব্রাহ্মণ এবং পরিবারের জন্য মন্দিরের পৌরহিত্যের সম্মান ও সুবিধা সদা ছিল।"
+  },
+  {
+    "id": "bn-0109",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "বাবলা তলার শপথের শক্তি কেন অস্ত্রের চেয়ে বেশি হিসেবে বর্ণনা করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8071"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আমরা সেই সে জাতি (১ম খণ্ড) › বাবলা তলার শপথ; page says: পৃষ্ঠায় বলা আছে যে শপথের নির্ভরতা ছিল ঈমানের উপর, এবং ঈমানী শক্তি অস্ত্র বলের চাইতে বহুগুণে শক্তিশালী হওয়ায় Babla গাছের শপথ তা প্রমাণ করে।"
+  },
+  {
+    "id": "bn-0110",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কুরাইশরা মুসলমানদের বিরুদ্ধে তাদের মনোভাব কেন বদলালো এবং কোন ফলাফল দেখা দিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8071"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আমরা সেই সে জাতি (১ম খণ্ড) › বাবলা তলার শপথ; page says: পৃষ্ঠায় উল্লেখ আছে যে মুসলমানদের দৃঢ় শপথ ও সাহস কুরাইশদের ভীতি সৃষ্টি করায় তারা ভুল সংশোধন করে উসমানকে ছেড়ে দেয় ও মহাসবীরের কাছে হুদাইবিয়ায় প্রতিনিধি পাঠায়।"
+  },
+  {
+    "id": "bn-0111",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন লেখকের মতে নিজের ভুল ঢাকতে অন্যের আমলনামায় হিসাব বসানো খারাপ আচরণ হিসেবে বিবেচিত হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5638"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী আন্দোলন সাফল্যের শর্তাবলী › মানবিক দুর্বলতা; page says: কারণ এই কাজটি করার সময় মানুষ ভুলে যায় যে তার আমলনামায় এমন একটি হিসাব আছে যেখানে কোনো কৌশল বা প্রতারণার মাধ্যমে কিছু বাড়ানো যায় না, এবং সে অন্যকে দুর্বল দেখালেও নিজেই সেইগুলোর মধ্যে লিপ্ত থাকে।"
+  },
+  {
+    "id": "bn-0112",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লেখক কীভাবে ব্যাখ্যা করেছেন যে দুর্বলতা খুঁজে পেতে সামাজিক কাজগুলো কখনো সম্পূর্ণ ত্রুটিমুক্ত হবে না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5638"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী আন্দোলন সাফল্যের শর্তাবলী › মানবিক দুর্বলতা; page says: লেখক বলেছেন মানুষ ও তার কাজ দুর্বলতা ও ত্রুটি সহকারে অনুষ্ঠিত হয় এবং দুনিয়ায় কখনো এমন অবস্থা দেখা যায়নি ও দেখা যেতেও পারে না যেখানে সব কাজ পরিপূর্ণ মানে সম্পূর্ণ ত্রুটিমুক্ত ও নিষ্কলঙ্ক হয়।"
+  },
+  {
+    "id": "bn-0113",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কোন ধরনের মানুষের বিরুদ্ধে প্রশ্নটি বলেছে যে সে এতিমকে ঠেলা-মারা করে এবং দরিদ্রকে সাহায্য করতে উৎসাহিত করে না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7705"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ১০টি সূরা ফিল থেকে নাস › ফিল থেকে নাস; page says: পৃষ্ঠায় বলা হয়েছে সেই ব্যক্তি আখেরাতকে মিথ্যা বলে, এতিমকে ধাক্কা দেয় এবং মিসকিনকে খাবার দিতে উৎসাহিত করে না।"
+  },
+  {
+    "id": "bn-0114",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কী কারণের জন্য নামাযীদের বিষয়ে সতর্ক করা হয়েছে এবং তাদের উপর কী শাস্তির সূচনাকে উল্লেখ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7705"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ১০টি সূরা ফিল থেকে নাস › ফিল থেকে নাস; page says: পৃষ্ঠায় বলা হয়েছে যারা নামাযে গাফিলতি করে এবং লোক দেখানোর জন্য কাজ করে, তাদের জন্য ধবংস বা কষ্টের ভাষা ব্যবহার করা হয়েছে।"
+  },
+  {
+    "id": "bn-0115",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "নূন সাকিন বা তানবিনের পরে কোন দুটি হরফ থাকলে গুন্নাহ ছাড়া মিলিয়ে পড়তে হবে এবং ওই দুইটি হরফের উদাহরণ হিসেবে কোন শব্দটি দেওয়া হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4604"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইলমে তাজবীদ › মাখরাজ পরিচিতি; page says: ইদগামে বেকারুন্নাহ/বেলাগুন্নার হরফ দুটি হলো র (ر) ও লাম (ل); উদাহরণ হিসেবে ফَعَّالٌ لِّمَايُرِيْدُ দেওয়া হয়েছে।"
+  },
+  {
+    "id": "bn-0116",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মিম সাকিনের পরে যদি মিমের সই হরফটি আসে তাহলে কী নিয়ম প্রযোজ্য এবং এর সাথে কোন ধরণের আওয়াজ (গুণ) মিলিয়ে পড়তে হয়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4604"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইলমে তাজবীদ › মাখরাজ পরিচিতি; page says: মিম সাকিনের পরে মিম (م) হলে ইদগাম প্রযোজ্য এবং ইদগামে গুন্নাহ সহ মিলিয়ে পড়তে হবে; উদাহরণ ফِيْ قُلُوبِهِمْ مَرَضٌ।"
+  },
+  {
+    "id": "bn-0117",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "যদি কেউ জনসম্মুখে কোনো ইসলামী বিধানকে অপবাদ দিয়ে উপহাস করে এবং সেই ব্যক্তি আপনার যুক্তি মানতে ইচ্ছুক নয়, তখন কীভাবে আচরণ করাই ঠিক বলে লেখক পরামর্শ দিয়েছেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4919"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আদর্শ কিভাবে প্রচার করতে হবে › মানসিক প্রবণতার প্রতি সন্মান প্রদর্শন; page says: লেখক বলেন এমন ক্ষেত্রে অপর ব্যক্তির সামনে যুক্তি-প্রমাণ উল্লেখ না করে আলোচনা স্থগিত রেখে পরে শান্তিপূর্ণ সময়ে পুনরায় বিষয়টি আলোচনার জন্য রাখার পরামর্শ দেওয়া হয়েছে।"
+  },
+  {
+    "id": "bn-0118",
+    "slice": "answerable_bn",
+    "category": "সংগঠন ও দাওয়াত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোনো ভুল পরিলক্ষিত হলে সরাসরি তৎক্ষণাৎ টোনে কাউকে 'ভুল' বলা না করে কী কারণে ধীরে আলোচনা করে পরিবেশ তৈরি করার কথা বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4919"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আদর্শ কিভাবে প্রচার করতে হবে › মানসিক প্রবণতার প্রতি সন্মান প্রদর্শন; page says: লেখক উল্লেখ করেন যাতে সংশ্লিষ্ট ব্যক্তি রাগ না পায়, নিজে নিজের ভুল উপলব্ধি করতে পারে এবং ফলাফল সম্পর্কে সচেতন হয়ে স্বেচ্ছায় সংশোধন নেবে — তাই প্রথমে নরমভাবে ও ধীরে পরিবেশ সৃষ্টি করা উত্তম।"
+  },
+  {
+    "id": "bn-0119",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন কিছু সামাজিক কুপ্রথা আইন থেকেও বেশি শক্তিশালী বলেছে পৃষ্ঠায়?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4945"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মজবুত ঈমান › মযবুত ঈমানের শর্ত কী কী?; page says: পৃষ্ঠায় বলা হয়েছে যে কুপ্রথাগুলো স্বয়ংক্রিয় শক্তির কারণে চলতে থাকে, আইন প্রয়োগ করেও সেগুলো দূর করা সহজ নয় এবং এগুলো আইনচেয়েও বেশি প্রতিরোধী।"
+  },
+  {
+    "id": "bn-0120",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আদর্শ",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কোন ধরনের শাসন শক্তিকে কুরআনে তাগূত হিসেবে উদাহরণ দিয়ে দেখানো হয়েছে এবং কেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_4945"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মজবুত ঈমান › মযবুত ঈমানের শর্ত কী কী?; page says: পৃষ্ঠায় ফিরাউন ও নমরুদকে শাসন শক্তি হিসেবে তাগূত হিসেবে উল্লেখ করা হয়েছে কারণ তারা সীমালঙ্ঘন করে আল্লাহর আইন বিরোধী নিয়ম চাপিয়ে দিত এবং অধীনস্থদের আল্লাহর নাফরমানীতে বাধ্য করতো।"
+  },
+  {
+    "id": "bn-0121",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "ইসলাম অনুযায়ী রাজ্যের সর্বোচ্চ আইন-রচয়িতা কে বলে বিবেচিত করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5491"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামের রাজনৈতিক মতবাদ › ব্যক্তিতন্ত্র ও সমষ্টিতন্ত্রের মধ্যে সামঞ্জস্য স্থাপন; page says: পৃষ্ঠায় বলা হয়েছে যে সর্বোচ্চ প্রভুত্ব ও আইন রচয়িতার অধিকার একমাত্র আল্লাহ তায়ালার জন্য সংরক্ষিত।"
+  },
+  {
+    "id": "bn-0122",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেউ কী কারণে আল্লাহর প্রতিনিধিত্বকারী বা খলিফা হিসেবে গণ্য হবে এবং এই মর্যাদা কারা পান তা কীভাবে নির্ধারণ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5491"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামের রাজনৈতিক মতবাদ › ব্যক্তিতন্ত্র ও সমষ্টিতন্ত্রের মধ্যে সামঞ্জস্য স্থাপন; page says: পৃষ্ঠায় ব্যাখ্যা করা হয়েছে যে ঈমানদার ও সৎ কর্মশীল ব্যক্তিরাই আল্লাহ তাঁর প্রতিনিধি/খলিফা হিসেবে নিযুক্ত হন এবং খিলাফত সমগ্র মু’মিনদের জন্য সার্বজনীন, কোনো নির্দিষ্ট ব্যক্তি, পরিবার বা শ্রেণির জন্য সংরক্ষিত নয়।"
+  },
+  {
+    "id": "bn-0123",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন মক্কাতে রাসূলুল্লাহ (সঃ) তৈরি করা নেতৃত্ব ও কর্মীদল ইসলাম প্রতিষ্ঠা করতে সক্ষম হয়নি?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5116"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইকামাতে দ্বীন › “ইকামাতে দ্বীনের” মর্ম; page says: পৃষ্ঠায় বলা আছে মক্কায় বিস্তৃত জনতা সক্রিয়ভাবে ইসলামের বিরোধী ছিল, ফলে জনগণের প্রতিকূলতার কারণে সেখানে বিজয় হয়নি."
+  },
+  {
+    "id": "bn-0124",
+    "slice": "answerable_bn",
+    "category": "ইবাদত",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "এ কর্মসূচীর ক্ষেত্রে আল্লাহ্ কবে দৃশ্যত নেতৃত্ব দান করেন বলে পৃষ্ঠায় উল্লেখ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5116"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইকামাতে দ্বীন › “ইকামাতে দ্বীনের” মর্ম; page says: পৃষ্ঠায় বলা আছে যদি সমাজ থেকে বিপ্লবী মুজাহিদ তৈরির শর্ত পূরণ হয় এবং জনগণের সমর্থনও থাকে, তাহলে ঐ মুজাহিদ দলকে নেতৃত্ব দান করা আল্লাহ্ নিজ হাতে রেখে দেন."
+  },
+  {
+    "id": "bn-0125",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কেন লেখক মনে করেন শুধু কণ্ঠে কালেমা উচ্চারণ করলেই মানুষের বিশ্বাস ও আচরণ বদলাবে না?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7956"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ঈমানের হাকীকত › কালেমায়ে তাইয়্যেবার অর্থ; page says: প্রকাশ্যে বলা আছে যে কণ্ঠে শব্দ বলা হলে কিন্তু অর্থ মনের মূলে না গেঁথে এবং তা চিন্তা, বিশ্বাস ও চরিত্রে পরিবর্তন নিলে কোনো ফল হবে না; কথার কার্যকারিতা অর্থের ওপর নির্ভর করে।"
+  },
+  {
+    "id": "bn-0126",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "লেখক কোন উদাহরণ দিয়ে বোঝাচ্ছেন যে শুধুমাত্র শব্দ বললেই সমস্যা মিটে না, বরং বাস্তব পদক্ষেপ নেওয়া প্রয়োজন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7956"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ঈমানের হাকীকত › কালেমায়ে তাইয়্যেবার অর্থ; page says: লেখক শীত, তৃষ্ণা ও অসুখ—এই তিনটি উদাহরণ দিয়ে বোঝিয়েছেন যে শুধু 'লেপ-তোষক', 'পানি' কিংবা 'ওষুধ' বলে চিৎকার করলে সমস্যা মিটবে না; নির্দিষ্ট জিনিসগুলো খুঁজে ব্যবহার করলে বা খেয়ে হলে সমস্যা দূর হয়।"
+  },
+  {
+    "id": "bn-0127",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন পুস্তিকাটি পুনরায় অনুবাদ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5497"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী রাষ্ট্র কিভাবে প্রতিষ্ঠিত হয় › দুটি কথা; page says: বহু সংস্করণ মুদ্রণের ফলে স্থায়ী মুদ্রণজনিত ত্রুটি প্রবেশ ও চলতি ভাষার চাহিদা পূরণের কারণেই পুনঃঅনুবাদ করা হয়েছে।"
+  },
+  {
+    "id": "bn-0128",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "এই নতুন সংস্করণে লেখক কোন অতিরিক্ত উপাদান যোগ করেছেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5497"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী রাষ্ট্র কিভাবে প্রতিষ্ঠিত হয় › দুটি কথা; page says: মাওলানা মওদূদী (রঃ) প্রচলিত বাইবেল থেকে ইসলামী রাষ্ট্র সংক্রান্ত হযরত ঈসা আলাইহিস সালামের কিছু বাণী সংযোজন করেছিলেন এবং সেই সংযোজনটি এই সংস্করণে সন্নিবেশিত করা হয়েছে।"
+  },
+  {
+    "id": "bn-0129",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "যদি মুমিনরা যুদ্ধযাত্রা (তানফর) থেকে বিরত থাকে তাহলে আল্লাহ কী করবেন বলে আয়াতে বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8360"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বিষয়ভিত্তিক আয়াত ও হাদিস সংকলন › ইসলামী আন্দোলন না করার পরিণাম সম্পর্কে; page says: আয়াতে বলা হয়েছে আল্লাহ তাদেরকে কষ্টদায়ী শাস্তি দেবেন এবং তাদের পরিবর্তে অন্য কোন জাতি প্রতিষ্ঠা করে দেবেন, কারণ তারা আল্লাহকে কোনো ক্ষতি দিতে পারবে না এবং আল্লাহ সর্বশক্তিমান।"
+  },
+  {
+    "id": "bn-0130",
+    "slice": "answerable_bn",
+    "category": "আল কুরআন",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "কেন কিছু মানুষ ঘরে বসে থাকতে পছন্দ করেছিল এবং তাদেরকে বাইরে না যেতে বলার কারণে কৌতুহলপূর্ণ উদাহরণ হিসেবে আয়াতে কী তুলনা করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8360"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from বিষয়ভিত্তিক আয়াত ও হাদিস সংকলন › ইসলামী আন্দোলন না করার পরিণাম সম্পর্কে; page says: আয়াতে বলা হয়েছে তারা খোদার পথে প্রাণ ও অর্থ নিয়ে জিহাদ করতে পেরেছিল না, তারা বাইরে না যেতে অন্যদের অনুরোধ করেছিল এবং তাদেরকে বলা হয়েছে যে জাহান্নামের আগুন এই গরমের চেয়ে বেশি তীব্র।"
+  },
+  {
+    "id": "bn-0131",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "অমুসলিমরা ইসলামী শাসনের অধীনে কী ধরণের নিরাপত্তা ও সুযোগ-সুবিধা পায় বলে উল্লেখ করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7402"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামের স্বর্ণ যুগে সামাজিক ন্যায়-নীতি › বিজিত দেশসমূহের সাথে ব্যবহার; page says: অমুসলিমরা পূর্ণ শান্তি ও নিরাপত্তা, আভ্যন্তরীণ ও বৈদেশিক সুবিধাসহ ইসলামী রাষ্ট্রের অন্যান্য সদস্যদের সমান অংশীদারিত্ব এবং বার্ধক্য বা অক্ষমতায় সামাজিক নিরাপত্তা সুবিধা পায়—এগুলো পৃষ্ঠায় বর্ণিত।"
+  },
+  {
+    "id": "bn-0132",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন ইসলামে অনগ্রহণকারীদের জন্য জিজিয়া আরোপ করা হয় এবং এর উদ্দেশ্য কী বোঝানো হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_7402"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামের স্বর্ণ যুগে সামাজিক ন্যায়-নীতি › বিজিত দেশসমূহের সাথে ব্যবহার; page says: জিজিয়া আরোপ করা হয় যাতে তারা দেশের রক্ষায় মুসলমানদের মতো প্রাণ দিতে না হয়, আনুগত্য ও আত্মসমর্পণের নিদর্শন প্রদর্শন করে এবং ইসলামের প্রচারে বাধা সৃষ্টি না করে—এই কারণগুলো পৃষ্ঠায় দেওয়া আছে।"
+  },
+  {
+    "id": "bn-0133",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "ইবলিস আদম (আ)র প্রতি মাথা নত করতে অস্বীকৃতি জানালে সে কেন এমন সিদ্ধান্ত নিলো?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8195"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আল্লাহর দিকে আহবান › গোড়ার কথা; page says: ইবলিস বলে সে নিজেকে আদমের চেয়ে শ্রেষ্ঠ মনে করলো কারণ তাকে আগুন থেকে এবং আদমকে মাটি থেকে সৃষ্টি করা হয়েছে।"
+  },
+  {
+    "id": "bn-0134",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "লেখক কেন বলে যে স্রষ্টার নির্দেশ মানা সৃষ্টির মূল দায়িত্ব?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8195"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আল্লাহর দিকে আহবান › গোড়ার কথা; page says: কারণ স্রষ্টা প্রজ্ঞাবান এবং তাঁর নির্দেশই বিশ্বসৃষ্টির পরিকল্পনা প্রকাশ করে; একবার নির্দেশ জানা গেলে তা দ্রুত পালন করাই সৃষ্টির শোভনীয় কাজ।"
+  },
+  {
+    "id": "bn-0135",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "পাঠে কি বলা হয়েছে যে যিনি কোনো মুসলিম ভাইয়ের গীবত রোধ করে এবং সাহায্য করার ক্ষমতা থাকলে সাহায্য করলে কী লাভ পাবেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5736"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী আন্দোলনের কর্মীদের পারস্পরিক সম্পর্ক › সম্পর্ক দৃঢ়তর করার পন্থা; page says: রাসূলের উক্তি অনুযায়ী, যদি সে সাহায্য করে তবে দুনিয়া ও আখিরাতে আল্লাহ্ তাকে সাহায্য করবেন।"
+  },
+  {
+    "id": "bn-0136",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "পাঠে কি দেখানো হয়েছে যে কোনো মু’মিনকে মুনাফিকের অনিষ্ট থেকে রক্ষা করলে আল্লাহ্ কীভাবে প্রতিদান দেবেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5736"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী আন্দোলনের কর্মীদের পারস্পরিক সম্পর্ক › সম্পর্ক দৃঢ়তর করার পন্থা; page says: আবু দাউদের উদ্ধৃতিতে বলা হয়েছে আল্লাহ্ এমন একজন ফেরেশতা নিযুক্ত করবেন যে কিয়ামতের দিনে তার গোশতকে জাহান্নামের আগুন থেকে রক্ষা করবে।"
+  },
+  {
+    "id": "bn-0137",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "সমাজে মানুষরা একে অপরের অধিকার ও মর্যাদা সম্পর্কে কেমন আচরণ করবে বলে বলা হয়েছে কি?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5297"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from শিক্ষা সাহিত্য সংস্কৃতি › শিক্ষা; page says: পৃষ্ঠায় উল্লেখ আছে যে কেউ অন্যের আইনসঙ্গত অধিকার, মালিকানা ও মর্যদায় হস্তক্ষেপ করবেনা; কেউ কাউকে শোষণ, ঠকানো, অপমান বা লাঞ্ছণ করবেনা এবং প্রত্যেকে স্বাধীনভাবে কর্তব্য পালন করবে।"
+  },
+  {
+    "id": "bn-0138",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মুসলমানদের পারস্পরিক আচরণে কিসের প্রতি সতর্কতা থাকা উচিত, যাতে অনৈতিক আচরণ ঘটতে না পারে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5297"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from শিক্ষা সাহিত্য সংস্কৃতি › শিক্ষা; page says: পৃষ্ঠায় বলা হয়েছে যে অপব্যয়, বিদ্রুপ, অভিসম্পাত, খারাপ উপনাম, সন্দেহপ্রবণতা, জাসূসি ও গীবত এ ধরনের অনৈতিক কাজ থেকে বিরত থাকতে হবে।"
+  },
+  {
+    "id": "bn-0139",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "মানুষের মধ্যে বিভেদ ও হিংসা কেন হয়েছে বলে এই পৃষ্ঠায় বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8171"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মুক্তির পয়গাম › মুক্তির পয়গাম; page says: পৃষ্ঠায় বলা আছে মানুষকে নিজের ইচ্ছে অনুযায়ী ভালো-মন্দ করার ক্ষমতা দেওয়ার ফলে যখন তারা স্বাধীনতাকে অপব্যবহার করে আল্লাহর পথ থেকে সরে যায় তখন জীবনে বিপর্যয় ও অশান্তি আসে, ফলে বিভেদ ও হিংসা সৃষ্টি হয়।"
+  },
+  {
+    "id": "bn-0140",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনাদর্শ",
+    "source_db": "nobin",
+    "language": "bn",
+    "question": "আল্লাহ মানুষকে কীভাবে শান্তির পথ দেখিয়েছেন এবং প্রথমে কার মাধ্যমে তা শিক্ষা দিয়েছেন বলে লেখা আছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_8171"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from মুক্তির পয়গাম › মুক্তির পয়গাম; page says: পৃষ্ঠায় বলা আছে আল্লাহ মানুষের জন্য সরল, শান্তির পথ (সিরাতুল মুস্তাকিম) জানিয়ে দিয়েছেন এবং সেই পথ প্রথমে শিখিয়েছেন হযরত আদম (আঃ)কে, যিনি তা অনুসরণ করে নিজ ও তাঁর পরিজনদের পরিচালনা করেছেন।"
+  },
+  {
+    "id": "bn-0141",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "রাসূল সা.-এর বিরুদ্ধে অকথ্য কথা বললে মালিক হতে যাদের মধ্যে সাঈদ ইবন যায়িদের স্থান দেখানো হয়েছে, তাদের মধ্যে যারা ছিলেন এবং তাদের নামগুলো মিলিয়ে তিনটি উদাহরণ উল্লেখ করলে কি কি বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6027"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আসহাবে রাসুলের জীবন কথা (১ম খণ্ড) › সাঈদ ইবন যায়িদ (রা); page says: পৃষ্ঠায় বলা হয়েছে আবু বকর, ’উমার, ’উসমান, আলী, সা’দ, সাঈদ, তালহা, যুবাইর ও আবদুর রহমান ইবনে আওফকে একই শ্রেণীর মর্যাদাবান সাহাবী হিসেবে বলা হয়েছে।"
+  },
+  {
+    "id": "bn-0142",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "সাঈদ ইবন যায়িদের মৃত্যুর বিষয়ে পৃষ্ঠায় কি তথ্য আছে — তিনি কোথায় সমাহিত হয়েছেন, মৃত্যুসন কখন এবং তার জন্য যে কেউ গোসল ও জানাজার নেতৃত্ব দিয়েছেন তারা কারা ছিলেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6027"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from আসহাবে রাসুলের জীবন কথা (১ম খণ্ড) › সাঈদ ইবন যায়িদ (রা); page says: পৃষ্ঠায় উল্লেখ আছে যে তিনি মদিনায় সমাহিত হয়েছেন; মৃত্যুসন হিজরীতে ৫০ (বা মতভেদে ৫১/৫২) এবং তাকে হযরত সা’দ ইবন আবী ওয়াক্‌কাস গোসল ও কাফন দিয়েছেন এবং হযরত আবদুল্লাহ ইবন ’উমার জানাজার ইমামতি করেছেন (হাইসাম ইবন ’আদীর মতে কুফায় মারা গেছেন এবং মু"
+  },
+  {
+    "id": "bn-0143",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "পুঁজিবাদী দেশগুলোতে অধিক লাভের জন্য পণ্য মজুত রাখাকে কীভাবে দেখা হয়েছে এবং এর ফলে সাধারণ মানুষের ওপর কী প্রভাব পড়ে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5424"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from অর্থনীতিতে রাসুলের (সাঃ) দশ দফা › ব্যবসায়িক অসাধুতা উচ্ছেদ; page says: পুঁজিবাদী দেশগুলোতে বেশি লাভের আশায় পণ্য মজুত রাখা অপরাধ হিসেবে বিবেচিত না হওয়ায় বাজারে কৃত্রিম সংকট তৈরি হয়, দাম দ্রুত বেড়ে যায় এবং সাধারণ জনগণ কষ্ট ও দুর্ভোগে পড়ে।"
+  },
+  {
+    "id": "bn-0144",
+    "slice": "answerable_bn",
+    "category": "ইসলামী জীবনব্যবস্থা",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মজুতদারীদের ব্যাপারে ইসলামের শিক্ষায় কি শাস্তির কথা বলা হয়েছে এবং সেই নির্দেশনার একটি মূল বিবরণ কী?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5424"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from অর্থনীতিতে রাসুলের (সাঃ) দশ দফা › ব্যবসায়িক অসাধুতা উচ্ছেদ; page says: রাসুল সাল্লাল্লাহু আলাইহি ওয়া সাল্লাম মজুতদারীর কঠোর নিষেধ করেছেন; যে ব্যক্তি চল্লিশ দিন ধরে খাবারপণ্য বিক্রি না করে মজুত রাখবে, আল্লাহর সঙ্গে তাঁর সম্পর্ক ছিন্ন হয়ে যাবে (মুসনাদে আহমেদ)।"
+  },
+  {
+    "id": "bn-0145",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন একজন প্রকৃতভাবে তৎপর ও পবিত্রতাপূর্ণ লোক বাহ্যিক আচরণে ভুল থাকা সত্ত্বেও অপবিত্রতা ও অনিষ্ট থেকে বিরত থাকার প্রবৃত্তি দেখাবে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5578"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী আন্দোলনের নৈতিক ভিত্তি › ইসলামের নৈতিকতার চার পর্যায়; page says: পৃষ্ঠায় বলা হয়েছে যে প্রকৃত তাকওয়া রাখনে ব্যক্তির মধ্যে পবিত্রতা ও পরিচ্ছন্নতার একটি তীব্র ও জাগ্রত রুচি থাকে, তাই সে স্বতঃস্ফূর্তভাবে অপবিত্রতা ঘৃণা করবে এবং পবিত্রতা স্থায়ীভাবে গ্রহণ করবে; ফলশ্রুতিতে বাহ্যিক আচার-আচরণ ঠিক না থাকলেও এ বিষয়"
+  },
+  {
+    "id": "bn-0146",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "কেন কৃত্রিমভাবে তাকওয়া প্রদর্শনকারী ব্যক্তির বাঁচার তালিকাভুক্ত কিছু অপবিত্রতা এড়িয়ে চলার পরও সে আরও অনেক জঘন্য ধরনের অনুশীলনে অনাধিকারভাবে লিপ্ত হয়ে পড়ে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5578"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from ইসলামী আন্দোলনের নৈতিক ভিত্তি › ইসলামের নৈতিকতার চার পর্যায়; page says: পৃষ্ঠায় বলা আছে যে কৃত্রিম তাকওয়া পালনের ব্যক্তির কাছে পবিত্রতার কোনো স্বতস্ফূর্ত চেতনা থাকে না; তিনি ময়লা ও অপবিত্রতার একটি তালিকা কপিতে রেখে শুধু তাতে লেখাগুলো থেকে বেঁচে থাকার চেষ্টা করেন, ফলে তালিকায় না থাকা অনেক ধরনের পংকিলতা তিনি বুঝত"
+  },
+  {
+    "id": "bn-0147",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মদিনায় আগমনের পর নবী কাদের মধ্যে ভ্রাতৃত্ববোধ গড়ে তোলার মাধ্যমে প্রথম কাজটি করেছিলেন?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5842"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from রাসূলুল্লাহর বিপ্লবী জীবন › নবপর্যায়ে ইসলামী আন্দোলন; page says: মদিনায় আসার পর নবী প্রথমে আনসার ও মুহাজিরদের মধ্যে অটুট ভ্রাতৃত্ববোধ স্থাপন করেছিলেন।"
+  },
+  {
+    "id": "bn-0148",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "মদিনার সনদে যে অধিকার-দায়িত্ব নির্ধারিত ছিল, সেখানে ইহুদীদের নিরাপত্তা ও সমান অধিকার সম্পর্কে কী নির্দেশ দেয়া হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5842"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from রাসূলুল্লাহর বিপ্লবী জীবন › নবপর্যায়ে ইসলামী আন্দোলন; page says: সনদে ইহুদীদের সমস্ত অপমান ও উপদ্রব থেকে রক্ষিত রাখা, মুসলমানদের মতোই সাহায্য ও কর্তব্যে তাদেরও সমান অধিকার প্রদান এবং মদিনার প্রতিরক্ষায় মুসলমানদের সঙ্গে তাদের যোগদান করার বিষয়টি নির্ধারিত আছে।"
+  },
+  {
+    "id": "bn-0149",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "লেখককে বেঁধে লটকানোর সময় সেখানে কি ধরনের আনুষঙ্গিক পরিবেশ ছিল?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6250"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কারাগারে রাতদিন › চতুর্থ অধ্যায়; page says: লেখক যখন প্যান্ট পরতে গিয়ে দেখেছিল বড়, কেন্দ্রীয়ভাবে শীতাতপ নিয়ন্ত্রিত কক্ষে উন্নতমানের আসবাবপত্র, দামী কার্পেট মেঝে ও বিলাসবহুল সজ্জা ছিল।"
+  },
+  {
+    "id": "bn-0150",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "যখন লেখক চাবুকের আঘাতে সহ্য করতে পারেনি, তখন সে কোন শব্দটি ধরে বারবার ডাকছিলো?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_6250"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from কারাগারে রাতদিন › চতুর্থ অধ্যায়; page says: লেখক বেদনায় অচেতন হওয়া পর্যন্ত বারবার 'ইয়া আল্লাহ্‌–ইয়া আল্লাহ্‌' বলে আল্লাহকে ডেকে ছিল।"
+  },
+  {
+    "id": "bn-0151",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "সাক্ষ্যদানের দায়িত্ব মানুষের ওপর কেন চাপানো হয়েছে বলে ব্যাখ্যা করা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5646"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from সত্যের সাক্ষ্য › সত্যের সাক্ষ্য; page says: কারণ তাদের কাছে সত্য উদ্ভাসিত হয়েছে এবং তারা দুনিয়ার সামনে সেই সত্যের অস্তিত্ব, তার সঠিকতা ও সরল পথ হিসেবে প্রমাণ করবে; নবী-রাসূলদের অনুপস্থিতিতে এই দায়িত্ব সমগ্র মুসলিম জাতির ওপর এসে গেছে।"
+  },
+  {
+    "id": "bn-0152",
+    "slice": "answerable_bn",
+    "category": "ইসলামী আন্দোলন",
+    "source_db": "tarun",
+    "language": "bn",
+    "question": "আল্লাহ মানুষকে কেন নবী প্রেরণ করেছেন বলে পৃষ্ঠায় বলা হয়েছে?",
+    "previous_turn": null,
+    "expected_row_keys": [
+      "page_5646"
+    ],
+    "answerable": true,
+    "variant_of": null,
+    "review": "pending",
+    "notes": "drafted from সত্যের সাক্ষ্য › সত্যের সাক্ষ্য; page says: যাতে মানুষকে সরল ও নির্ভুল জীবন-যাপনের পদ্ধতি শেখাতে এবং কোন কাজ সম্পর্কে তারা জবাবদিহি করবে তা জানাতে, যাতে মানুষ প্রকৃত মালিকের সন্তুষ্টি লাভের পথ ও বর্জনীয় কথাগুলো জানতে পারে।"
+  }
+]

@@ -286,9 +286,13 @@ def finalize_request_trace(
     mode: str,
     response_time_ms: float | None,
     error: bool = False,
+    roleplay: dict | None = None,
 ) -> None:
     """Attach the request outcome to the root span and close it. Called from
     a ``finally`` at the /chat boundary, so it also runs on the error paths.
+
+    ``roleplay`` (mentor mode, docs/roleplay-v2.md §8): {role_id, level,
+    refused, grounded}, merged into the root span's metadata when given.
 
     ``trace`` may be passed explicitly by a caller whose control flow loses
     the ContextVar before the ``finally`` runs. The streaming endpoint is
@@ -306,9 +310,12 @@ def finalize_request_trace(
     if ctx is None:
         return
     root = ctx["root"]
+    metadata = {"response_time_ms": response_time_ms, "mode": mode}
+    if roleplay:
+        metadata.update({k: roleplay.get(k) for k in ("role_id", "level", "refused", "grounded")})
     root.update(
         output={"answer": answer, "sources": _sources_view(sources), "mode": mode},
-        metadata={"response_time_ms": response_time_ms, "mode": mode},
+        metadata=metadata,
         level="ERROR" if error else "DEFAULT",
     )
     for key in ("attr_cm", "root_cm"):
@@ -353,18 +360,20 @@ def record_intent(intent: str, method: str) -> None:
 
 
 @_safe
-def record_rewrite(variants) -> None:
+def record_rewrite(variants, *, standalone_query: str | None = None) -> None:
+    """The `expand-query` span: the search string(s) retrieval used and, for a
+    condensed follow-up, the standalone question the intent call produced
+    (roadmap §1). The key is present only when condensation happened."""
     if _current_ctx.get() is None:
         return
     client = _client()
     if client is None:
         return
     variants = list(variants)
-    client.start_observation(
-        as_type="span",
-        name="expand-query",
-        output={"variants": variants, "n_variants": len(variants)},
-    ).end()
+    output = {"variants": variants, "n_variants": len(variants)}
+    if standalone_query is not None:
+        output["standalone_query"] = standalone_query
+    client.start_observation(as_type="span", name="expand-query", output=output).end()
 
 
 @_safe
@@ -433,6 +442,16 @@ def record_retrieval(chunks, *, top_k: int | None = None, name: str = "retrieve-
             ],
         },
     ).end()
+
+
+@_safe
+def record_citation_validity(valid: bool) -> None:
+    """Remember whether the answer's [n] labels were all within the sources
+    (app/rag/generator.citation_labels_valid). Written into the root span's
+    metadata as ``citation_valid`` by finalize_request_trace(); no new span."""
+    ctx = _current_ctx.get()
+    if ctx is not None:
+        ctx["citation_valid"] = valid
 
 
 @_safe

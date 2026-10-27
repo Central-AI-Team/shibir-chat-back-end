@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "FastAPI back-end for Shibir Chat, a Bengali-language RAG Q&A service"
 requires-python = ">=3.11"
 dependencies = [
+    "alembic==1.20.1",  # schema migrations (migrations/); run by scripts/deploy.sh
     "annotated-doc==0.0.5",
     "annotated-types==0.8.0",
     "anyio==4.14.2",

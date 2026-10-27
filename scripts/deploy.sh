@@ -44,6 +44,10 @@ up_and_wait() {
         log "docker compose up failed"
         return 1
     fi
+    # Schema migrations (migrations/), in the app image so uv/psycopg2 and
+    # .env are there. Idempotent; a failure counts as unhealthy and rolls back
+    # the code (the new tables stay: revisions are additive, see migrations/README).
+    docker compose exec -T app uv run alembic upgrade head || { log "alembic upgrade head failed"; return 1; }
     wait_healthy
 }
 

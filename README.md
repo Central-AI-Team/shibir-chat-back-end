@@ -175,9 +175,10 @@ Leave `GPU_SERVICE_URL` empty to use the local models.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Liveness check. Returns `{"status": "ok"}`. |
+| `GET` | `/ready` | Readiness check: Postgres and Chroma answer. `503` naming the failed check otherwise. |
 | `POST` | `/chat` | Main entry point. Classifies the message and returns an answer. |
 | `POST` | `/chat/stream` | Same as `/chat`, as Server-Sent Events. |
-| `GET` | `/conversations` | The caller's own sessions in this process, most recent first. |
+| `GET` | `/conversations` | The caller's own sessions, most recent first. |
 | `GET` | `/conversations/{id}/messages` | Messages in one of the caller's sessions (`404` if unknown or not theirs). |
 | `DELETE` | `/conversations/{id}` | Delete one of the caller's sessions (`204`, or `404` if unknown or not theirs). |
 | `POST` | `/auth/register` | Create an account and log in (open unless `AUTH_REGISTRATION_ENABLED=false`). |
@@ -192,8 +193,9 @@ belong to that cookie, and it gets `GUEST_MESSAGE_LIMIT` (5) answers in total. A
 returns 401 with `"code": "guest_limit_reached"` until the user registers or logs in. Guests cannot
 request notes. A logged-in user's sessions follow the account across browsers, and a guest's chats
 move to the account on login. Nobody else can list, read, continue or delete a session. The
-browser must send cookies: call the API with `fetch(url, { credentials: "include" })`. All chat
-sessions are lost when the server restarts. For local development over plain `http://`, set
+browser must send cookies: call the API with `fetch(url, { credentials: "include" })`. Chat
+history is stored in Postgres and survives restarts; a guest's conversations are purged after
+`GUEST_HISTORY_RETENTION_DAYS` (30) without activity. For local development over plain `http://`, set
 `COOKIE_SECURE=false`, or the browser drops the cookies. Create the first admin with
 `uv run python -m scripts.create_user --email you@example.com --role admin` (the app creates its
 account tables on startup).
@@ -207,8 +209,8 @@ Request:
 ```
 
 - `session_id`: omit to start a new session. Send back the returned value to continue it. It must
-  be an id this server issued to this browser. Any other value (malformed, unknown after a server
-  restart, or someone else's) starts a new session instead, so always use the
+  be an id this server issued to this browser. Any other value (malformed, unknown, deleted,
+  or someone else's) starts a new session instead, so always use the
   `session_id` returned by the latest response. The server never creates a session from a
   client-chosen id.
 - `user_id`: accepted for compatibility but ignored (it is client-supplied and spoofable).
@@ -235,7 +237,7 @@ Response:
 | `qa` | Answers from retrieved excerpts, with `[১]`-style citations. | Excerpts used, or `[]` if nothing passed the relevance gate. |
 | `suggestion` | Book-grounded recommendation; clearly labelled as general advice when the books do not cover it. | As for `qa`. |
 | `note` | Structured summary of a whole book named in the message. | `[]` |
-| `roleplay` | Multi-turn conversation in a persona. Continues until an exit phrase such as "stop roleplay". | `[]` |
+| `roleplay` | Mentor mode: a role from the allow-list (বন্ধু, দায়িত্বশীল ভাই, শিক্ষক, অধ্যয়ন-সার্কেল পরিচালক) answers from the books in its tone, adapted to the reader's level, with next steps; `suggestions` carries 2–3 follow-up questions. Requests to speak as a real person are refused with a normal answer. Continues until an exit phrase such as "stop roleplay". | As for `qa`. |
 
 Errors: `400` for an empty message; `503` with a Bengali "temporarily unavailable" message when
 the LLM or the GPU service fails.
@@ -247,12 +249,15 @@ Same request body. The response is `text/event-stream` with these events, in ord
 1. `sources`: `{"sources": [...]}`
 2. `token` (one or more): `{"text": "..."}`. `qa` streams token by token; other modes send
    the whole answer in one event.
-3. `done`: `{"mode", "session_id", "response_time_ms"}`
+3. `done`: `{"mode", "session_id", "response_time_ms", "suggestions"}`
 
 On an upstream failure a single `error` event (`{"detail": "..."}`) is sent instead.
 
-> **Note:** Sessions are held in process memory. They are lost on restart and are not shared
-> between workers, so run a single uvicorn worker until a shared session store is added.
+Conversations and messages live in the Postgres tables of the same name (schema managed by
+Alembic: `uv run alembic upgrade head` after pulling a change under `migrations/`). The
+history returned to the model and by `GET /conversations/{id}/messages` is the last 20 turns;
+every turn is stored. Sessions no longer pin the app to one uvicorn worker; the in-process
+rate limits (`app/services/rate_limiter.py`) still count per worker.
 
 ## Operations
 
@@ -316,7 +321,8 @@ Exports set `embedded_at` to `NULL`, so ingest embeds everything it restored.
 ### Deployment
 
 Production runs with Docker Compose on a VPS and deploys automatically: every push to `main`
-rebuilds it, checks `/health` and rolls back to the previous commit if the check fails. One-time
+rebuilds it, runs `alembic upgrade head`, checks `/health` and rolls back to the previous commit
+if the check fails. One-time
 setup: [docs/auto-deploy.md](docs/auto-deploy.md). For scaling beyond one instance, see
 [docs/deployment.md](docs/deployment.md).
 

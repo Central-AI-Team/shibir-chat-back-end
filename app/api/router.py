@@ -1,7 +1,8 @@
 """HTTP layer.
 
 Routes:
-  GET    /health
+  GET    /health                          liveness: the process answers
+  GET    /ready                           readiness: Postgres and Chroma answer
   POST   /chat                            classify intent -> NOTE / ROLEPLAY /
                                           SUGGESTION / QA and dispatch
   POST   /chat/stream                     same dispatch, Server-Sent Events;
@@ -18,10 +19,10 @@ their underlying service functions (answer_question, generate_chapter_note,
 generate_book_notes_from_text) are unchanged and are still called from here,
 just not exposed as separate routes.
 
-The /conversations endpoints read app.services.session_store, which is an
-in-process dict -- see that module's docstring: they only see sessions this
-worker handled and lose everything on restart. Good enough for the current
-single-worker deployment; a shared store (Redis / DB) is the upgrade path.
+The /conversations endpoints read app.services.session_store, which is backed
+by the Postgres tables conversations / messages -- see that module's docstring
+for the ownership rule and the read window. Sessions survive restarts and are
+shared across workers.
 
 Access control: every route declares a level in app/auth/policy.py. Chat and
 conversation routes resolve the caller's principal (app/api/deps.py) -- a
@@ -37,14 +38,15 @@ browser Origin that is not on the CORS allow-list (CSRF).
 
 from __future__ import annotations
 
-import itertools
 import json
+import logging
 import re
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import APIError
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
@@ -66,9 +68,7 @@ from app.core import timing, tracing
 from app.core.network_errors import NETWORK_ERRORS, NETWORK_UNAVAILABLE_DETAIL, is_network_error
 from app.core.config import settings
 from app.rag.gpu_client import GPUServiceError
-from app.rag.generator import stream_answer
 from app.rag.script_check import strip_stray
-from app.rag.retriever import retrieve_relevant_docs
 from app.schemas.query import (
     ChatRequest,
     ChatResponse,
@@ -78,11 +78,11 @@ from app.schemas.query import (
     SESSION_ID_PATTERN,
 )
 from app.services import rate_limiter
-from app.services.chitchat_service import preface, respond
+from app.services.chitchat_service import respond
 from app.services.intent_classifier import classify_intent
 from app.services.note_service import generate_book_notes_from_text
-from app.services.qa_service import answer_question
-from app.services.roleplay_service import handle_roleplay
+from app.services.qa_service import answer_question, qa_stream
+from app.services.roleplay_service import handle_roleplay, handle_roleplay_stream
 from app.services.session_store import (
     append_history,
     create_session,
@@ -95,6 +95,7 @@ from app.services.session_store import (
 from app.services.suggestion_service import give_suggestion
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _LLM_UNAVAILABLE_DETAIL = "উত্তর তৈরির সার্ভিস সাময়িকভাবে অনুপলব্ধ। কিছুক্ষণ পর আবার চেষ্টা করুন।"
 # One body for "unknown" AND "not yours" -- they must be indistinguishable.
@@ -152,18 +153,44 @@ def _guest_fields(principal: Principal, reservation: guest_quota.Reservation | N
     return {"guest_remaining": reservation.remaining, "guest_limit": settings.guest_message_limit}
 
 
-def _resolve_session(session_id: str | None, owner: str) -> tuple[str, dict]:
-    """The owner's session if the id exists AND is theirs; otherwise (no id,
-    malformed, unknown, someone else's) a NEW session under a fresh server-issued id,
-    which the response returns. Unknown and not-owned look identical, so ids
-    cannot be probed, and the client's id is never reused. Why not 404: the
-    store is in-memory, so every restart/deploy made each open chat 404 until
-    the front-end dropped its id; this restores main's silent fresh start."""
+def _resolve_session(session_id: str | None, principal: Principal) -> tuple[str, dict]:
+    """The caller's session if the id exists AND is theirs; otherwise (no id,
+    malformed, unknown, deleted, someone else's) a NEW session under a fresh
+    server-issued id, which the response returns. Unknown and not-owned look
+    identical, so ids cannot be probed, and the client's id is never reused.
+    Why not 404: when the store was in-memory every restart made each open
+    chat 404 until the front-end dropped its id; the silent fresh start stays
+    because the front-end relies on it. A logged-in caller's user_id is stored
+    on the row and selects the user cap."""
     if session_id is not None and _SESSION_ID_RE.fullmatch(session_id):
-        session = get_owned_session(session_id, owner)
+        session = get_owned_session(session_id, principal.owner_key)
         if session is not None:
             return session_id, session
-    return create_session(owner)
+    return create_session(principal.owner_key, user_id=principal.user_id)
+
+
+def _roleplay_trace(roleplay) -> dict | None:
+    """What the request trace records for a mentor-mode turn (§8 of the design)."""
+    if roleplay is None:
+        return None
+    return {"role_id": roleplay.role_id, "level": roleplay.level,
+            "refused": roleplay.refused, "grounded": roleplay.grounded}
+
+
+def _finish_session(session_id: str, intent: str, was_roleplaying: bool, roleplay) -> None:
+    """The end-of-request update_session() call for every mode. Mentor mode
+    stores the role, the smoothed level and the level window (persona
+    column); an exit phrase (was ROLEPLAY, now something else) clears all
+    three so the next roleplay starts fresh."""
+    if was_roleplaying and intent != "ROLEPLAY":
+        update_session(session_id, mode=intent, persona=None, role_id=None, level=None)
+    elif intent == "ROLEPLAY" and roleplay is not None:
+        update_session(
+            session_id, mode=intent, role_id=roleplay.role_id, level=roleplay.level,
+            persona=roleplay.level_window,
+        )
+    else:
+        update_session(session_id, mode=intent)
 
 
 def _format_note_result(result: dict) -> str:
@@ -175,15 +202,23 @@ def _format_note_result(result: dict) -> str:
     return "\n".join(parts)
 
 
-def _record_turn(session_id: str, intent: str, message: str, answer: str) -> None:
-    """Persist one user+assistant turn to the session history.
-
-    Skipped for ROLEPLAY: roleplay_service already appends both turns to
-    session["history"] itself, so recording again here would double them.
+def _record_turn(
+    session_id: str,
+    intent: str,
+    message: str,
+    answer: str,
+    sources: list[Citation] | None = None,
+    standalone_query: str | None = None,
+) -> None:
+    """Persist one user+assistant turn to the session history. `sources` are
+    the citations returned with the answer; they are stored on the assistant
+    turn so GET /conversations/{id}/messages can hand them back.
+    `standalone_query` (QA and mentor-mode roleplay) is the condensed question
+    the turn was retrieved with, stored on the user turn. Every mode,
+    roleplay included, is recorded here and nowhere else.
     """
-    if intent != "ROLEPLAY":
-        append_history(session_id, "user", message)
-        append_history(session_id, "assistant", answer)
+    append_history(session_id, "user", message, standalone_query=standalone_query)
+    append_history(session_id, "assistant", answer, sources=sources)
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +229,43 @@ def _record_turn(session_id: str, intent: str, message: str, answer: str) -> Non
 @router.get("/health", dependencies=[Depends(public_route)])
 def health() -> dict:
     return {"status": "ok"}
+
+
+def _ready_checks() -> dict[str, str]:
+    """Each dependency is probed even if an earlier one failed, so the body
+    names every broken check. Exception text is not returned (it can carry
+    hostnames / DSNs); it is logged."""
+    from app.db.session import engine
+    from app.rag.chroma_client import get_collection
+
+    checks = {}
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        checks["postgres"] = "ok"
+    except Exception:
+        logger.warning("readiness: postgres check failed", exc_info=True)
+        checks["postgres"] = "failed"
+    try:
+        get_collection().count()
+        checks["chroma"] = "ok"
+    except Exception:
+        logger.warning("readiness: chroma check failed", exc_info=True)
+        checks["chroma"] = "failed"
+    return checks
+
+
+@router.get("/ready", dependencies=[Depends(public_route)])
+def ready() -> Response:
+    """Readiness, for deploy.sh and probes: Postgres answers SELECT 1 and the
+    Chroma collection opens and counts. /health stays a bare liveness check.
+    No models are loaded and no LLM is called. 503 names the failed check(s)."""
+    checks = _ready_checks()
+    ok = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "ok" if ok else "unavailable", "checks": checks},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +309,7 @@ async def _chat(
     if len(message) > settings.max_message_chars:
         raise HTTPException(status_code=413, detail=_too_long_detail(settings.max_message_chars))
 
-    session_id, session = _resolve_session(body.session_id, owner)
+    session_id, session = _resolve_session(body.session_id, principal)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
     trace_user, trace_session = trace_ids(owner, session_id)
 
@@ -254,13 +326,17 @@ async def _chat(
     intent = "QA"
     answer = ""
     sources: list[Citation] = []
+    standalone: str | None = None
+    roleplay = None
     trace_error = False
     try:
         try:
             # classify_intent can fall back to an LLM call, so it goes through
             # the threadpool the same as the dispatch branches below.
             with timing.timed("intent_classification"):
-                intent = await run_in_threadpool(classify_intent, message, was_roleplaying)
+                intent = await run_in_threadpool(
+                    classify_intent, message, was_roleplaying, session["history"]
+                )
             timing.set_mode(intent)
 
             # NOTE/ROLEPLAY/CHITCHAT answers skip generator.py, so strip stray-script
@@ -277,7 +353,12 @@ async def _chat(
                 result = await run_in_threadpool(generate_book_notes_from_text, message)
                 answer = strip_stray(_format_note_result(result))
             elif intent == "ROLEPLAY":
-                answer = strip_stray(await run_in_threadpool(handle_roleplay, message, session))
+                # Mentor mode (docs/roleplay-v2.md): the answer comes from
+                # qa_stream under the role's style rules; refusals and the
+                # "which role?" reply are ordinary answers with no sources.
+                roleplay = await run_in_threadpool(handle_roleplay, message, session, session["history"])
+                answer, sources = strip_stray(roleplay.answer), roleplay.sources
+                standalone = roleplay.standalone_query
             elif intent == "SUGGESTION":
                 answer, sources = await run_in_threadpool(give_suggestion, message)
             elif intent == "CHITCHAT":
@@ -285,8 +366,9 @@ async def _chat(
                 # The history is read before this turn is recorded below.
                 answer = strip_stray(await run_in_threadpool(respond, message, list(session["history"])))
             else:  # QA
-                qa_response = await run_in_threadpool(answer_question, message)
+                qa_response = await run_in_threadpool(answer_question, message, session["history"])
                 answer, sources = qa_response.answer, qa_response.sources
+                standalone = qa_response.query
         except (APIError, GPUServiceError, *NETWORK_ERRORS) as e:
             # An upstream dependency failed: the LLM call (quota, bad key,
             # outage, ...) or the external GPU embed/rerank service. Surface
@@ -296,21 +378,15 @@ async def _chat(
             detail = NETWORK_UNAVAILABLE_DETAIL if is_network_error(e) else _LLM_UNAVAILABLE_DETAIL
             raise HTTPException(status_code=503, detail=detail) from e
 
-        if was_roleplaying and intent != "ROLEPLAY":
-            # Explicit exit phrase was detected -- drop out of roleplay mode and
-            # clear the persona so a future roleplay starts fresh instead of
-            # picking the old character back up.
-            update_session(session_id, mode=intent, persona=None)
-        else:
-            update_session(session_id, mode=intent)
-
-        _record_turn(session_id, intent, message, answer)
+        _finish_session(session_id, intent, was_roleplaying, roleplay)
+        _record_turn(session_id, intent, message, answer, sources, standalone_query=standalone)
 
         response_time_ms = round((time.perf_counter() - start) * 1000, 2)
         return ChatResponse(
             mode=intent.lower(),
             answer=answer,
             sources=sources,
+            suggestions=roleplay.suggestions if roleplay is not None else [],
             session_id=session_id,
             response_time_ms=response_time_ms,
             **_guest_fields(principal, reservation),
@@ -322,6 +398,7 @@ async def _chat(
             mode=intent.lower(),
             response_time_ms=round((time.perf_counter() - start) * 1000, 2),
             error=trace_error,
+            roleplay=_roleplay_trace(roleplay),
         )
         tracing.clear_request_trace()
 
@@ -333,46 +410,6 @@ async def _chat(
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _qa_stream(
-    message: str, *, trace_id: str | None = None, parent_observation_id: str | None = None
-):
-    rec = timing.current()
-    """Return (sources, answer_delta_iterator) for a QA message, mirroring
-    the relevance gate in qa_service.answer_question -- that function stays
-    the source of truth for the non-streaming path; keep this in sync.
-
-    trace_id/parent_observation_id are threaded through to stream_answer() so
-    the streamed QA generation nests under the request's root span -- the
-    streaming path can't rely on ambient trace context for this (see
-    app/core/tracing.py's module docstring).
-    """
-    # Same small-talk split as answer_question (one shared function): pure
-    # small talk is answered directly, with no retriever / book-QA LLM call;
-    # "hi, <question>" yields the greeting as the first delta and then streams
-    # the answer to the question alone.
-    greeting, question = preface(message)
-    if not question:
-        return [], iter([greeting])
-
-    # The `retrieve-context` span is emitted inside retrieve_stages().
-    citations = retrieve_relevant_docs(question)
-    relevant = bool(citations) and citations[0].rerank_score >= settings.min_rerank_score
-    tracing.record_gate(
-        grounded=relevant,
-        top_score=citations[0].rerank_score if citations else None,
-        threshold=settings.min_rerank_score,
-    )
-    grounding = citations if relevant else []
-    deltas = stream_answer(
-        question, grounding, trace_id=trace_id, parent_observation_id=parent_observation_id,
-        **({"timing_rec": rec} if rec else {}),
-    )
-    if greeting:
-        # Same text as the non-streaming "<greeting>\n\n<answer>".
-        deltas = itertools.chain([f"{greeting}\n\n"], deltas)
-    return grounding, deltas
 
 
 @router.post(
@@ -393,7 +430,7 @@ def chat_stream(
         return rejected
     ip = _client_ip(request)
 
-    session_id, session = _resolve_session(body.session_id, owner)
+    session_id, session = _resolve_session(body.session_id, principal)
     was_roleplaying = session.get("mode") == "ROLEPLAY"
     trace_user, trace_session = trace_ids(owner, session_id)
 
@@ -421,16 +458,21 @@ def chat_stream(
         intent = "QA"
         answer = ""
         sources = []
+        standalone = None
+        roleplay = None
         trace_error = False
         try:
             try:
                 with timing.timed("intent_classification"):
-                    intent = classify_intent(message, was_roleplaying)
+                    intent = classify_intent(message, was_roleplaying, session["history"])
                 timing.set_mode(intent)
 
                 if intent == "QA":
-                    sources, deltas = _qa_stream(
-                        message, trace_id=trace_id, parent_observation_id=parent_observation_id
+                    # qa_service.qa_stream is the single QA implementation (the
+                    # gate and small-talk split used to be duplicated here).
+                    sources, deltas, standalone = qa_stream(
+                        message, session["history"],
+                        trace_id=trace_id, parent_observation_id=parent_observation_id,
                     )
                     yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
                     for delta in deltas:
@@ -452,17 +494,26 @@ def chat_stream(
                         answer = strip_stray(_format_note_result(generate_book_notes_from_text(message)))
                         sources = []
                     elif intent == "ROLEPLAY":
-                        answer = strip_stray(handle_roleplay(message, session))
-                        sources = []
+                        sources, deltas, finalize = handle_roleplay_stream(
+                            message, session, session["history"],
+                            trace_id=trace_id, parent_observation_id=parent_observation_id,
+                        )
+                        yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
+                        for delta in deltas:
+                            answer += delta
+                            yield _sse("token", {"text": delta})
+                        roleplay = finalize()
+                        standalone = roleplay.standalone_query
                     elif intent == "CHITCHAT":
                         answer = strip_stray(respond(message, list(session["history"])))
                         sources = []
                     else:  # SUGGESTION
                         answer, sources = give_suggestion(message)
-                    # These paths produce a whole answer at once -- emit it as a
-                    # single token event so the client renders them uniformly.
-                    yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
-                    yield _sse("token", {"text": answer})
+                    if intent != "ROLEPLAY":
+                        # These paths produce a whole answer at once -- emit it as
+                        # a single token event so the client renders them uniformly.
+                        yield _sse("sources", {"sources": [c.model_dump() for c in sources]})
+                        yield _sse("token", {"text": answer})
             except (APIError, GPUServiceError, *NETWORK_ERRORS) as e:
                 trace_error = True
                 timing.record_error("request_total", e, rec=rec)
@@ -474,11 +525,8 @@ def chat_stream(
                 guest_quota.refund(reservation)
                 raise
 
-            if was_roleplaying and intent != "ROLEPLAY":
-                update_session(session_id, mode=intent, persona=None)
-            else:
-                update_session(session_id, mode=intent)
-            _record_turn(session_id, intent, message, answer)
+            _finish_session(session_id, intent, was_roleplaying, roleplay)
+            _record_turn(session_id, intent, message, answer, sources, standalone_query=standalone)
 
             response_time_ms = round((time.perf_counter() - start) * 1000, 2)
             yield _sse(
@@ -487,6 +535,7 @@ def chat_stream(
                     "mode": intent.lower(),
                     "session_id": session_id,
                     "response_time_ms": response_time_ms,
+                    "suggestions": roleplay.suggestions if roleplay is not None else [],
                     **_guest_fields(principal, reservation),
                 },
             )
@@ -500,6 +549,7 @@ def chat_stream(
                 mode=intent.lower(),
                 response_time_ms=round((time.perf_counter() - start) * 1000, 2),
                 error=trace_error,
+                roleplay=_roleplay_trace(roleplay),
             )
             tracing.clear_request_trace()
             timing.finish_request(rec)

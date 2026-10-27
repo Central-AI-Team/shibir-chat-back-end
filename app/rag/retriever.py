@@ -37,6 +37,12 @@ CHANGES vs the original:
      leg, fused with Reciprocal Rank Fusion, reranked as usual, then capped at
      settings.max_chunks_per_page per page. When off, the dense path below is
      the original code, untouched.
+ 10. `extra_row_keys` (default None = unchanged): page-level row_keys whose
+     chunks are added to the rerank pool regardless of their similarity to
+     the query. qa_service passes the previous assistant turn's cited pages
+     so a follow-up ("explain [২] more") reaches them even when the condensed
+     query misses. They bypass min_similarity and fetch_k on purpose: the
+     reranker is the judge, and the gate still applies per citation.
 """
 
 from __future__ import annotations
@@ -92,6 +98,8 @@ def retrieve_stages(
     collection_name: str | None = None,
     max_variants: int | None = None,
     hybrid: bool | None = None,
+    extra_row_keys: list[str] | None = None,
+    standalone_query: str | None = None,
 ) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
     """Run retrieval and return (candidates, final).
 
@@ -118,6 +126,10 @@ def retrieve_stages(
     the hybrid / dense-only path. In hybrid mode `candidates` is the RRF-fused
     pool (truncated to fetch_k) and `final` is the reranked list after the
     per-page cap -- see _retrieve_hybrid().
+
+    extra_row_keys=None (default) changes nothing; see module docstring,
+    point 10. standalone_query is for the trace only: the condensed question
+    `query` already is, recorded on the `expand-query` span when given.
     """
     top_k = top_k or settings.top_k
     fetch_k = fetch_k or settings.fetch_k
@@ -129,10 +141,10 @@ def retrieve_stages(
     else:
         timing.mark("query_rewrite", "disabled")
         queries = (normalize(query),) if normalize(query) else (query,)
-    tracing.record_rewrite(queries)
+    tracing.record_rewrite(queries, standalone_query=standalone_query)
     if settings.hybrid_enabled if hybrid is None else hybrid:
         return _retrieve_hybrid(
-            query, queries, fetch_k, rerank_top_n, collection_name
+            query, queries, fetch_k, rerank_top_n, collection_name, extra_row_keys
         )
     with timing.timed("query_embedding"):
         embeddings = embed_queries(list(queries))
@@ -162,12 +174,10 @@ def retrieve_stages(
                 pool[key] = (doc, meta, score)
 
     candidates = sorted(pool.values(), key=lambda x: x[2], reverse=True)
-    if not candidates:
-        tracing.record_retrieval([], top_k=rerank_top_n)
-        return [], []
-
     # Drop obvious noise before paying for the cross-encoder.
     candidates = [c for c in candidates if c[2] >= settings.min_similarity][:fetch_k]
+    if extra_row_keys:
+        candidates = _with_carry_over(candidates, collection, extra_row_keys, embeddings)
     if not candidates:
         tracing.record_retrieval([], top_k=rerank_top_n)
         return [], []
@@ -199,9 +209,12 @@ def retrieve_relevant_docs(
     top_k: int | None = None,
     fetch_k: int | None = None,
     collection_name: str | None = None,
+    extra_row_keys: list[str] | None = None,
+    standalone_query: str | None = None,
 ) -> list[Citation]:
     _, final = retrieve_stages(
-        query, top_k=top_k, fetch_k=fetch_k, collection_name=collection_name
+        query, top_k=top_k, fetch_k=fetch_k, collection_name=collection_name,
+        extra_row_keys=extra_row_keys, standalone_query=standalone_query,
     )
     return [
         Citation(
@@ -211,6 +224,7 @@ def retrieve_relevant_docs(
             content=c.content,
             similarity=round(c.similarity, 4),
             rerank_score=round(c.rerank_score, 4) if c.rerank_score is not None else None,
+            row_key=c.row_key,
         )
         for c in final
     ]
@@ -222,6 +236,7 @@ def _retrieve_hybrid(
     fetch_k: int,
     rerank_top_n: int,
     collection_name: str | None,
+    extra_row_keys: list[str] | None = None,
 ) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
     """Dense + BM25 retrieval fused with Reciprocal Rank Fusion.
 
@@ -289,6 +304,8 @@ def _retrieve_hybrid(
     if missing:
         seen.update(_fetch_chunks(collection, missing, embeddings))
     candidates = [seen[key] for key in order if key in seen]
+    if extra_row_keys:
+        candidates = _with_carry_over(candidates, collection, extra_row_keys, embeddings)
     if not candidates:
         tracing.record_retrieval([], top_k=rerank_top_n)
         return [], []
@@ -325,9 +342,15 @@ def rrf_fuse(ranked_lists: list[list[str]]) -> list[str]:
 
 
 def _fetch_chunks(
-    collection, keys: list[str], query_embeddings: list[list[float]]
+    collection,
+    keys: list[str],
+    query_embeddings: list[list[float]],
+    *,
+    row_keys: list[str] | None = None,
 ) -> dict[str, tuple[str, dict, float]]:
-    """Text, metadata and similarity for BM25-only hits, read from Chroma.
+    """Text, metadata and similarity for chunks read from Chroma by key:
+    BM25-only hits (`keys`) or whole pages carried over from the previous
+    turn (`row_keys`, every chunk of each page).
 
     Chroma ids are f"{row_key}_c{chunk_index}" (ingest.py) while the lexical
     leg's keys are f"{row_key}:{chunk_index}". Similarity is the best cosine
@@ -335,11 +358,15 @@ def _fetch_chunks(
     stores for the chunk, so the embedder is not called again. A chunk whose
     vector cannot be read gets 0.0; a key Chroma does not know is dropped.
     """
-    ids = []
-    for key in keys:
-        row_key, _, chunk_index = key.rpartition(":")
-        ids.append(f"{row_key}_c{chunk_index}")
-    got = collection.get(ids=ids, include=["documents", "metadatas", "embeddings"])
+    if row_keys is not None:
+        where = {"row_key": row_keys[0]} if len(row_keys) == 1 else {"row_key": {"$in": row_keys}}
+        got = collection.get(where=where, include=["documents", "metadatas", "embeddings"])
+    else:
+        ids = []
+        for key in keys:
+            row_key, _, chunk_index = key.rpartition(":")
+            ids.append(f"{row_key}_c{chunk_index}")
+        got = collection.get(ids=ids, include=["documents", "metadatas", "embeddings"])
 
     vectors = got.get("embeddings")
     queries = np.asarray(query_embeddings, dtype=float)
@@ -354,6 +381,31 @@ def _fetch_chunks(
             pass
         out[lexical.chunk_key(meta)] = (doc, meta, similarity)
     return out
+
+
+def _with_carry_over(
+    candidates: list[tuple[str, dict, float]],
+    collection,
+    row_keys: list[str],
+    query_embeddings: list[list[float]],
+) -> list[tuple[str, dict, float]]:
+    """`candidates` plus every chunk of the carried-over pages that is not in
+    it already (deduped by row_key:chunk_index). Appended after the pool, so
+    candidate order (similarity / RRF) is untouched; the reranker reorders.
+    A Chroma failure here only logs: carry-over is an aid, not the search."""
+    keys = list(dict.fromkeys(k for k in row_keys if k))
+    if not keys:
+        return candidates
+    try:
+        fetched = _fetch_chunks(collection, [], query_embeddings, row_keys=keys)
+    except Exception:
+        logger.warning("carry-over fetch failed; continuing without it", exc_info=True)
+        return candidates
+    present = {lexical.chunk_key(meta) for _, meta, _ in candidates}
+    extra = [v for k, v in fetched.items() if k not in present]
+    if extra:
+        timing.mark("carry_over", f"{len(extra)} chunk(s) from {len(keys)} page(s)")
+    return candidates + extra
 
 
 def _cap_per_page(

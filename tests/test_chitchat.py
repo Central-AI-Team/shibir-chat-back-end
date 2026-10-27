@@ -404,7 +404,6 @@ def test_plain_question_is_untouched_by_the_split():
 def test_chat_pure_small_talk_has_mode_chitchat_and_no_retrieval():
     with (
         patch("app.services.qa_service.retrieve_relevant_docs") as retrieve,
-        patch("app.api.router.retrieve_relevant_docs") as retrieve_router,
         patch.object(cs, "complete") as complete,
     ):
         response = client.post("/chat", json={"message": "আসসালামু আলাইকুম"})
@@ -415,7 +414,7 @@ def test_chat_pure_small_talk_has_mode_chitchat_and_no_retrieval():
     assert body["sources"] == []
     assert body["answer"].startswith("ওয়া আলাইকুমুস সালাম")
     retrieve.assert_not_called()
-    retrieve_router.assert_not_called()
+    retrieve.assert_not_called()
     complete.assert_not_called()
 
 
@@ -457,8 +456,8 @@ def test_chat_chitchat_llm_failure_is_a_503_like_other_modes():
 
 def test_stream_pure_small_talk_is_one_token_and_no_retrieval():
     with (
-        patch("app.api.router.retrieve_relevant_docs") as retrieve,
-        patch("app.api.router.stream_answer") as stream,
+        patch("app.services.qa_service.retrieve_relevant_docs") as retrieve,
+        patch("app.services.qa_service.stream_answer") as stream,
     ):
         r = client.post("/chat/stream", json={"message": "assalamualaikum"})
 
@@ -475,8 +474,8 @@ def test_stream_qa_path_answers_pure_small_talk_without_retrieval():
     # classify_intent forced to QA: _qa_stream's own split must still catch it.
     with (
         patch("app.api.router.classify_intent", return_value="QA"),
-        patch("app.api.router.retrieve_relevant_docs") as retrieve,
-        patch("app.api.router.stream_answer") as stream,
+        patch("app.services.qa_service.retrieve_relevant_docs") as retrieve,
+        patch("app.services.qa_service.stream_answer") as stream,
     ):
         r = client.post("/chat/stream", json={"message": "ধন্যবাদ"})
 
@@ -505,8 +504,8 @@ def test_stream_mixed_message_yields_the_greeting_first_then_the_answer():
         return iter(["উ", "ত্ত", "র।"])
 
     with (
-        patch("app.api.router.retrieve_relevant_docs", return_value=_CITATIONS) as retrieve,
-        patch("app.api.router.stream_answer", side_effect=fake_stream),
+        patch("app.services.qa_service.retrieve_relevant_docs", return_value=_CITATIONS) as retrieve,
+        patch("app.services.qa_service.stream_answer", side_effect=fake_stream),
     ):
         r = client.post("/chat/stream", json={"message": "hi, নামাজের নিয়ম কী?"})
 

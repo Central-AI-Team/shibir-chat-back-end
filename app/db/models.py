@@ -1,18 +1,22 @@
 import enum
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
     Date,
     DateTime,
     Enum as SAEnum,
+    Float,
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -223,3 +227,76 @@ class GuestUsage(Base):
     window_start = Column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (Index("ix_guest_usage_last_seen", "last_seen"),)
+
+
+# ---------------------------------------------------------------------------
+# Chat history (app/services/session_store.py). Schema: docs/roadmap-q4-2026.md
+# §2. Created by Alembic (migrations/), never by create_all in production.
+# Portable types where the roadmap's SQL is Postgres-only (JSONB, BIGSERIAL),
+# because the API tests run the store on in-memory SQLite like the auth tables.
+# ---------------------------------------------------------------------------
+
+
+class Conversation(Base):
+    """One chat session. `id` is the 43-char token the server issues; ownership
+    is `owner_key` (guest cookie hash or principal.user_owner_key). A row is
+    soft-deleted (deleted_at) by DELETE /conversations/{id} and by the
+    per-owner cap; scripts/purge_history.py hard-deletes later."""
+
+    __tablename__ = "conversations"
+
+    id = Column(String(43), primary_key=True)
+    owner_key = Column(Text, nullable=False)
+    # NULL for guests; set when the guest logs in / registers (auth_routes) or
+    # when a logged-in user starts a chat. users.id is a uuid string, not the
+    # INTEGER the roadmap sketch says.
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    title = Column(Text, nullable=True)  # first user turn, trimmed; see session_store._derive_title
+    mode = Column(Text, nullable=False, default="QA", server_default="QA")
+    persona = Column(Text, nullable=True)  # roleplay only
+    # Reserved for the roleplay rebuild (roadmap §4); unused until then.
+    role_id = Column(Text, nullable=True)
+    level = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # The sidebar query: an owner's live conversations, newest activity first.
+        Index(
+            "conversations_owner_recent",
+            "owner_key",
+            text("updated_at DESC"),
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+
+class Message(Base):
+    """One turn. Every turn is stored; session_store.MAX_HISTORY is only the
+    read window. mode / standalone_query / rerank_top / grounded / trace_id are
+    the evaluation columns of roadmap §3, stored from day one (NULL until the
+    code that produces them lands)."""
+
+    __tablename__ = "messages"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    conversation_id = Column(
+        String(43), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    role = Column(Text, nullable=False)
+    content = Column(Text, nullable=False)
+    mode = Column(Text, nullable=True)  # intent that produced this assistant turn
+    standalone_query = Column(Text, nullable=True)  # roadmap §1; on the user turn
+    sources = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)  # Citation dicts
+    rerank_top = Column(Float, nullable=True)  # gate score; NULL when not QA/SUGGESTION
+    grounded = Column(Boolean, nullable=True)  # gate verdict
+    response_time_ms = Column(Float, nullable=True)
+    trace_id = Column(Text, nullable=True)  # Langfuse link
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant')", name="ck_messages_role"),
+        Index("messages_conversation", "conversation_id", "id"),
+    )

@@ -49,8 +49,63 @@ class Settings(BaseSettings):
     # NOTE is a ceiling on note_service's own per-call budgets (4000 map / 6000 reduce).
     max_tokens_qa: int = 2500
     max_tokens_suggestion: int = 2000
-    max_tokens_roleplay: int = 1500
+    max_tokens_roleplay: int = 1500  # task "roleplay": chitchat's small-talk LLM replies
     max_tokens_note: int = 6000
+
+    # Mentor mode (app/services/roleplay_service.py, docs/roleplay-v2.md). The
+    # user talks to one of these ROLES; answers come from the books through
+    # qa_service.qa_stream() with the role's tone as style_rules. No free-form
+    # personas and never a real person (REAL_PERSON_PATTERNS refuses in code).
+    # Each role: id (stable, stored on conversations.role_id), name_bn,
+    # description_bn (shown when asking which role), tone_bn (appended to the
+    # system prompt), default_level (beginner | intermediate | advanced, used
+    # until the conversation's level is inferred). JSON in .env to override.
+    roleplay_roles: list[dict] = [
+        {
+            "id": "bondhu",
+            "name_bn": "বন্ধু / সহপাঠী",
+            "description_bn": "সহজ, আন্তরিক ভাষায় ছোট উত্তর; নতুনদের জন্য",
+            "tone_bn": (
+                "তুমি একজন বন্ধু বা সহপাঠী হিসেবে কথা বলছো। সহজ, আন্তরিক, উৎসাহ দেওয়া ভঙ্গি; "
+                "\"তুমি\" সম্বোধন; ছোট উত্তর; ভারী ভাষা নয়।"
+            ),
+            "default_level": "beginner",
+        },
+        {
+            "id": "boro_bhai",
+            "name_bn": "দায়িত্বশীল ভাই",
+            "description_bn": "যত্নশীল পরামর্শদাতা; প্রতিটি উত্তরে কাজে লাগানোর মতো পরবর্তী ধাপ",
+            "tone_bn": (
+                "তুমি একজন দায়িত্বশীল বড় ভাই হিসেবে কথা বলছো। স্নেহময়, যত্নশীল, বাস্তবমুখী; "
+                "প্রতিটি উত্তর শেষে কাজে লাগানোর মতো পরবর্তী ধাপ বলো।"
+            ),
+            "default_level": "intermediate",
+        },
+        {
+            "id": "shikkhok",
+            "name_bn": "শিক্ষক",
+            "description_bn": "গোছানো ব্যাখ্যা: সংজ্ঞা, বিশ্লেষণ, উদাহরণ; গভীরে জানতে চাইলে",
+            "tone_bn": (
+                "তুমি একজন শিক্ষক হিসেবে কথা বলছো। ধাপে ধাপে সাজানো উত্তর; আগে সংজ্ঞা, তারপর "
+                "ব্যাখ্যা, তারপর উদাহরণ; \"আপনি\" সম্বোধন।"
+            ),
+            "default_level": "intermediate",
+        },
+        {
+            "id": "circle_porichalok",
+            "name_bn": "অধ্যয়ন-সার্কেল পরিচালক",
+            "description_bn": "আলোচনার ভঙ্গি; শেষে ভাবার জন্য একটি প্রশ্ন; স্টাডি সার্কেলের জন্য",
+            "tone_bn": (
+                "তুমি একটি অধ্যয়ন-সার্কেলের পরিচালক হিসেবে কথা বলছো। আলোচনার ভঙ্গিতে উত্তর দাও, "
+                "উদ্ধৃত অংশ থেকে ভাবনার খোরাক তুলে ধরো, এবং শেষে অংশগ্রহণকারীদের ভাবার জন্য "
+                "একটি প্রশ্ন ফিরিয়ে দাও।"
+            ),
+            "default_level": "advanced",
+        },
+    ]
+    # Follow-up questions returned as `suggestions` after a grounded mentor
+    # reply (one extra LLM call over the excerpts). 0 disables the call.
+    roleplay_suggestion_count: int = 3
     # Excerpts / characters per excerpt put in the prompt. Defaults send
     # everything retrieval returns (top_k chunks are ~900 chars + header), so
     # lowering them is a speed-vs-grounding trade-off; if context_top_k < top_k
@@ -66,6 +121,14 @@ class Settings(BaseSettings):
     # When intent needs the LLM AND the query needs a rewrite, do both in one
     # call returning JSON; falls back to the two-call path on invalid JSON.
     combine_intent_rewrite: bool = True
+    # Conversational QA (intent_classifier.condense, generator): how many of
+    # the most recent turns (user + assistant messages) the condensation
+    # prompt and the answer prompt see. 4 = the last two exchanges.
+    qa_history_turns: int = 4
+    # A Bengali-script follow-up with at least this many words and no anaphor
+    # (intent_classifier.ANAPHORA) is taken as self-contained and skips the
+    # condensation LLM call; shorter or anaphoric ones are condensed.
+    condense_min_words: int = 6
     # LRU of query embeddings, keyed by the normalized rewritten query. 0 = off.
     embed_cache_size: int = 512
     # Embed + search + rerank a dummy query in the background at startup.
@@ -96,11 +159,14 @@ class Settings(BaseSettings):
     generation_judge_model: str = "qwen/qwen3.6-27b"
 
     # Per-task model routing (app/core/llm.get_model(task) / complete(task,
-    # ...)). Keys are the six call-site task names: intent, rewrite, persona
-    # (mechanical/structured -- a cheap fast model is usually enough, and
-    # these run on EVERY request before the user sees anything) and qa,
-    # note, suggest, roleplay (user-facing Bengali generation -- quality
-    # matters, latency is less critical).
+    # ...)). Keys are the seven call-site task names: intent, rewrite,
+    # roleplay_meta (mechanical/structured -- a cheap fast model is usually
+    # enough; intent and rewrite run on EVERY request before the user sees
+    # anything; roleplay_meta is mentor mode's follow-up-suggestion JSON, it
+    # was "persona" until 2026-10-25 when persona extraction was removed) and
+    # qa, note, suggest, roleplay (user-facing Bengali generation -- quality
+    # matters, latency is less critical; "roleplay" is now only chitchat's
+    # small-talk replies, mentor answers go through "qa").
     #
     # Empty by default ON PURPOSE: get_model(task) falls back to
     # openai_model for any task not listed here, so today's single-model
@@ -271,11 +337,17 @@ class Settings(BaseSettings):
     # owner cookie is Secure by default; COOKIE_SECURE=false is for plain-http
     # local development only (browsers drop Secure cookies on http://).
     cookie_secure: bool = True
-    # Session caps (app/services/session_store.py): creating one past the limit
-    # evicts the least-recently-updated session (the owner's own, or globally).
-    # No TTL or rate limiting yet (Step 3).
-    max_sessions_per_owner: int = 50
-    max_sessions_total: int = 10000
+    # Live (not deleted) conversations per owner (app/services/session_store.py):
+    # creating one past the cap soft-deletes that owner's least-recently-updated
+    # conversation. Guests are keyed by the owner cookie, users by account.
+    # Replaced MAX_SESSIONS_PER_OWNER / MAX_SESSIONS_TOTAL when history moved to
+    # Postgres (2026-10-24): a global cap made sense for a dict, not a table.
+    guest_conversation_cap: int = 50
+    user_conversation_cap: int = 500
+    # scripts/purge_history.py hard-deletes guest conversations (no user_id) not
+    # updated for this many days, and soft-deleted conversations of any owner
+    # that old. A guest who clears cookies can never reach them again anyway.
+    guest_history_retention_days: int = 30
     # Message length caps (characters, after strip), enforced in router.py with
     # a 413. The general one bounds what reaches the intent/rewrite/answer LLM
     # calls. NOTE never sends the message to an LLM -- note_service only
